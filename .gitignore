@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.env
+logs/
+ua_downloads/
+data/*.json
+data/*.db
+guangdada_auth.json

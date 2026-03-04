@@ -1,0 +1,61 @@
+[
+  {
+    "url": "https://guangdada.net/napi/v1/user/nbs-info",
+    "status": 401,
+    "ts": 1769763993.01
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/user/login",
+    "status": 200,
+    "ts": 1769764002.85,
+    "data_preview": "{'id': 'SUCCESS', 'message': 'success', 'data': {'success': True, 'token': '7d827524c7a34c11a9c53de7406cf957'}}"
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/user/jwt",
+    "status": 200,
+    "ts": 1769764002.99,
+    "data_preview": "{'id': 'SUCCESS', 'message': 'success', 'data': {'nbs': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJsYW4iOiJjbiIsInZlciI6InZpcCIsInRpbWVzdGFtcCI6MTc2OTc2NDAwMiwiZXhwaXJlIjoxNzY5ODA3MjAyLCJ1c2VyX2lkIjoiUzFKcVFsQlhhdz09IiwiYXBwbmFtZSI6Ilx1NjY3YVx1N2ViZlx1NWU3Zlx1NTkyN1x1NTkyNyIsInN1YnNjcmlwdGlvbiI6IntcIm"
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/user/nbs-info",
+    "status": 200,
+    "ts": 1769764003.17,
+    "data_preview": "{'id': 'SUCCESS', 'message': 'success', 'data': {'user_id': 1457934, 'company_id': 153738, 'username': 'HeyeWang', 'email': 'heye.wang@castbox.fm', 'phone_number': '13260456674', 'area_code': '86', 'product': 'guangdada', 'permission': {'company_sum': {'advertiser_subscribe': 100, 'page_subscribe': "
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/advertiser-game-ip",
+    "status": 200,
+    "ts": 1769764003.51,
+    "data_preview": "{'id': 'SUCCESS', 'message': 'success', 'data': {'list': [{'id': 100000014, 'cn_name': '三国演义', 'en_name': 'Romance of the Three Kingdoms', 'tw_name': '三國演義'}, {'id': 100000030, 'cn_name': '龙珠', 'en_name': 'Dragon Ball', 'tw_name': '七龍珠'}, {'id': 100000002, 'cn_name': '西游记', 'en_name': 'Journey to th"
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/ai-mark-tags",
+    "status": 200,
+    "ts": 1769764003.54,
+    "data_preview": "{'id': 'SUCCESS', 'message': 'success', 'data': {'image_tags': [{'id': 96, 'cn_name': '人物类型', 'en_name': 'Character Type', 'sub_tags': [{'id': 97, 'cn_name': '真人', 'en_name': 'Real People'}, {'id': 98, 'cn_name': '游戏角色', 'en_name': 'Game Characters'}, {'id': 99, 'cn_name': '动漫角色', 'en_name': 'Anime "
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/config/simple",
+    "status": 200,
+    "ts": 1769764003.6,
+    "data_preview": "{'id': 'SUCCESS', 'message': 'success', 'data': {'collect_device_info': ['wangkun@zingfront.com', 'chenai@zingfront.com']}}"
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/list-condition",
+    "status": 200,
+    "ts": 1769764003.62,
+    "error": "'list' object has no attribute 'get'"
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/count",
+    "status": 200,
+    "ts": 1769764004.28,
+    "data_preview": "{'id': 'SUCCESS', 'message': 'success', 'data': {'all_total': 735393495, 'default_total': 350187379, 'result_total': 109433556}}"
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/list",
+    "status": 200,
+    "ts": 1769764004.31,
+    "creative_count": 60
+  }
+]

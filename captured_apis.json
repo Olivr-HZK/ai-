@@ -1,0 +1,58 @@
+[
+  {
+    "url": "https://guangdada.net/napi/v1/user/jwt",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/user/nbs-info",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/ai-mark-tags",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/advertiser-game-ip",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/config/simple",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/count",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/subscription/query-subscribed-advertiser?app_type=1",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/subscription/tags?app_type=1&w2a_flag=false",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/subscription/query-subscribed-advertiser?app_type=1&tag_id=4007",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/count",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/page-existence",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/count",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/page-existence",
+    "status": 200
+  },
+  {
+    "url": "https://guangdada.net/napi/v1/creative/page-existence",
+    "status": 200
+  }
+]

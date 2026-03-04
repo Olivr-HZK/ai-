@@ -1,0 +1,42 @@
+{
+  "competitors": [
+    {
+      "name": "voodoo",
+      "games": [
+        { "name": "papers.io" },
+        { "name": "mob control" }
+      ]
+    },
+    {
+      "name": "dream games",
+      "games": [
+        { "name": "royal match" },
+        { "name": "Royal Kingdom" }
+      ]
+    },
+    {
+      "name": "King",
+      "games": [
+        { "name": "Candy Crush Saga" },
+        { "name": "Candy Crush Soda Saga" },
+        { "name": "Farm Heroes Saga" }
+      ]
+    },
+    {
+      "name": "Homa",
+      "games": []
+    },
+    {
+      "name": "Hungray Studio",
+      "games": [
+        { "name": "Block Blast" }
+      ]
+    },
+    {
+      "name": "vita studio",
+      "games": [
+        { "name": "Vita Mahjong" }
+      ]
+    }
+  ]
+}

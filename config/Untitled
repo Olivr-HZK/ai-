@@ -1,0 +1,2 @@
+cd /Users/oliver/guru/多维表格
+UA_IMPORT_LIMIT=1 .venv/bin/python bitable_import_ua_ads.py

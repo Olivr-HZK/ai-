@@ -1,0 +1,73 @@
+{
+  "keyword": "Chat Smith: AI Chatbot & Agent",
+  "selected": {
+    "ad_key": "fce6d03c83c292ee2c6d8afb53bbc32e",
+    "ads_promote_type": "1",
+    "ads_type": 2,
+    "advertiser_name": "Chat Smith: AI Chatbot & Agent",
+    "all_exposure_value": 77943,
+    "app_developer": "Smart Widget Labs Co Ltd",
+    "app_support_pc": false,
+    "app_type": 2,
+    "body": "",
+    "call_to_action": "",
+    "comment_count": 0,
+    "created_at": 1756908844,
+    "days_count": 1,
+    "dislike_count": 0,
+    "dynamic_number": [],
+    "ecom_advertiser_id": "",
+    "exposure_top": {
+      "exposure_top_week": 20251222,
+      "top1": [],
+      "top5": [
+        {
+          "platform": "admob",
+          "category": "5066"
+        }
+      ],
+      "top10": []
+    },
+    "fb_merge_channel": [],
+    "first_seen": 1769853773,
+    "has_advertiser_id": true,
+    "has_page_id": false,
+    "has_post_id": false,
+    "has_source_url": false,
+    "has_store_url": true,
+    "heat": 51,
+    "image_ahash_md5": "580c874a52b095bd8a99d9857c78d0b2",
+    "impression": 7874,
+    "is_fb_show": false,
+    "is_playlet_creative": false,
+    "last_seen": 1769853773,
+    "like_count": 0,
+    "logo_url": "https://appcdn-global.zingfront.com/imgs/ca8ffebfa615511f0af40b0b036f7eaa.jpg",
+    "message": "",
+    "new_week_exposure_value": 0,
+    "os": 2,
+    "page_name": "",
+    "pin_count": 0,
+    "platform": "admob",
+    "preview_img_url": "https://sp2cdn-idea-global.zingfront.com/sp_opera/9b33658eb3e8642b40da9897a3a5f509.jpg",
+    "resource_urls": [
+      {
+        "type": 2,
+        "image_url": "https://sp2cdn-idea-global.zingfront.com/sp_opera/9b33658eb3e8642b40da9897a3a5f509.jpg",
+        "video_url": "https://sp2cdn-idea-global.zingfront.com/sp_opera/13c0a51cbd359fdfcfbecce63ec66535.mp4"
+      }
+    ],
+    "resume_advertising_flag": true,
+    "search_flag": 145359,
+    "share_count": 0,
+    "text_md5": "",
+    "title": "",
+    "video_duration": 25,
+    "video2pic": 0,
+    "view_count": 0,
+    "collect_flag": 0,
+    "custom_tag": [],
+    "ads_archived": false
+  },
+  "total_captured": 180
+}
