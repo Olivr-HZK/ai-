@@ -492,14 +492,21 @@ async def _extract_dom_cards(page) -> list[dict]:
 () => {
   const results = [];
   const cardEls = document.querySelectorAll('.shadow-common-light.bg-white');
-  cardEls.forEach(card => {
+  cardEls.forEach((card, cardIdx) => {
     try {
-      // 预览图：取第一个非 logo 的 img（通常是 object-cover 那张）
+      // 预览图：取所有 img，优先 sp_opera CDN，其次任意非 logo 图
       const allImgs = Array.from(card.querySelectorAll('img'));
-      const preview = allImgs.find(img =>
-        img.src && !img.src.includes('appcdn-global') && img.src.includes('sp_opera')
-      );
-      const previewSrc = preview ? preview.src.split('?')[0] : '';
+      let previewSrc = '';
+      const spImg = allImgs.find(img => img.src && img.src.includes('sp_opera'));
+      if (spImg) {
+        previewSrc = spImg.src.split('?')[0];
+      } else {
+        // 懒加载尚未触发时 src 为空，尝试 data-src 或 currentSrc
+        const lazyImg = allImgs.find(img =>
+          !img.src.includes('appcdn-global') && (img.dataset.src || img.currentSrc)
+        );
+        if (lazyImg) previewSrc = (lazyImg.dataset.src || lazyImg.currentSrc || '').split('?')[0];
+      }
 
       // 广告主名称
       const advEl = card.querySelector('.leading-\\[18px\\] span span');
@@ -513,8 +520,7 @@ async def _extract_dom_cards(page) -> list[dict]:
       let videoDuration = null;
       const playArea = card.querySelector('[class*="play-simple"]');
       if (playArea) {
-        const durationNode = playArea.parentElement;
-        const txt = durationNode ? durationNode.textContent.trim() : '';
+        const txt = (playArea.parentElement || playArea).textContent.trim();
         const m = txt.match(/(\d+)s/);
         videoDuration = m ? parseInt(m[1]) : 0;
       }
@@ -551,22 +557,22 @@ async def _extract_dom_cards(page) -> list[dict]:
       const bottomAdvEls = card.querySelectorAll('.text-xs .whitespace-nowrap span span');
       const bottomAdv = bottomAdvEls.length > 0 ? bottomAdvEls[bottomAdvEls.length - 1].textContent.trim() : advertiserName;
 
-      if (previewSrc || advertiserName) {
-        results.push({
-          _source: 'dom',
-          preview_img_url: previewSrc,
-          advertiser_name: advertiserName || bottomAdv,
-          page_name: bottomAdv,
-          platform: platform,
-          video_duration: videoDuration,
-          heat: heat,
-          all_exposure_value: allExposure,
-          impression: impression,
-          resume_advertising_flag: isRelaunch,
-          date_range_text: dateRange,
-          resource_urls: [],
-        });
-      }
+      // 始终推入——用 _dom_idx 保证即使 preview 为空也能区分每张卡片
+      results.push({
+        _source: 'dom',
+        _dom_idx: cardIdx,
+        preview_img_url: previewSrc,
+        advertiser_name: advertiserName || bottomAdv,
+        page_name: bottomAdv,
+        platform: platform,
+        video_duration: videoDuration,
+        heat: heat,
+        all_exposure_value: allExposure,
+        impression: impression,
+        resume_advertising_flag: isRelaunch,
+        date_range_text: dateRange,
+        resource_urls: [],
+      });
     } catch (e) {}
   });
   return results;
@@ -817,6 +823,7 @@ async def run_batch(
     is_tool: bool = False,
     order_by: str = "exposure",
     use_popularity_top1: bool = False,
+    enable_dom_track: bool = False,
 ) -> list:
     """
     登录一次、界面设置一次（工具/7天/素材/排序方式），然后对每个关键词只做「填关键字 → 搜索 → 取结果」。
@@ -825,6 +832,7 @@ async def run_batch(
         "keyword", "selected", "top_creatives", "all_creatives", "total_captured"
       }。
     order_by: "exposure"（展示估值）或 "latest"（最新创意）。
+    enable_dom_track: 是否启用 DOM 补充 + 点击详情（默认关闭，仅供 fetch_competitor_raw 等调试脚本使用）。
     """
     if not keywords:
         return []
@@ -922,48 +930,63 @@ async def run_batch(
                         )
                         top_creatives, total = _top_creatives_from_batches(batches_ref)
                         napi_creatives = _all_creatives_from_batches(batches_ref)
-                        all_creatives = list(napi_creatives)  # all_creatives 只含 napi 结果
+                        all_creatives = list(napi_creatives)  # all_creatives 只含 napi 结果（主工作流路径）
 
-                        # ── DOM track（独立，不混入 all_creatives）──────────────────
-                        dom_cards = await _extract_dom_cards(page)
-                        napi_preview_set = {
-                            str(c.get("preview_img_url") or "").split("?")[0]
-                            for c in napi_creatives if c.get("preview_img_url")
-                        }
-                        dom_only_cards = [
-                            c for c in dom_cards
-                            if str(c.get("preview_img_url") or "").split("?")[0] not in napi_preview_set
-                        ]
-                        known_keys = {
-                            str(c.get("ad_key") or "") for c in napi_creatives if c.get("ad_key")
-                        }
-                        dom_preview_set = {
-                            str(c.get("preview_img_url") or "").split("?")[0]
-                            for c in dom_only_cards if c.get("preview_img_url")
-                        }
-                        detail_creatives = await _click_cards_for_details(
-                            page, known_keys,
-                            max_cards=len(dom_only_cards) + 5,
-                            target_previews=dom_preview_set if dom_preview_set else None,
-                        )
-                        detail_by_preview = {
-                            str(c.get("preview_img_url") or "").split("?")[0]: c
-                            for c in detail_creatives if c.get("preview_img_url")
-                        }
+                        # ── DOM track：仅在 enable_dom_track=True 时执行，不影响主工作流 ──
                         dom_creatives: list[dict] = []
-                        seen_dom: set[str] = set()
-                        for card in dom_only_cards:
-                            img = str(card.get("preview_img_url") or "").split("?")[0]
-                            if img in seen_dom:
-                                continue
-                            seen_dom.add(img)
-                            dom_creatives.append(detail_by_preview.get(img, card))
-                        for c in detail_creatives:
-                            img = str(c.get("preview_img_url") or "").split("?")[0]
-                            if img and img not in seen_dom:
-                                dom_creatives.append(c)
-                                seen_dom.add(img)
-                        print(f"    [DOM track] dom_basic={len(dom_only_cards)}  dom_detail={len(detail_creatives)}  最终={len(dom_creatives)}")
+                        if enable_dom_track:
+                            dom_cards = await _extract_dom_cards(page)
+                            napi_preview_set = {
+                                str(c.get("preview_img_url") or "").split("?")[0]
+                                for c in napi_creatives if c.get("preview_img_url")
+                            }
+                            dom_only_cards = [
+                                c for c in dom_cards
+                                if str(c.get("preview_img_url") or "").split("?")[0] not in napi_preview_set
+                                or not c.get("preview_img_url")
+                            ]
+                            # 修正：空 preview 的卡片也要通过（用 _dom_idx 区分），不能因为 "" not in set 而误判
+                            dom_only_cards = []
+                            napi_preview_set_nonempty = {
+                                str(c.get("preview_img_url") or "").split("?")[0]
+                                for c in napi_creatives if c.get("preview_img_url")
+                            }
+                            for c in dom_cards:
+                                img = str(c.get("preview_img_url") or "").split("?")[0]
+                                if img and img in napi_preview_set_nonempty:
+                                    continue  # napi 已有，跳过
+                                dom_only_cards.append(c)
+
+                            known_keys = {
+                                str(c.get("ad_key") or "") for c in napi_creatives if c.get("ad_key")
+                            }
+                            dom_preview_set = {
+                                str(c.get("preview_img_url") or "").split("?")[0]
+                                for c in dom_only_cards if c.get("preview_img_url")
+                            }
+                            detail_creatives = await _click_cards_for_details(
+                                page, known_keys,
+                                max_cards=len(dom_only_cards) + 5,
+                                target_previews=dom_preview_set if dom_preview_set else None,
+                            )
+                            detail_by_preview = {
+                                str(c.get("preview_img_url") or "").split("?")[0]: c
+                                for c in detail_creatives if c.get("preview_img_url")
+                            }
+                            seen_dom: set[str] = set()
+                            for card in dom_only_cards:
+                                img = str(card.get("preview_img_url") or "").split("?")[0]
+                                key = img if img else f"_idx_{card.get('_dom_idx', id(card))}"
+                                if key in seen_dom:
+                                    continue
+                                seen_dom.add(key)
+                                dom_creatives.append(detail_by_preview.get(img, card) if img else card)
+                            for c in detail_creatives:
+                                img = str(c.get("preview_img_url") or "").split("?")[0]
+                                if img and img not in seen_dom:
+                                    dom_creatives.append(c)
+                                    seen_dom.add(img)
+                            print(f"    [DOM track] dom_basic={len(dom_only_cards)}  dom_detail={len(detail_creatives)}  最终={len(dom_creatives)}")
                         # ─────────────────────────────────────────────────────────────
 
                         if order_by == "latest" and all_creatives:
