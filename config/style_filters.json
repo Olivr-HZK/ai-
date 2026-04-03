@@ -1,0 +1,14 @@
+[
+  {
+    "id": "flower_background",
+    "label": "花卉背景",
+    "description": "主体或背景为大面积花卉/花墙/花丛/植物棚等装饰性花卉场景（非风景里偶然一朵花）",
+    "enabled": true
+  },
+  {
+    "id": "bw_blockbuster",
+    "label": "黑白大片",
+    "description": "整体以黑白灰影调为主、偏电影感/大片质感（非偶尔单色滤镜）",
+    "enabled": true
+  }
+]

@@ -18,7 +18,11 @@ from dotenv import load_dotenv
 from path_util import DATA_DIR
 
 # 复用飞书卡片渲染与发送实现（保证与飞书/企业微信口径一致）
-from sync_raw_analysis_to_bitable_and_push_card import _render_card_markdown, push_card
+from sync_raw_analysis_to_bitable_and_push_card import (
+    _render_card_markdown,
+    build_meta_by_ad_from_analysis_payload,
+    push_card,
+)
 from push_video_enhancer_multichannel import _build_summary_text_from_intro
 
 
@@ -79,18 +83,7 @@ def main() -> None:
     suggestion_payload = json.loads(s_json_path.read_text(encoding="utf-8")) if s_json_path.exists() else {}
 
     analysis_payload = json.loads(analysis_path.read_text(encoding="utf-8"))
-    adkey_to_video: dict[str, str] = {}
-    fallback_videos: list[str] = []
-    for it in analysis_payload.get("results") or []:
-        if not isinstance(it, dict):
-            continue
-        k = str(it.get("ad_key") or "")
-        if not k:
-            continue
-        v = str(it.get("video_url") or "")
-        if v:
-            adkey_to_video[k] = v
-            fallback_videos.append(v)
+    meta_by_ad = build_meta_by_ad_from_analysis_payload(analysis_payload)
 
     intro_md = _build_summary_text_from_intro(target_date, raw_payload)
     bitable_url = (args.bitable_url or "").strip() or os.getenv("VIDEO_ENHANCER_BITABLE_URL", "").strip()
@@ -98,10 +91,11 @@ def main() -> None:
     card_md = _render_card_markdown(
         suggestion_json=suggestion_payload,
         suggestion_md=suggestion_md,
-        adkey_to_video=adkey_to_video,
-        fallback_videos=fallback_videos,
+        meta_by_ad=meta_by_ad,
         intro_md=intro_md,
         bitable_url=bitable_url,
+        include_ua_suggestion=False,
+        include_product_benchmark=True,
     )
 
     webhook = (args.feishu_webhook or "").strip()
@@ -112,7 +106,8 @@ def main() -> None:
         print("[feishu-card] 未配置 FEISHU_UA_WEBHOOK/FEISHU_BOT_WEBHOOK，跳过卡片推送。")
         return
 
-    push_card(webhook, "Video Enhancer 统一UA建议（基于竞品素材）", card_md)
+    card_title = f"广大大素材日报（{target_date}）"
+    push_card(webhook, card_title, card_md)
 
 
 if __name__ == "__main__":

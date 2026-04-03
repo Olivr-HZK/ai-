@@ -1,6 +1,10 @@
 """
 把 raw + 灵感分析写入指定飞书多维表，并把统一 UA 建议推送到飞书卡片。
 
+主表同步：仅写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]），
+且 exclude_from_bitable 不为真（命中「我方已经投过」套路的素材不同步主表）。
+不写入 raw 中仅入库、未分析或分析失败的条目。聚类表逻辑不变。
+
 输入：
 - raw: data/test_video_enhancer_2_2026-03-18_raw.json
 - analysis: data/video_analysis_test_video_enhancer_2_2026-03-18_raw.json
@@ -16,13 +20,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 import lark_oapi as lark
 import requests
@@ -37,6 +42,26 @@ from path_util import DATA_DIR
 from video_enhancer_pipeline_db import init_db as init_pipeline_db, update_push_status
 
 load_dotenv()
+
+
+def normalize_cover_image_url_for_bitable(url: str) -> str:
+    """
+    广大大等来源的封面 URL 路径若以 .image 结尾，飞书多维表「链接」字段常无法预览；
+    将路径后缀改为 .png（多数 CDN 同资源可访问）。
+    """
+    u = (url or "").strip()
+    if not u:
+        return u
+    try:
+        p = urlparse(u)
+        path = p.path
+        if not re.search(r"\.image$", path, re.IGNORECASE):
+            return u
+        new_path = re.sub(r"\.image$", ".png", path, flags=re.IGNORECASE)
+        return urlunparse((p.scheme, p.netloc, new_path, p.params, p.query, p.fragment))
+    except Exception:
+        return u
+
 
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
@@ -69,10 +94,11 @@ CLUSTER_FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "标题", "type": 1},
     {"field_name": "抓取日期", "type": 5},
     {"field_name": "背景", "type": 1},
-    {"field_name": "建议", "type": 1},
+    {"field_name": "UA建议", "type": 1},
     {"field_name": "产品对标点", "type": 1},
     {"field_name": "风险提示", "type": 1},
     {"field_name": "视频链接", "type": 1},
+    {"field_name": "图片链接", "type": 1},
     {"field_name": "接受情况", "type": 3, "options": [{"name": "待定"}, {"name": "删除"}, {"name": "接受"}]},
 ]
 
@@ -89,6 +115,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--analysis", default=str(DATA_DIR / "video_analysis_test_video_enhancer_2_2026-03-18_raw.json"))
     p.add_argument("--suggestion-json", default=str(DATA_DIR / "video_enhancer_ua_suggestion_from_analysis.json"))
     p.add_argument("--suggestion-md", default=str(DATA_DIR / "video_enhancer_ua_suggestion_from_analysis.md"))
+    p.add_argument(
+        "--sync-target",
+        choices=["both", "raw", "cluster"],
+        default="both",
+        help="多维表同步目标：both=主表+聚类表，raw=仅主表，cluster=仅聚类表",
+    )
     p.add_argument("--no-card", action="store_true", help="只同步表，不发卡片")
     return p.parse_args()
 
@@ -279,13 +311,64 @@ def pick_video_urls(creative: Dict[str, Any], max_n: int = 5) -> List[str]:
     return out
 
 
-def format_video_links(urls: List[str], max_n: int = 5) -> str:
-    picked = [u for u in (urls or []) if u][:max_n]
+def format_video_links(urls: List[str], max_n: int = 0) -> str:
+    picked = [u for u in (urls or []) if u]
+    if max_n and max_n > 0:
+        picked = picked[:max_n]
     if not picked:
         return ""
-    # 多维表单元格不会解析 markdown 链接，改为“视频1：https://...”形式，
-    # 让 URL 由多维表自动识别为可点击链接。
-    return "；".join([f"视频{i}：{u}" for i, u in enumerate(picked, start=1)])
+    # 多维表单元格对 URL 识别更偏好“换行分隔”，用每行一个 URL 避免只显示前几个。
+    return "\n".join([f"视频{i}：{u}" for i, u in enumerate(picked, start=1)])
+
+
+def format_image_links(urls: List[str], max_n: int = 0) -> str:
+    picked = [u for u in (urls or []) if u]
+    if max_n and max_n > 0:
+        picked = picked[:max_n]
+    if not picked:
+        return ""
+    return "\n".join([f"图片{i}：{u}" for i, u in enumerate(picked, start=1)])
+
+
+def build_meta_by_ad_from_analysis_payload(analysis: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """从 video_analysis_* JSON 的 results 构建 ad_key → 媒体元信息（供卡片/聚类表映射）。"""
+    meta_by_ad: Dict[str, Dict[str, Any]] = {}
+    for it in (analysis or {}).get("results") or []:
+        if not isinstance(it, dict):
+            continue
+        k = str(it.get("ad_key") or "").strip()
+        if not k:
+            continue
+        vu = str(it.get("video_url") or "").strip()
+        iu = normalize_cover_image_url_for_bitable(str(it.get("image_url") or "").strip())
+        pu = normalize_cover_image_url_for_bitable(str(it.get("preview_img_url") or "").strip())
+        ct = str(it.get("creative_type") or "").strip() or ("image" if (not vu and iu) else "video")
+        meta_by_ad[k] = {
+            "creative_type": ct,
+            "video_url": vu,
+            "image_url": iu,
+            "preview_img_url": pu,
+        }
+    return meta_by_ad
+
+
+def _media_slices_from_meta(meta: Dict[str, Any]) -> tuple[List[str], List[str]]:
+    """单条素材 meta（来自 analysis results）拆成 (视频 URL 列表, 图片 URL 列表)。"""
+    ct = str(meta.get("creative_type") or "video")
+    vu = str(meta.get("video_url") or "").strip()
+    iu = str(meta.get("image_url") or "").strip()
+    pu = str(meta.get("preview_img_url") or "").strip()
+    videos: List[str] = []
+    images: List[str] = []
+    if ct == "image":
+        if iu:
+            images.append(iu)
+        elif pu:
+            images.append(pu)
+    else:
+        if vu:
+            videos.append(vu)
+    return videos, images
 
 
 def push_card(webhook: str, title: str, md_text: str) -> None:
@@ -318,18 +401,29 @@ def _card_video_links(video_urls: List[str], max_n: int = 5) -> str:
     return "；".join(links)
 
 
+def _card_mixed_links(video_urls: List[str], image_urls: List[str], max_n: int = 5) -> str:
+    v = [u for u in video_urls if u][:max_n]
+    im = [u for u in image_urls if u][:max_n]
+    if not v and not im:
+        return "（无）"
+    parts = [f"[视频{i}]({u})" for i, u in enumerate(v, start=1)]
+    parts += [f"[图片{i}]({u})" for i, u in enumerate(im, start=1)]
+    return "；".join(parts)
+
+
 def _render_card_markdown(
     suggestion_json: Dict[str, Any] | None,
     suggestion_md: str,
-    adkey_to_video: Dict[str, str],
-    fallback_videos: List[str],
+    meta_by_ad: Dict[str, Dict[str, Any]],
     intro_md: str = "",
     bitable_url: str = "",
+    include_ua_suggestion: bool = True,
+    include_product_benchmark: bool = True,
 ) -> str:
     """
     优先使用 suggestion_json 的方向卡片结构渲染；
     若没有则回退 suggestion_md。
-    - 参考链接通过 ad_key 映射到 video_url，可点击且命名为 [视频1]/[视频2]...
+    - 参考链接通过 ad_key 映射到视频/图片 URL（见 meta_by_ad），飞书卡片内为 [视频n]/[图片n]。
     """
     intro_md = (intro_md or "").strip()
     bitable_url = (bitable_url or "").strip()
@@ -368,33 +462,34 @@ def _render_card_markdown(
             continue
         name = str(card.get("方向名称") or "未命名方向")
         lines.append(f"**[video enhancer 方向] {name}**")
-        lines.append(f"🎬 背景：{card.get('背景', '')}")
-        lines.append(f"🎯 UA建议：{card.get('UA建议', '')}")
-        lines.append(f"🧩 产品对标点：{card.get('产品对标点', '')}")
-        lines.append(f"⚠️ 风险提示：{card.get('风险提示', '')}")
+        lines.append(f"**🎬 背景：**{card.get('背景', '')}")
+        if include_ua_suggestion:
+            lines.append(f"**🎯 UA建议：**{card.get('UA建议', '')}")
+        if include_product_benchmark:
+            lines.append(f"**🧩 产品对标点：**{card.get('产品对标点', '')}")
+        lines.append(f"**⚠️ 风险提示：**{card.get('风险提示', '')}")
 
-        # 严格按 ad_key 映射到 video_url，不接受模型直接给 URL（防止错链）
-        mapped: List[str] = []
+        v_merged: List[str] = []
+        i_merged: List[str] = []
+        seen_v: set[str] = set()
+        seen_i: set[str] = set()
         raw_links = card.get("参考链接") or []
         if isinstance(raw_links, list):
             for x in raw_links:
                 sx = str(x or "").strip()
-                if not sx:
+                if not sx or sx not in meta_by_ad:
                     continue
-                if sx in adkey_to_video and adkey_to_video[sx]:
-                    mapped.append(adkey_to_video[sx])
+                tv, ti = _media_slices_from_meta(meta_by_ad[sx])
+                for u in tv:
+                    if u and u not in seen_v:
+                        seen_v.add(u)
+                        v_merged.append(u)
+                for u in ti:
+                    if u and u not in seen_i:
+                        seen_i.add(u)
+                        i_merged.append(u)
 
-        # 去重保序
-        dedup: List[str] = []
-        seen: set[str] = set()
-        for u in mapped:
-            if not u or u in seen:
-                continue
-            seen.add(u)
-            dedup.append(u)
-        mapped = dedup
-
-        lines.append(f"🔗 参考链接：{_card_video_links(mapped, max_n=5)}")
+        lines.append(f"🔗 参考链接：{_card_mixed_links(v_merged, i_merged, max_n=5)}")
         lines.append("")
 
     lines.append("**共性执行建议**")
@@ -409,27 +504,71 @@ def _render_card_markdown(
     return _append_bitable_link("\n".join(lines))
 
 
-def _extract_card_video_urls(card: Dict[str, Any], adkey_to_video: Dict[str, str], fallback_videos: List[str], start_idx: int) -> tuple[List[str], int]:
-    _ = fallback_videos
-    _ = start_idx
-    mapped: List[str] = []
+def _extract_card_media(
+    card: Dict[str, Any],
+    meta_by_ad: Dict[str, Dict[str, Any]],
+    max_each: int = 0,
+) -> tuple[List[str], List[str]]:
+    v_out: List[str] = []
+    i_out: List[str] = []
+    seen_v: set[str] = set()
+    seen_i: set[str] = set()
     raw_links = card.get("参考链接") or []
     if isinstance(raw_links, list):
         for x in raw_links:
             sx = str(x or "").strip()
-            if not sx:
+            if not sx or sx not in meta_by_ad:
                 continue
-            if sx in adkey_to_video and adkey_to_video[sx]:
-                mapped.append(adkey_to_video[sx])
-    # 去重保序
-    out: List[str] = []
-    seen: set[str] = set()
-    for u in mapped:
-        if not u or u in seen:
+            tv, ti = _media_slices_from_meta(meta_by_ad[sx])
+            for u in tv:
+                if u and u not in seen_v and (not max_each or len(v_out) < max_each):
+                    seen_v.add(u)
+                    v_out.append(u)
+            for u in ti:
+                if u and u not in seen_i and (not max_each or len(i_out) < max_each):
+                    seen_i.add(u)
+                    i_out.append(u)
+    return v_out, i_out
+
+
+def raw_items_with_successful_analysis(
+    raw: Dict[str, Any],
+    analysis: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """
+    主表仅同步「本次 analysis 里有成功灵感分析」的素材：非空且不以 [ERROR] 开头。
+    顺序与 analysis JSON 的 results 一致；同一 ad_key 只出现一次。
+    """
+    raw_by_ad: Dict[str, Dict[str, Any]] = {}
+    for item in raw.get("items") or []:
+        if not isinstance(item, dict):
             continue
-        seen.add(u)
-        out.append(u)
-    return out[:5], start_idx
+        c = item.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        k = str(c.get("ad_key") or "").strip()
+        if k:
+            raw_by_ad[k] = item
+
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for it in analysis.get("results") or []:
+        if not isinstance(it, dict):
+            continue
+        k = str(it.get("ad_key") or "").strip()
+        a = str(it.get("analysis") or "")
+        if not k or k in seen:
+            continue
+        if not a.strip() or a.startswith("[ERROR]"):
+            continue
+        if it.get("exclude_from_bitable"):
+            continue
+        item = raw_by_ad.get(k)
+        if item is None:
+            continue
+        seen.add(k)
+        out.append(item)
+    return out
 
 
 def sync_cluster_cards_to_bitable(
@@ -437,8 +576,7 @@ def sync_cluster_cards_to_bitable(
     cluster_url: str,
     target_date: str,
     suggestion_json: Dict[str, Any] | None,
-    adkey_to_video: Dict[str, str],
-    fallback_videos: List[str],
+    meta_by_ad: Dict[str, Dict[str, Any]],
 ) -> int:
     cluster_url = (cluster_url or "").strip()
     if not cluster_url:
@@ -454,19 +592,19 @@ def sync_cluster_cards_to_bitable(
 
     target_ms = to_ms_from_date_str(target_date)
     records: List[Dict[str, Any]] = []
-    fb_idx = 0
     for card in cards:
         if not isinstance(card, dict):
             continue
         name = str(card.get("方向名称") or "未命名方向")
-        urls, fb_idx = _extract_card_video_urls(card, adkey_to_video, fallback_videos, fb_idx)
+        v_urls, i_urls = _extract_card_media(card, meta_by_ad, max_each=0)
         fields: Dict[str, Any] = {
             "标题": name,
             "背景": str(card.get("背景") or ""),
-            "建议": str(card.get("UA建议") or ""),
+            "UA建议": str(card.get("UA建议") or ""),
             "产品对标点": str(card.get("产品对标点") or ""),
             "风险提示": str(card.get("风险提示") or ""),
-            "视频链接": format_video_links(urls, max_n=5),
+            "视频链接": format_video_links(v_urls, max_n=0),
+            "图片链接": format_image_links(i_urls, max_n=0),
             "接受情况": "待定",
         }
         if target_ms is not None:
@@ -500,25 +638,24 @@ def main() -> None:
     suggestion_md = Path(args.suggestion_md).read_text(encoding="utf-8") if Path(args.suggestion_md).exists() else ""
 
     analysis_by_ad: Dict[str, str] = {}
-    video_by_ad: Dict[str, str] = {}
-    fallback_videos: List[str] = []
+    ua_single_by_ad: Dict[str, str] = {}
+    meta_by_ad = build_meta_by_ad_from_analysis_payload(analysis)
     for it in analysis.get("results") or []:
         if isinstance(it, dict):
-            k = str(it.get("ad_key") or "")
+            k = str(it.get("ad_key") or "").strip()
             if k:
                 analysis_by_ad[k] = str(it.get("analysis") or "")
-                v = str(it.get("video_url") or "")
-                if v:
-                    video_by_ad[k] = v
-                    fallback_videos.append(v)
+                ua_single_by_ad[k] = str(it.get("ua_suggestion_single") or "")
 
     token = get_tenant_access_token()
-    ensure_fields(token, app_token, table_id)
+    need_raw_sync = args.sync_target in ("both", "raw")
+    need_cluster_sync = args.sync_target in ("both", "cluster")
+    if need_raw_sync:
+        ensure_fields(token, app_token, table_id)
 
     records: List[Dict[str, Any]] = []
     target_date = str(raw.get("target_date") or "")
     target_ms = to_ms_from_date_str(target_date)
-    ua_suggestion_text = suggestion_md.strip()[:50000] if suggestion_md else ""
     # 卡片前置信息：仅保留日期（不展示筛选规则/计数/产品分布）
     raw_items = raw.get("items") or []
     by_product: Dict[str, int] = {}
@@ -544,78 +681,108 @@ def main() -> None:
     intro_lines: List[str] = [f"【Video Enhancer 日报】{target_date}"]
 
     intro_md = "\n".join(intro_lines)
-    for item in raw.get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        c = item.get("creative") or {}
-        if not isinstance(c, dict):
-            continue
-        ad_key = str(c.get("ad_key") or "")
-        fields: Dict[str, Any] = {
-            "标题": str(c.get("title") or ""),
-            "类目": str(item.get("category") or ""),
-            "产品": str(item.get("product") or ""),
-            "广告主": str(c.get("advertiser_name") or ""),
-            "正文（中文）": str(c.get("body") or ""),
-            "平台": str(c.get("platform") or ""),
-            "视频链接": pick_video_url(c),
-            "封面图链接": str(c.get("preview_img_url") or ""),
-            "AI分析结果": analysis_by_ad.get(ad_key, ""),
-            "UA灵感借鉴": ua_suggestion_text,
-            "视频时长": int(c.get("video_duration") or 0),
-            "接受情况": "待定",
-            "我方产品": "video enhancer产品线",
-            "广告ID": ad_key,
-        }
-        if target_ms is not None:
-            fields["抓取日期"] = target_ms
-        pt = c.get("pipeline_tags")
-        if isinstance(pt, list) and pt:
-            fields["素材标签"] = "、".join(str(x) for x in pt if x)
-        else:
-            fields["素材标签"] = ""
-        created_ms = to_ms_from_unix_sec(c.get("created_at"))
-        first_seen_ms = to_ms_from_unix_sec(c.get("first_seen"))
-        if created_ms is not None:
-            fields["创建时间"] = created_ms
-            fields["更新时间"] = created_ms
-        elif first_seen_ms is not None:
-            fields["创建时间"] = first_seen_ms
-            fields["更新时间"] = first_seen_ms
+    if need_raw_sync:
+        n_style_skip = sum(
+            1
+            for it in (analysis.get("results") or [])
+            if isinstance(it, dict) and it.get("exclude_from_bitable")
+        )
+        if n_style_skip:
+            print(f"[sync] 主表将跳过「我方已投套路」素材 {n_style_skip} 条（不同步多维表）。")
+        items_to_sync = raw_items_with_successful_analysis(raw, analysis)
+        n_raw_items = len(raw.get("items") or [])
+        if n_raw_items > len(items_to_sync):
+            print(
+                f"[sync] 主表仅同步成功灵感分析：{len(items_to_sync)} 条（raw 共 {n_raw_items} 条，其余未写入主表）。"
+            )
+        elif not items_to_sync and n_raw_items:
+            print(
+                "[sync] 警告：raw 有素材但 analysis 中无成功灵感分析，主表将写入 0 条。"
+            )
+        for item in items_to_sync:
+            c = item.get("creative") or {}
+            if not isinstance(c, dict):
+                continue
+            ad_key = str(c.get("ad_key") or "")
+            category = str(item.get("category") or "").strip()
+            if category:
+                own_product_line = f"{category}产品线"
+            else:
+                own_product_line = "unknown产品线"
+            fields: Dict[str, Any] = {
+                "标题": str(c.get("title") or ""),
+                "类目": category,
+                "产品": str(item.get("product") or ""),
+                "广告主": str(c.get("advertiser_name") or ""),
+                "正文（中文）": str(c.get("body") or ""),
+                "平台": str(c.get("platform") or ""),
+                "视频链接": pick_video_url(c),
+                "封面图链接": normalize_cover_image_url_for_bitable(
+                    str(c.get("preview_img_url") or "")
+                ),
+                "AI分析结果": analysis_by_ad.get(ad_key, ""),
+                "UA灵感借鉴": ua_single_by_ad.get(ad_key, ""),
+                "视频时长": int(c.get("video_duration") or 0),
+                "接受情况": "待定",
+                "我方产品": own_product_line,
+                "广告ID": ad_key,
+            }
+            if target_ms is not None:
+                fields["抓取日期"] = target_ms
+            pt = c.get("pipeline_tags")
+            if isinstance(pt, list) and pt:
+                fields["素材标签"] = "、".join(str(x) for x in pt if x)
+            else:
+                fields["素材标签"] = ""
+            created_ms = to_ms_from_unix_sec(c.get("created_at"))
+            first_seen_ms = to_ms_from_unix_sec(c.get("first_seen"))
+            if created_ms is not None:
+                fields["创建时间"] = created_ms
+                fields["更新时间"] = created_ms
+            elif first_seen_ms is not None:
+                fields["创建时间"] = first_seen_ms
+                fields["更新时间"] = first_seen_ms
 
-        img_url = str(c.get("preview_img_url") or "")
-        if img_url:
-            ft = upload_image_as_attachment(img_url, app_token)
-            if ft:
-                fields["封面图"] = [{"file_token": ft}]
+            img_url = normalize_cover_image_url_for_bitable(
+                str(c.get("preview_img_url") or "")
+            )
+            if img_url:
+                ft = upload_image_as_attachment(img_url, app_token)
+                if ft:
+                    fields["封面图"] = [{"file_token": ft}]
 
-        records.append({"fields": fields})
+            records.append({"fields": fields})
 
-    total = 0
-    for i in range(0, len(records), BATCH_SIZE):
-        batch = records[i : i + BATCH_SIZE]
-        if not batch:
-            continue
-        batch_create_records(token, app_token, table_id, batch)
-        total += len(batch)
-        print(f"[sync] 已写入 {total}/{len(records)}")
-        time.sleep(0.2)
-
-    print(f"[sync] 完成，共写入 {total} 条。")
+        total = 0
+        for i in range(0, len(records), BATCH_SIZE):
+            batch = records[i : i + BATCH_SIZE]
+            if not batch:
+                continue
+            batch_create_records(token, app_token, table_id, batch)
+            total += len(batch)
+            print(f"[sync] 已写入 {total}/{len(records)}")
+            time.sleep(0.2)
+        print(
+            f"[sync] 主表同步完成，共写入 {total} 条（仅含成功灵感分析）。"
+        )
+    else:
+        print("[sync] 已按参数跳过主表同步（--sync-target=cluster）。")
 
     if not args.no_card and (suggestion_md.strip() or suggestion_json):
         card_md = _render_card_markdown(
             suggestion_json=suggestion_json,
             suggestion_md=suggestion_md,
-            adkey_to_video=video_by_ad,
-            fallback_videos=fallback_videos,
+            meta_by_ad=meta_by_ad,
             intro_md=intro_md,
             bitable_url=args.url,
+            include_ua_suggestion=False,
+            include_product_benchmark=True,
         )
+        card_title = f"广大大素材日报（{target_date}）" if target_date else "广大大素材日报"
         try:
             push_card(
                 FEISHU_BOT_WEBHOOK,
-                "Video Enhancer 统一UA建议（基于竞品素材）",
+                card_title,
                 card_md,
             )
             # 推送成功后，更新 DB 状态
@@ -640,18 +807,19 @@ def main() -> None:
                 )
             raise
 
-    if suggestion_json:
+    if need_cluster_sync and suggestion_json:
         try:
             sync_cluster_cards_to_bitable(
                 access_token=token,
                 cluster_url=args.cluster_url,
                 target_date=target_date,
                 suggestion_json=suggestion_json,
-                adkey_to_video=video_by_ad,
-                fallback_videos=fallback_videos,
+                meta_by_ad=meta_by_ad,
             )
         except Exception as e:
             print(f"[cluster-sync] 聚类多维表同步失败：{e}")
+    elif not need_cluster_sync:
+        print("[cluster-sync] 已按参数跳过聚类表同步（--sync-target=raw）。")
 
 
 if __name__ == "__main__":

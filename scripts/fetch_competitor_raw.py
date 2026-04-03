@@ -99,6 +99,7 @@ async def main() -> None:
         is_tool=True,
         order_by="latest",
         use_popularity_top1=False,
+        enable_dom_track=True,  # 仅此脚本启用 DOM 补充，主工作流不受影响
     )
 
     napi_creatives: list[dict] = []

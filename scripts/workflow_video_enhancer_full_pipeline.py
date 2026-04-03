@@ -1,10 +1,11 @@
 """
 Video Enhancer 全流程工作流（一键）：
 1) 抓取（按日期 + 指定产品）
-2) 视频灵感分析（基于 raw JSON）
-3) 生成统一 UA 建议（方向卡片）
-4) 同步 raw + 分析 到多维表
-5) 推送 UA 建议飞书卡片
+2) 可选封面日内去重（可用 --skip-cover-dedupe 跳过；与抓取拆分请用 workflow_video_enhancer_steps crawl_store --crawl-only + cover_store）
+3) 视频灵感分析（基于 raw JSON）
+4) 生成统一 UA 建议（方向卡片）
+5) 同步 raw + 分析 到多维表
+6) 推送 UA 建议飞书卡片
 
 示例：
 python scripts/workflow_video_enhancer_full_pipeline.py \
@@ -31,13 +32,100 @@ from dotenv import load_dotenv
 from path_util import DATA_DIR, PROJECT_ROOT
 
 load_dotenv(PROJECT_ROOT / ".env")
+
+from cover_style_intraday import apply_intraday_cover_style_dedupe, is_cover_style_intraday_enabled
+
+from ua_crawl_db import format_video_enhancer_usage_log_line
+
 from video_enhancer_pipeline_db import (
+    get_deduped_items_for_analysis,
     init_db as init_pipeline_db,
     load_existing_success_analysis_by_ad_keys,
+    should_persist_suggestion_to_push_table,
+    upsert_analysis_embedding,
+    upsert_creative_library,
     upsert_daily_creative_insights,
     upsert_daily_push_content,
     upsert_daily_video_enhancer_filter_log,
 )
+
+
+def _store_analysis_embeddings(analysis_by_ad: dict[str, dict]) -> None:
+    """对有分析文本的素材计算嵌入向量并写入 creative_library.analysis_embedding。"""
+    try:
+        import llm_client
+    except ImportError:
+        return
+    stored = 0
+    for ad_key, info in analysis_by_ad.items():
+        text = str(info.get("analysis") or "") if isinstance(info, dict) else str(info or "")
+        if not text or text.startswith("[ERROR]") or len(text) < 20:
+            continue
+        try:
+            vec = llm_client.call_embedding(text[:2000])
+            blob = llm_client.embedding_to_bytes(vec)
+            upsert_analysis_embedding(ad_key, blob)
+            stored += 1
+        except Exception as e:
+            print(f"[embedding] failed ad_key={ad_key[:12]}: {e}")
+            break
+    if stored:
+        print(f"[embedding] 已为 {stored} 条素材写入分析嵌入向量。")
+
+
+def _apply_semantic_dedup(target_date: str, combined_results: list[dict]) -> int:
+    """对 combined_results 中有分析文本的素材与历史嵌入做语义比对。
+    命中则设 exclude_from_cluster=True，返回标记数。"""
+    try:
+        import llm_client
+        from video_enhancer_pipeline_db import SEMANTIC_DEDUP_THRESHOLD, load_embeddings_for_crossday
+    except ImportError:
+        return 0
+
+    all_hist = load_embeddings_for_crossday(target_date)
+    if not all_hist:
+        return 0
+
+    from collections import defaultdict
+    hist_by_app: dict[str, list] = defaultdict(list)
+    for h in all_hist:
+        aid = str(h.get("appid") or "")
+        hist_by_app[aid].append(h)
+
+    marked = 0
+    for r in combined_results:
+        if not isinstance(r, dict) or r.get("exclude_from_cluster"):
+            continue
+        analysis = str(r.get("analysis") or "")
+        if not analysis or len(analysis) < 20 or analysis.startswith("[ERROR]"):
+            continue
+        appid = str(r.get("appid") or "")
+        bucket = hist_by_app.get(appid, [])
+        if not bucket:
+            continue
+        try:
+            vec = llm_client.call_embedding(analysis[:2000])
+        except Exception:
+            continue
+
+        best_sim = 0.0
+        best_ak = ""
+        for h in bucket:
+            h_vec = llm_client.bytes_to_embedding(h["analysis_embedding"])
+            sim = llm_client.cosine_similarity(vec, h_vec)
+            if sim > best_sim:
+                best_sim = sim
+                best_ak = h["ad_key"]
+
+        if best_sim >= SEMANTIC_DEDUP_THRESHOLD:
+            r["exclude_from_cluster"] = True
+            r["semantic_dedup_matched"] = best_ak
+            r["semantic_dedup_similarity"] = round(best_sim, 3)
+            ad_key = str(r.get("ad_key") or "")[:12]
+            print(f"[semantic-dedup] {ad_key} ≈ {best_ak[:12]} (sim={best_sim:.3f}) → exclude_from_cluster")
+            marked += 1
+
+    return marked
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,6 +171,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="跳过 Google Sheet 同步",
     )
+    p.add_argument(
+        "--skip-cover-dedupe",
+        action="store_true",
+        help="跳过封面日内多模态聚类去重（抓取后直接用全量 raw 入库并继续后续步骤）",
+    )
     return p.parse_args()
 
 
@@ -105,9 +198,26 @@ def _resolve_cluster_bitable_url(args: argparse.Namespace) -> str:
     return url
 
 
+def _subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    # cron 等非 TTY 下子进程继承后仍可无缓冲输出，便于日志实时落盘
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    return env
+
+
+def _ensure_line_buffered_stdio() -> None:
+    """非 TTY（如 cron | tee）下默认块缓冲，尽早改为行缓冲以便观察进度。"""
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(line_buffering=True)
+            sys.stderr.reconfigure(line_buffering=True)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
 def _run(cmd: list[str]) -> None:
     print("\n$ " + " ".join(cmd))
-    subprocess.run(cmd, check=True, cwd=str(PROJECT_ROOT))
+    subprocess.run(cmd, check=True, cwd=str(PROJECT_ROOT), env=_subprocess_env())
 
 
 def _extract_ad_keys(raw_payload: dict) -> list[str]:
@@ -128,6 +238,7 @@ def _extract_ad_keys(raw_payload: dict) -> list[str]:
 
 
 def main() -> None:
+    _ensure_line_buffered_stdio()
     args = parse_args()
     bitable_url = _resolve_bitable_url(args)
     cluster_bitable_url = _resolve_cluster_bitable_url(args)
@@ -160,14 +271,65 @@ def main() -> None:
     # 2) 先把“原始素材”落库（不带分析），再做增量分析
     init_pipeline_db()
     raw_payload = json.loads(raw_path.read_text(encoding="utf-8"))
+    if args.skip_cover_dedupe:
+        print(
+            "[cover-style] 已跳过（--skip-cover-dedupe）。"
+            "若需与抓取拆分：请用 workflow_video_enhancer_steps.py crawl_store --crawl-only 后再 cover_store。"
+        )
+    elif is_cover_style_intraday_enabled():
+        items = raw_payload.get("items") or []
+        items2, cover_rep = apply_intraday_cover_style_dedupe(
+            items, target_date, raw_payload.get("crawl_date")
+        )
+        raw_payload["items"] = items2
+        raw_payload["cover_style_intraday_report"] = cover_rep
+        raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(
+            f"[cover-style] 日内同产品封面聚类（展示估值最高保留）: "
+            f"{cover_rep.get('input_count', len(items))} → {cover_rep.get('output_count', len(items2))} 条"
+            + (f", removed={cover_rep.get('removed_total', 0)}" if not cover_rep.get("skipped") else "")
+        )
+        cover_rep_path = DATA_DIR / f"{output_prefix}_cover_style_intraday.json"
+        cover_rep_path.write_text(json.dumps(cover_rep, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[cover-style] 报告已写 {cover_rep_path.name}")
+    else:
+        print(
+            "[cover-style] 多模态封面去重已关闭（COVER_STYLE_INTRADAY_ENABLED=0）；"
+            "去重仅走 get_deduped_items_for_analysis（ahash + URL + ad_key，同 appid）。"
+        )
+
     n_raw = upsert_daily_creative_insights(target_date, raw_payload, {})
     print(f"[DB] 原始素材已落库 daily_creative_insights: {n_raw} 条（analysis 为空）。")
 
-    ad_keys = _extract_ad_keys(raw_payload)
-    existing_analysis = load_existing_success_analysis_by_ad_keys(ad_keys)
+    # 2b) 写入素材主库并执行多维去重归组（记录全量）
+    n_lib, n_grouped = upsert_creative_library(target_date, raw_payload)
+    print(f"[DB] 素材主库 creative_library: 写入/更新 {n_lib} 条，发现重复归组 {n_grouped} 条。")
+
+    # 2c) 多维去重过滤：日内去重 + 跨日去重，只保留真正新的唯一素材进入后续分析
+    deduped_items, dedup_report = get_deduped_items_for_analysis(target_date, raw_payload)
+    dedup_report_path = DATA_DIR / f"{output_prefix}_dedup_report.json"
+    dedup_report_path.write_text(json.dumps(dedup_report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(
+        f"[dedup] 原始 {dedup_report['total_input']} 条 "
+        f"→ 日内去重后 {dedup_report['after_intraday']} 条（去除 {dedup_report['intraday_removed_count']} 条重复）"
+        f"→ 跨日去重后 {dedup_report['after_crossday']} 条（去除 {dedup_report['crossday_removed_count']} 条历史素材）"
+    )
+
+    # 去重后的素材集作为后续所有步骤的输入（分析/推送/多维表）
+    deduped_raw_payload = {
+        "target_date": raw_payload.get("target_date"),
+        "crawl_date": raw_payload.get("crawl_date"),
+        "total": len(deduped_items),
+        "items": deduped_items,
+        "filter_report": raw_payload.get("filter_report"),
+    }
+
+    # 在去重后素材里再跳过已有成功分析的（复用缓存）
+    deduped_ad_keys = _extract_ad_keys(deduped_raw_payload)
+    existing_analysis = load_existing_success_analysis_by_ad_keys(deduped_ad_keys)
 
     pending_items: list[dict] = []
-    for item in raw_payload.get("items") or []:
+    for item in deduped_items:
         if not isinstance(item, dict):
             continue
         creative = item.get("creative") or {}
@@ -181,15 +343,15 @@ def main() -> None:
         pending_items.append(item)
 
     pending_raw_payload = {
-        "target_date": raw_payload.get("target_date"),
-        "crawl_date": raw_payload.get("crawl_date"),
+        "target_date": deduped_raw_payload.get("target_date"),
+        "crawl_date": deduped_raw_payload.get("crawl_date"),
         "total": len(pending_items),
         "items": pending_items,
     }
     pending_raw_path = DATA_DIR / f"{output_prefix}_raw_pending_analysis.json"
     pending_raw_path.write_text(json.dumps(pending_raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
-        f"[analysis] 总素材 {len(ad_keys)} 条；命中历史成功分析 {len(existing_analysis)} 条；"
+        f"[analysis] 去重后 {len(deduped_ad_keys)} 条；命中历史成功分析 {len(existing_analysis)} 条；"
         f"本次需新分析 {len(pending_items)} 条。"
     )
 
@@ -251,9 +413,9 @@ def main() -> None:
         for x in failed_analysis:
             print(f"  - ad_key={x.get('ad_key')} error={x.get('error')}")
 
-    # 组装“完整分析结果”（历史成功 + 本次成功），供后续建议/推送统一使用
+    # 组装“完整分析结果”（历史成功 + 本次成功），仅包含去重后的唯一素材
     combined_results: list[dict] = []
-    for item in raw_payload.get("items") or []:
+    for item in deduped_items:
         if not isinstance(item, dict):
             continue
         creative = item.get("creative") or {}
@@ -270,6 +432,7 @@ def main() -> None:
     analysis_payload = {
         "input_file": str(raw_path),
         "total_items": len(raw_payload.get("items") or []),
+        "deduped_items": len(deduped_items),
         "analyzed_items": len(combined_results),
         "reused_existing": len(existing_analysis),
         "new_success": len(new_success_by_ad),
@@ -279,23 +442,39 @@ def main() -> None:
     analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[analysis] 合并分析结果 {len(combined_results)} 条，输出 {analysis_path}")
 
-    # 2.5) 回写成功分析到 DB；失败不入库
-    analysis_by_ad: dict[str, str] = {}
+    # 2.5) 回写成功分析到 DB（全量原始素材都记录，去重后素材带 analysis）
+    analysis_by_ad: dict[str, dict] = {}
     for it in combined_results:
         if isinstance(it, dict):
             k = str(it.get("ad_key") or "")
             v = str(it.get("analysis") or "")
             if k and v and not v.startswith("[ERROR]"):
-                analysis_by_ad[k] = v
+                analysis_by_ad[k] = {
+                    "analysis": v,
+                    "ua_suggestion_single": str(it.get("ua_suggestion_single") or ""),
+                }
     n_insights = upsert_daily_creative_insights(target_date, raw_payload, analysis_by_ad)
     n_filter_logs = upsert_daily_video_enhancer_filter_log(
         target_date,
         raw_payload.get("filter_report") if isinstance(raw_payload, dict) else None,
     )
     print(
-        f"[DB] 已写入 daily_creative_insights: {n_insights} 条，"
+        f"[DB] 已写入 daily_creative_insights: {n_insights} 条（含重复，完整记录），"
         f"daily_video_enhancer_filter_log: {n_filter_logs} 行。"
     )
+    # 2.6) 把本次成功分析结果同步回 creative_library（带 analysis 更新）
+    _, _ = upsert_creative_library(target_date, raw_payload, analysis_by_ad)
+    print(f"[DB] creative_library 分析结果已同步。")
+
+    # 2.7) 语义嵌入：对有分析文本的素材计算 embedding 并存入 creative_library
+    _store_analysis_embeddings(analysis_by_ad)
+
+    # 2.8) 语义去重：对 combined_results 中的素材与历史嵌入比对，命中则排除出方向卡片
+    n_sem = _apply_semantic_dedup(target_date, combined_results)
+    if n_sem:
+        analysis_payload["results"] = combined_results
+        analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[semantic-dedup] 标记 {n_sem} 条语义重复素材（exclude_from_cluster），已更新 {analysis_path.name}")
 
     # 有失败时：不生成 UA 建议，不入库 push_content，不做后续推送
     if failed_analysis:
@@ -319,7 +498,7 @@ def main() -> None:
         ]
     )
 
-    # 4+5) 同步多维表 + 飞书卡片
+    # 4) 同步多维表（与飞书卡片推送解耦）
     if not args.no_bitable_sync:
         sync_cmd = [
             py,
@@ -334,14 +513,39 @@ def main() -> None:
             str(sugg_json_path),
             "--suggestion-md",
             str(sugg_md_path),
+            "--sync-target",
+            "both" if cluster_bitable_url else "raw",
+            "--no-card",
         ]
         if cluster_bitable_url:
-            sync_cmd += ["--cluster-url", cluster_bitable_url]
-        if args.no_card:
-            sync_cmd.append("--no-card")
+            sync_cmd.extend(["--cluster-url", cluster_bitable_url])
         _run(sync_cmd)
     else:
         print("[sync] 已按参数跳过多维表同步（--no-bitable-sync）。")
+
+    # 5) 飞书卡片推送（独立于多维表同步）
+    if not args.no_card:
+        push_bitable_url = cluster_bitable_url or bitable_url
+        _run(
+            [
+                py,
+                "scripts/push_video_enhancer_feishu_card_only.py",
+                "--date",
+                target_date,
+                "--raw",
+                str(raw_path),
+                "--analysis",
+                str(analysis_path),
+                "--suggestion-md",
+                str(sugg_md_path),
+                "--suggestion-json",
+                str(sugg_json_path),
+                "--bitable-url",
+                push_bitable_url,
+            ]
+        )
+    else:
+        print("[card] 已按参数跳过飞书卡片推送（--no-card）。")
 
     # 6) 将本次推送建议写入专用 pipeline DB（推送表）
     init_pipeline_db()
@@ -363,6 +567,8 @@ def main() -> None:
             push_status="pending" if not args.no_card else "synced_without_push",
             push_response=None,
         )
+        if n_push == 0 and not should_persist_suggestion_to_push_table(suggestion_payload):
+            print("[workflow] 聚类建议未写入 daily_ua_push_content（结果为空或 LLM 失败）。")
 
     print(
         f"[DB] 已写入 daily_creative_insights: {n_insights} 条，"
@@ -371,6 +577,8 @@ def main() -> None:
     )
 
     # 7) 企业微信推送 + Google Sheet 同步
+    # 推送消息里展示的多维表链接优先使用聚类表
+    push_bitable_url = cluster_bitable_url or bitable_url
     multi_cmd = [
         py,
         "scripts/push_video_enhancer_multichannel.py",
@@ -383,7 +591,7 @@ def main() -> None:
         "--suggestion-json",
         str(sugg_json_path),
         "--bitable-url",
-        bitable_url,
+        push_bitable_url,
     ]
     if args.no_wecom:
         multi_cmd.append("--sheet-only")
@@ -398,6 +606,9 @@ def main() -> None:
     print(f"- analysis: {analysis_path}")
     print(f"- suggestion_json: {sugg_json_path}")
     print(f"- suggestion_md: {sugg_md_path}")
+    usage_line = format_video_enhancer_usage_log_line(target_date)
+    if usage_line:
+        print(usage_line)
 
 
 if __name__ == "__main__":

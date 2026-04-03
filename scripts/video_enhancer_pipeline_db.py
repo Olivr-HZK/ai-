@@ -2,15 +2,17 @@
 Video Enhancer 工作流专用 SQLite 库：
 - daily_creative_insights：每天的素材 + 灵感分析明细
 - daily_ua_push_content：每天推送到飞书的方向卡片/UA 建议
+- creative_library：跨天去重主库，多维度相似性归组
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 
 from path_util import DATA_DIR
 
@@ -51,6 +53,7 @@ def init_db() -> None:
               impression INTEGER,
               raw_json TEXT,
               insight_analysis TEXT,
+              insight_ua_suggestion TEXT,
               created_at_local TEXT DEFAULT (datetime('now','localtime')),
               updated_at_local TEXT DEFAULT (datetime('now','localtime')),
               UNIQUE(target_date, appid, ad_key)
@@ -105,7 +108,667 @@ def init_db() -> None:
             );
             """
         )
+        # 素材主库：跨天去重
+        cur.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS creative_library (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+              -- 素材唯一标识
+              ad_key TEXT NOT NULL UNIQUE,
+
+              -- 去重归组
+              dedup_group_id TEXT,          -- 同组视为重复素材，格式: ahash_{hex8} 或 adkey_{ad_key[:8]}
+              canonical_ad_key TEXT,        -- 组内代表（热度最高者）
+              is_canonical INTEGER DEFAULT 1, -- 1=本条是组代表
+
+              -- 视觉指纹
+              image_ahash_md5 TEXT,         -- 广大大提供的感知哈希（16进制字符串）
+
+              -- 文案指纹
+              text_fingerprint TEXT,        -- sha1(normalize(title+body))
+
+              -- 素材基本信息
+              category TEXT,
+              product TEXT,
+              appid TEXT,
+              platform TEXT,
+              creative_type TEXT,           -- 'video' 或 'image'
+              video_duration INTEGER,
+              title TEXT,
+              body TEXT,
+              video_url TEXT,
+              image_url TEXT,
+              preview_img_url TEXT,
+
+              -- 热度指标（取历史最高值）
+              best_heat INTEGER DEFAULT 0,
+              best_impression INTEGER DEFAULT 0,
+              best_all_exposure_value INTEGER DEFAULT 0,
+
+              -- 出现记录
+              first_target_date TEXT,       -- 第一次出现的目标日期
+              last_target_date TEXT,        -- 最近一次出现的目标日期
+              appearance_count INTEGER DEFAULT 1, -- 跨天出现次数
+
+              -- 分析结果
+              insight_analysis TEXT,
+              insight_ua_suggestion TEXT,
+
+              -- 相似性备注
+              dedup_reason TEXT,            -- 'exact'|'ahash'|'text'|'manual'
+
+              created_at_local TEXT DEFAULT (datetime('now','localtime')),
+              updated_at_local TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_cl_dedup_group ON creative_library(dedup_group_id);
+            CREATE INDEX IF NOT EXISTS idx_cl_ahash ON creative_library(image_ahash_md5);
+            CREATE INDEX IF NOT EXISTS idx_cl_text_fp ON creative_library(text_fingerprint);
+            CREATE INDEX IF NOT EXISTS idx_cl_product ON creative_library(product, category);
+            CREATE INDEX IF NOT EXISTS idx_cl_target_date ON creative_library(last_target_date);
+            """
+        )
+        # 兼容历史库：补齐新增列
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols = {str(r["name"]) for r in cur.fetchall()}
+        if "insight_ua_suggestion" not in dci_cols:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN insight_ua_suggestion TEXT")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols = {str(r["name"]) for r in cur.fetchall()}
+        if "insight_ua_suggestion" not in cl_cols:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN insight_ua_suggestion TEXT")
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols = {str(r["name"]) for r in cur.fetchall()}
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols = {str(r["name"]) for r in cur.fetchall()}
+        if "insight_cover_style" not in dci_cols:
+            cur.execute(
+                "ALTER TABLE daily_creative_insights ADD COLUMN insight_cover_style TEXT"
+            )
+        if "insight_cover_style" not in cl_cols:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN insight_cover_style TEXT")
+        # 语义嵌入去重
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols2 = {str(r["name"]) for r in cur.fetchall()}
+        if "analysis_embedding" not in cl_cols2:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN analysis_embedding BLOB")
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 工具函数：感知哈希汉明距离
+# ---------------------------------------------------------------------------
+
+def _ahash_hamming(h1: str, h2: str) -> int:
+    """计算两个 16 进制感知哈希字符串的汉明距离。长度不等则返回 999。"""
+    if not h1 or not h2 or len(h1) != len(h2):
+        return 999
+    try:
+        b1 = int(h1, 16)
+        b2 = int(h2, 16)
+        return bin(b1 ^ b2).count("1")
+    except ValueError:
+        return 999
+
+
+def _text_fingerprint(title: str, body: str) -> str:
+    """对 title+body 做归一化后取 sha1，用于文案去重。空文案返回空字符串。"""
+    raw = " ".join((title or "").split()) + " " + " ".join((body or "").split())
+    raw = raw.strip().lower()
+    if not raw:
+        return ""
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _allow_text_only_dedup(appid: str, ahash: str, media_url: str, text_fp: str) -> bool:
+    """
+    文案去重兜底规则（避免“同文案不同素材”误判）：
+    - 必须有 appid（仅同 app 内比较）
+    - 必须有 text_fingerprint
+    - 且当前素材没有可用视觉/媒体特征（无 ahash、无媒体 URL）
+    """
+    if not str(appid or "").strip():
+        return False
+    if not str(text_fp or "").strip():
+        return False
+    if str(ahash or "").strip():
+        return False
+    if str(media_url or "").strip():
+        return False
+    return True
+
+
+def _pick_video_url_from_raw(creative: Dict[str, Any]) -> str:
+    if creative.get("video_url"):
+        return str(creative["video_url"])
+    for r in creative.get("resource_urls") or []:
+        if isinstance(r, dict) and r.get("video_url"):
+            return str(r["video_url"])
+    return ""
+
+
+def _pick_image_url_from_raw(creative: Dict[str, Any]) -> str:
+    for r in creative.get("resource_urls") or []:
+        if isinstance(r, dict) and r.get("image_url") and not r.get("video_url"):
+            return str(r["image_url"])
+    if creative.get("preview_img_url"):
+        return str(creative["preview_img_url"])
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# creative_library：写入与去重逻辑
+# ---------------------------------------------------------------------------
+
+AHASH_HAMMING_THRESHOLD = 8   # 汉明距离 <= 此值视为视觉相同
+AHASH_LOOKUP_LIMIT = 2000      # 查询候选时最多取多少条（按热度降序）
+
+
+def upsert_creative_library(
+    target_date: str,
+    raw_payload: Dict[str, Any],
+    analysis_by_ad: Optional[Dict[str, Any]] = None,
+) -> Tuple[int, int]:
+    """
+    将 raw_payload 中的素材写入 creative_library，执行多维去重归组。
+
+    去重优先级：
+      1. ad_key 完全匹配 → 直接更新（exact）
+      2. image_ahash_md5 汉明距离 <= AHASH_HAMMING_THRESHOLD → 视觉相同（ahash）
+      3. text_fingerprint 兜底匹配（仅无 ahash/无媒体 URL、且同 appid）→ 文案完全相同（text）
+      4. 无匹配 → 新建，自立为组代表
+
+    返回 (upserted, grouped) - 写入条数、发现重复并归组的条数
+    """
+    init_db()
+    if analysis_by_ad is None:
+        analysis_by_ad = {}
+
+    items = raw_payload.get("items") or []
+    if not isinstance(items, list):
+        return 0, 0
+
+    conn = _get_conn()
+    upserted = 0
+    grouped = 0
+    try:
+        cur = conn.cursor()
+
+        # 预加载库中所有 ahash（用于汉明距离比对）
+        cur.execute(
+            "SELECT ad_key, image_ahash_md5, dedup_group_id FROM creative_library "
+            "WHERE image_ahash_md5 IS NOT NULL AND image_ahash_md5 != '' "
+            "ORDER BY best_impression DESC LIMIT ?",
+            (AHASH_LOOKUP_LIMIT,),
+        )
+        existing_ahash_rows: List[Dict[str, Any]] = [
+            {"ad_key": r["ad_key"], "image_ahash_md5": r["image_ahash_md5"], "dedup_group_id": r["dedup_group_id"]}
+            for r in cur.fetchall()
+        ]
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            creative = item.get("creative") or {}
+            if not isinstance(creative, dict):
+                continue
+            ad_key = str(creative.get("ad_key") or "").strip()
+            if not ad_key:
+                continue
+
+            # --- 提取字段 ---
+            ahash = str(creative.get("image_ahash_md5") or "").strip()
+            title = str(creative.get("title") or "").strip()
+            body = str(creative.get("body") or "").strip()
+            text_fp = _text_fingerprint(title, body)
+            video_url = _pick_video_url_from_raw(creative)
+            image_url = _pick_image_url_from_raw(creative) if not video_url else ""
+            media_url = video_url or image_url
+            creative_type = "video" if video_url else ("image" if image_url else "unknown")
+            preview_img_url = str(creative.get("preview_img_url") or "")
+            heat = int(creative.get("heat") or 0)
+            impression = int(creative.get("impression") or 0)
+            all_exp = int(creative.get("all_exposure_value") or 0)
+            analysis_raw = analysis_by_ad.get(ad_key, "")
+            if isinstance(analysis_raw, dict):
+                analysis = str(analysis_raw.get("analysis") or "")
+                ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
+            else:
+                analysis = str(analysis_raw or "")
+                ua_single = ""
+            appid = str(item.get("appid") or "").strip()
+            cs = item.get("cover_style")
+            if isinstance(cs, dict):
+                cover_style_str = json.dumps(cs, ensure_ascii=False)
+            elif cs is not None and str(cs).strip():
+                cover_style_str = str(cs).strip()
+            else:
+                cover_style_str = ""
+
+            # --- 检查是否已存在（完全匹配） ---
+            cur.execute(
+                "SELECT id, dedup_group_id, canonical_ad_key, appearance_count, "
+                "best_heat, best_impression, best_all_exposure_value, last_target_date "
+                "FROM creative_library WHERE ad_key = ?",
+                (ad_key,),
+            )
+            existing = cur.fetchone()
+
+            if existing:
+                new_heat = max(heat, int(existing["best_heat"] or 0))
+                new_imp = max(impression, int(existing["best_impression"] or 0))
+                new_exp = max(all_exp, int(existing["best_all_exposure_value"] or 0))
+                # 仅当 target_date 真正变化时才递增 appearance_count
+                prev_td = str(existing["last_target_date"] or "")
+                inc = 1 if prev_td != target_date else 0
+                cur.execute(
+                    """UPDATE creative_library SET
+                         last_target_date = ?,
+                         appearance_count = appearance_count + ?,
+                         best_heat = ?,
+                         best_impression = ?,
+                         best_all_exposure_value = ?,
+                         insight_analysis = CASE
+                           WHEN COALESCE(TRIM(?), '') <> '' AND ? NOT LIKE '[ERROR]%'
+                           THEN ? ELSE insight_analysis END,
+                         insight_ua_suggestion = CASE
+                           WHEN COALESCE(TRIM(?), '') <> '' AND ? NOT LIKE '[ERROR]%'
+                           THEN ? ELSE insight_ua_suggestion END,
+                         insight_cover_style = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE insight_cover_style END,
+                         updated_at_local = datetime('now','localtime')
+                       WHERE ad_key = ?""",
+                    (target_date, inc, new_heat, new_imp, new_exp,
+                     analysis, analysis, analysis,
+                     ua_single, ua_single, ua_single,
+                     cover_style_str, cover_style_str,
+                     ad_key),
+                )
+                upserted += 1
+                conn.commit()
+                continue
+
+            # --- 新素材：查找相似者，确定归组 ---
+            dedup_group_id: str = ""
+            canonical: str = ad_key
+            dedup_reason: str = "new"
+
+            # 维度2：ahash 汉明距离
+            if ahash:
+                best_dist = 999
+                best_match_ad_key = ""
+                best_match_group = ""
+                for row in existing_ahash_rows:
+                    dist = _ahash_hamming(ahash, str(row["image_ahash_md5"] or ""))
+                    if dist <= AHASH_HAMMING_THRESHOLD and dist < best_dist:
+                        best_dist = dist
+                        best_match_ad_key = str(row["ad_key"])
+                        best_match_group = str(row["dedup_group_id"] or "")
+                if best_match_ad_key:
+                    dedup_group_id = best_match_group or f"ahash_{ahash[:8]}"
+                    # 组代表取热度最高者
+                    cur.execute(
+                        "SELECT ad_key, best_impression FROM creative_library "
+                        "WHERE dedup_group_id = ? ORDER BY best_impression DESC LIMIT 1",
+                        (dedup_group_id,),
+                    )
+                    top = cur.fetchone()
+                    canonical = str(top["ad_key"]) if top and int(top["best_impression"] or 0) >= impression else ad_key
+                    dedup_reason = f"ahash(dist={best_dist})"
+                    grouped += 1
+
+            # 维度3：文案指纹兜底（仅低信息素材，且同 appid）
+            if not dedup_group_id and _allow_text_only_dedup(appid, ahash, media_url, text_fp):
+                cur.execute(
+                    "SELECT ad_key, dedup_group_id, best_impression FROM creative_library "
+                    "WHERE text_fingerprint = ? "
+                    "  AND appid = ? "
+                    "  AND COALESCE(image_ahash_md5, '') = '' "
+                    "  AND COALESCE(video_url, '') = '' "
+                    "  AND COALESCE(image_url, '') = '' "
+                    "LIMIT 1",
+                    (text_fp, appid),
+                )
+                text_match = cur.fetchone()
+                if text_match:
+                    dedup_group_id = str(text_match["dedup_group_id"] or f"text_{text_fp[:8]}")
+                    canonical_imp = int(text_match["best_impression"] or 0)
+                    canonical = str(text_match["ad_key"]) if canonical_imp >= impression else ad_key
+                    dedup_reason = "text"
+                    grouped += 1
+
+            # 无相似 → 自立新组
+            if not dedup_group_id:
+                dedup_group_id = f"adkey_{ad_key[:8]}"
+                canonical = ad_key
+                dedup_reason = "new"
+
+            is_canonical = 1 if canonical == ad_key else 0
+
+            # 新素材热度超过原组代表 → 清零旧代表，全组指向新代表
+            if canonical == ad_key and dedup_reason != "new":
+                cur.execute(
+                    "UPDATE creative_library SET is_canonical = 0, updated_at_local = datetime('now','localtime') "
+                    "WHERE dedup_group_id = ? AND is_canonical = 1",
+                    (dedup_group_id,),
+                )
+                cur.execute(
+                    "UPDATE creative_library SET canonical_ad_key = ?, updated_at_local = datetime('now','localtime') "
+                    "WHERE dedup_group_id = ?",
+                    (ad_key, dedup_group_id),
+                )
+
+            cur.execute(
+                """INSERT INTO creative_library (
+                     ad_key, dedup_group_id, canonical_ad_key, is_canonical,
+                     image_ahash_md5, text_fingerprint,
+                     category, product, appid, platform,
+                     creative_type, video_duration,
+                     title, body, video_url, image_url, preview_img_url,
+                     best_heat, best_impression, best_all_exposure_value,
+                     first_target_date, last_target_date, appearance_count,
+                     insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
+                     created_at_local, updated_at_local
+                   ) VALUES (
+                     ?, ?, ?, ?,
+                     ?, ?,
+                     ?, ?, ?, ?,
+                     ?, ?,
+                     ?, ?, ?, ?, ?,
+                     ?, ?, ?,
+                     ?, ?, 1,
+                     ?, ?, ?, ?,
+                     datetime('now','localtime'), datetime('now','localtime')
+                   )""",
+                (
+                    ad_key, dedup_group_id, canonical, is_canonical,
+                    ahash, text_fp,
+                    item.get("category"), item.get("product"), item.get("appid"),
+                    creative.get("platform"),
+                    creative_type, int(creative.get("video_duration") or 0),
+                    title, body, video_url, image_url, preview_img_url,
+                    heat, impression, all_exp,
+                    target_date, target_date,
+                    analysis, ua_single, cover_style_str, dedup_reason,
+                ),
+            )
+            upserted += 1
+            # 将新条目加入内存 ahash 缓存，供本批次后续条目比对
+            if ahash:
+                existing_ahash_rows.append({"ad_key": ad_key, "image_ahash_md5": ahash, "dedup_group_id": dedup_group_id})
+            conn.commit()
+
+    finally:
+        conn.close()
+    return upserted, grouped
+
+
+def query_dedup_summary(target_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    查询去重摘要：每个 dedup_group 的代表素材 + 重复条数。
+    target_date 不为空时，只看该日期出现过的 group。
+    """
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        if target_date:
+            cur.execute(
+                """
+                SELECT
+                  cl.dedup_group_id,
+                  cl.canonical_ad_key,
+                  cl.creative_type,
+                  cl.product,
+                  cl.platform,
+                  cl.video_url,
+                  cl.image_url,
+                  cl.title,
+                  cl.dedup_reason,
+                  COUNT(*) AS group_size,
+                  MAX(cl.best_impression) AS top_impression
+                FROM creative_library cl
+                WHERE cl.dedup_group_id IN (
+                  SELECT DISTINCT dedup_group_id FROM creative_library
+                  WHERE last_target_date = ? OR first_target_date = ?
+                )
+                GROUP BY cl.dedup_group_id
+                ORDER BY group_size DESC, top_impression DESC
+                """,
+                (target_date, target_date),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT
+                  dedup_group_id,
+                  canonical_ad_key,
+                  creative_type,
+                  product,
+                  platform,
+                  video_url,
+                  image_url,
+                  title,
+                  dedup_reason,
+                  COUNT(*) AS group_size,
+                  MAX(best_impression) AS top_impression
+                FROM creative_library
+                GROUP BY dedup_group_id
+                ORDER BY group_size DESC, top_impression DESC
+                """
+            )
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
+        INSERT INTO daily_creative_insights (
+          crawl_date, target_date, category, product, appid,
+          ad_key, platform, video_url, preview_img_url, video_duration,
+          first_seen, created_at, last_seen,
+          heat, all_exposure_value, impression,
+          raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
+          created_at_local, updated_at_local
+        ) VALUES (
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?,
+          ?, ?, ?,
+          ?, ?, ?, ?,
+          datetime('now','localtime'), datetime('now','localtime')
+        )
+        ON CONFLICT(target_date, appid, ad_key) DO UPDATE SET
+          platform=excluded.platform,
+          video_url=excluded.video_url,
+          preview_img_url=excluded.preview_img_url,
+          video_duration=excluded.video_duration,
+          first_seen=excluded.first_seen,
+          created_at=excluded.created_at,
+          last_seen=excluded.last_seen,
+          heat=excluded.heat,
+          all_exposure_value=excluded.all_exposure_value,
+          impression=excluded.impression,
+          raw_json=excluded.raw_json,
+          insight_analysis=CASE
+            WHEN COALESCE(TRIM(excluded.insight_analysis), '') <> ''
+                 AND excluded.insight_analysis NOT LIKE '[ERROR]%'
+            THEN excluded.insight_analysis
+            ELSE daily_creative_insights.insight_analysis
+          END,
+          insight_ua_suggestion=CASE
+            WHEN COALESCE(TRIM(excluded.insight_ua_suggestion), '') <> ''
+                 AND excluded.insight_ua_suggestion NOT LIKE '[ERROR]%'
+            THEN excluded.insight_ua_suggestion
+            ELSE daily_creative_insights.insight_ua_suggestion
+          END,
+          insight_cover_style=CASE
+            WHEN COALESCE(TRIM(excluded.insight_cover_style), '') <> ''
+            THEN excluded.insight_cover_style
+            ELSE daily_creative_insights.insight_cover_style
+          END,
+          updated_at_local=datetime('now','localtime');
+        """
+
+
+def _params_tuple_for_daily_creative_insight(
+    crawl_date: Any,
+    target_date: str,
+    item: Dict[str, Any],
+    analysis_raw: Any,
+) -> Optional[Tuple[Any, ...]]:
+    if not isinstance(item, dict):
+        return None
+    category = item.get("category")
+    product = item.get("product")
+    appid = item.get("appid")
+    creative = item.get("creative") or {}
+    if not isinstance(creative, dict):
+        return None
+    ad_key = str(creative.get("ad_key") or "")
+    if not ad_key:
+        return None
+    platform = creative.get("platform")
+    video_url = ""
+    if creative.get("video_url"):
+        video_url = str(creative["video_url"])
+    else:
+        for r in creative.get("resource_urls") or []:
+            if isinstance(r, dict) and r.get("video_url"):
+                video_url = str(r["video_url"])
+                break
+    preview = creative.get("preview_img_url")
+    video_duration = creative.get("video_duration")
+    first_seen = creative.get("first_seen")
+    created_at = creative.get("created_at")
+    last_seen = creative.get("last_seen")
+    heat = creative.get("heat")
+    all_exp = creative.get("all_exposure_value")
+    impression = creative.get("impression")
+    raw_json = json.dumps(creative, ensure_ascii=False)
+    if isinstance(analysis_raw, dict):
+        insight = str(analysis_raw.get("analysis") or "")
+        ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
+    else:
+        insight = str(analysis_raw or "")
+        ua_single = ""
+    cs = item.get("cover_style")
+    if isinstance(cs, dict):
+        cover_style_str = json.dumps(cs, ensure_ascii=False)
+    elif cs is not None and str(cs).strip():
+        cover_style_str = str(cs).strip()
+    else:
+        cover_style_str = ""
+    return (
+        crawl_date,
+        target_date,
+        category,
+        product,
+        appid,
+        ad_key,
+        platform,
+        video_url,
+        preview,
+        int(video_duration or 0),
+        int(first_seen or 0) if first_seen is not None else None,
+        int(created_at or 0) if created_at is not None else None,
+        int(last_seen or 0) if last_seen is not None else None,
+        int(heat or 0) if heat is not None else None,
+        int(all_exp or 0) if all_exp is not None else None,
+        int(impression or 0) if impression is not None else None,
+        raw_json,
+        insight,
+        ua_single,
+        cover_style_str,
+    )
+
+
+def upsert_single_cover_style_insight(
+    target_date: str,
+    crawl_date: Any,
+    item: Dict[str, Any],
+) -> bool:
+    """
+    仅写入/更新 insight_cover_style；analysis / ua 传空串，不覆盖库里已有灵感分析。
+    供 cover_style_intraday 每抽完一条封面风格即入库。
+    """
+    return upsert_single_daily_creative_insight(
+        target_date,
+        crawl_date,
+        item,
+        {"analysis": "", "ua_suggestion_single": ""},
+    )
+
+
+def upsert_single_daily_creative_insight(
+    target_date: str,
+    crawl_date: Any,
+    item: Dict[str, Any],
+    analysis_raw: Any,
+) -> bool:
+    """
+    单条写入/更新 daily_creative_insights（供 analyze_video_from_raw_json 每分析完一条即入库）。
+    返回 True 表示执行了一条 UPSERT。
+    """
+    init_db()
+    params = _params_tuple_for_daily_creative_insight(
+        crawl_date, target_date, item, analysis_raw
+    )
+    if params is None:
+        return False
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(UPSERT_DAILY_CREATIVE_INSIGHT_SQL, params)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def prune_daily_creative_insights_not_in_raw(
+    target_date: str,
+    raw_payload: Dict[str, Any],
+) -> int:
+    """
+    删除 daily_creative_insights 中 target_date 下、ad_key 不在当前 raw_payload.items 里的行。
+    用于「先全量抓取入库、再封面去重缩条」时，避免库里残留已剔除素材。
+    """
+    items = raw_payload.get("items") or []
+    if not isinstance(items, list):
+        return 0
+    keep: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        c = item.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        ak = str(c.get("ad_key") or "").strip()
+        if ak:
+            keep.add(ak)
+    if not keep:
+        return 0
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        placeholders = ",".join("?" * len(keep))
+        cur.execute(
+            f"""
+            DELETE FROM daily_creative_insights
+            WHERE target_date = ?
+              AND ad_key NOT IN ({placeholders})
+            """,
+            (target_date, *sorted(keep)),
+        )
+        n = cur.rowcount if cur.rowcount is not None else 0
+        conn.commit()
+        return int(n)
     finally:
         conn.close()
 
@@ -113,7 +776,7 @@ def init_db() -> None:
 def upsert_daily_creative_insights(
     target_date: str,
     raw_payload: Dict[str, Any],
-    analysis_by_ad: Dict[str, str],
+    analysis_by_ad: Dict[str, Any],
 ) -> int:
     """
     基于 raw JSON + analysis 映射，写入/更新 daily_creative_insights。
@@ -141,97 +804,23 @@ def upsert_daily_creative_insights(
     conn = _get_conn()
     try:
         cur = conn.cursor()
-        sql = """
-        INSERT INTO daily_creative_insights (
-          crawl_date, target_date, category, product, appid,
-          ad_key, platform, video_url, preview_img_url, video_duration,
-          first_seen, created_at, last_seen,
-          heat, all_exposure_value, impression,
-          raw_json, insight_analysis,
-          created_at_local, updated_at_local
-        ) VALUES (
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?,
-          ?, ?, ?,
-          ?, ?,
-          datetime('now','localtime'), datetime('now','localtime')
-        )
-        ON CONFLICT(target_date, appid, ad_key) DO UPDATE SET
-          platform=excluded.platform,
-          video_url=excluded.video_url,
-          preview_img_url=excluded.preview_img_url,
-          video_duration=excluded.video_duration,
-          first_seen=excluded.first_seen,
-          created_at=excluded.created_at,
-          last_seen=excluded.last_seen,
-          heat=excluded.heat,
-          all_exposure_value=excluded.all_exposure_value,
-          impression=excluded.impression,
-          raw_json=excluded.raw_json,
-          insight_analysis=CASE
-            WHEN COALESCE(TRIM(excluded.insight_analysis), '') <> ''
-                 AND excluded.insight_analysis NOT LIKE '[ERROR]%'
-            THEN excluded.insight_analysis
-            ELSE daily_creative_insights.insight_analysis
-          END,
-          updated_at_local=datetime('now','localtime');
-        """
         n = 0
         for item in items:
             if not isinstance(item, dict):
                 continue
-            category = item.get("category")
-            product = item.get("product")
-            appid = item.get("appid")
             creative = item.get("creative") or {}
             if not isinstance(creative, dict):
                 continue
             ad_key = str(creative.get("ad_key") or "")
             if not ad_key:
                 continue
-            platform = creative.get("platform")
-            video_url = ""
-            if creative.get("video_url"):
-                video_url = str(creative["video_url"])
-            else:
-                for r in creative.get("resource_urls") or []:
-                    if isinstance(r, dict) and r.get("video_url"):
-                        video_url = str(r["video_url"])
-                        break
-            preview = creative.get("preview_img_url")
-            video_duration = creative.get("video_duration")
-            first_seen = creative.get("first_seen")
-            created_at = creative.get("created_at")
-            last_seen = creative.get("last_seen")
-            heat = creative.get("heat")
-            all_exp = creative.get("all_exposure_value")
-            impression = creative.get("impression")
-            raw_json = json.dumps(creative, ensure_ascii=False)
-            insight = analysis_by_ad.get(ad_key) or ""
-            cur.execute(
-                sql,
-                (
-                    crawl_date,
-                    target_date,
-                    category,
-                    product,
-                    appid,
-                    ad_key,
-                    platform,
-                    video_url,
-                    preview,
-                    int(video_duration or 0),
-                    int(first_seen or 0) if first_seen is not None else None,
-                    int(created_at or 0) if created_at is not None else None,
-                    int(last_seen or 0) if last_seen is not None else None,
-                    int(heat or 0) if heat is not None else None,
-                    int(all_exp or 0) if all_exp is not None else None,
-                    int(impression or 0) if impression is not None else None,
-                    raw_json,
-                    insight,
-                ),
+            analysis_raw = analysis_by_ad.get(ad_key) or ""
+            params = _params_tuple_for_daily_creative_insight(
+                crawl_date, target_date, item, analysis_raw
             )
+            if params is None:
+                continue
+            cur.execute(UPSERT_DAILY_CREATIVE_INSIGHT_SQL, params)
             n += 1
         conn.commit()
         return n
@@ -337,6 +926,37 @@ def upsert_daily_video_enhancer_filter_log(
         conn.close()
 
 
+def should_persist_suggestion_to_push_table(suggestion_obj: Dict[str, Any] | None) -> bool:
+    """
+    聚类/方向建议是否应写入 daily_ua_push_content。
+    LLM 失败、skipped_llm、无方向卡片或卡片无实质内容时返回 False。
+    """
+    if not isinstance(suggestion_obj, dict):
+        return False
+    if suggestion_obj.get("skipped_llm"):
+        return False
+    err = suggestion_obj.get("llm_error")
+    if err is not None and str(err).strip():
+        return False
+    s = suggestion_obj.get("suggestion") or suggestion_obj
+    if not isinstance(s, dict):
+        return False
+    cards = s.get("方向卡片")
+    if not isinstance(cards, list) or len(cards) == 0:
+        return False
+
+    def _card_has_body(card: Any) -> bool:
+        if not isinstance(card, dict):
+            return False
+        for k in ("方向名称", "背景", "UA建议", "产品对标点", "风险提示"):
+            if str(card.get(k) or "").strip():
+                return True
+        refs = card.get("参考链接") or []
+        return isinstance(refs, list) and any(str(x or "").strip() for x in refs)
+
+    return any(_card_has_body(c) for c in cards)
+
+
 def upsert_daily_push_content(
     target_date: str,
     suggestion_obj: Dict[str, Any] | None,
@@ -352,6 +972,8 @@ def upsert_daily_push_content(
     """
     init_db()
     if not isinstance(suggestion_obj, dict):
+        return 0
+    if not should_persist_suggestion_to_push_table(suggestion_obj):
         return 0
     s = suggestion_obj.get("suggestion") or suggestion_obj
     cards = s.get("方向卡片") if isinstance(s, dict) else None
@@ -495,7 +1117,7 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
             sql = f"""
             SELECT
               category, product, appid, ad_key, platform,
-              video_duration, video_url, raw_json, insight_analysis,
+              video_duration, video_url, raw_json, insight_analysis, insight_ua_suggestion,
               updated_at_local, id
             FROM daily_creative_insights
             WHERE ad_key IN ({placeholders})
@@ -518,7 +1140,19 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                         if isinstance(pt, list):
                             pipeline_tags = [str(x) for x in pt if x]
                     except Exception:
+                        rj = {}
                         pipeline_tags = []
+                vu = str(row["video_url"] or "").strip()
+                pu = str(rj.get("preview_img_url") or "").strip()
+                iu = ""
+                if not vu:
+                    for rr in rj.get("resource_urls") or []:
+                        if isinstance(rr, dict) and rr.get("image_url") and not str(rr.get("video_url") or "").strip():
+                            iu = str(rr["image_url"])
+                            break
+                    if not iu and pu:
+                        iu = pu
+                ct = "image" if (not vu and iu) else "video"
                 out[ad_key] = {
                     "category": row["category"],
                     "product": row["product"],
@@ -529,11 +1163,639 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                     "all_exposure_value": rj.get("all_exposure_value"),
                     "heat": rj.get("heat"),
                     "impression": rj.get("impression"),
-                    "video_url": row["video_url"] or "",
+                    "creative_type": ct,
+                    "video_url": vu,
+                    "image_url": iu if ct == "image" else "",
+                    "preview_img_url": pu if ct == "video" else "",
                     "pipeline_tags": pipeline_tags,
                     "analysis": str(row["insight_analysis"] or ""),
+                    "ua_suggestion_single": str(row["insight_ua_suggestion"] or ""),
                 }
         return out
     finally:
         conn.close()
 
+
+def load_existing_cover_style_by_ad_keys_for_date(
+    target_date: str,
+    ad_keys: List[str],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    指定 target_date 下已有非空 insight_cover_style 的素材（用于重跑时跳过封面多模态）。
+    返回 ad_key -> 解析后的 dict（与 item['cover_style'] 结构一致）。
+    """
+    init_db()
+    td = (target_date or "").strip()
+    if not td:
+        return {}
+    keys = [str(k).strip() for k in (ad_keys or []) if str(k).strip()]
+    if not keys:
+        return {}
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        out: Dict[str, Dict[str, Any]] = {}
+        batch_size = 400
+        for i in range(0, len(keys), batch_size):
+            chunk = keys[i : i + batch_size]
+            placeholders = ",".join(["?"] * len(chunk))
+            sql = f"""
+            SELECT ad_key, insight_cover_style
+            FROM daily_creative_insights
+            WHERE target_date = ?
+              AND ad_key IN ({placeholders})
+              AND COALESCE(TRIM(insight_cover_style), '') <> ''
+            """
+            cur.execute(sql, (td, *chunk))
+            for row in cur.fetchall():
+                ak = str(row["ad_key"] or "").strip()
+                raw = str(row["insight_cover_style"] or "").strip()
+                if not ak or ak in out:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                    if isinstance(obj, dict):
+                        out[ak] = obj
+                except Exception:
+                    continue
+        return out
+    finally:
+        conn.close()
+
+
+def load_cover_style_rows_for_date_grouped_by_appid(
+    target_date: str,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    某日各 appid 下已有非空 insight_cover_style 的素材（用于跨日封面去重）。
+    返回 appid -> [{ ad_key, style_json, exposure }]，exposure 取 daily_creative_insights.all_exposure_value。
+    """
+    init_db()
+    td = (target_date or "").strip()
+    if not td:
+        return {}
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT ad_key, appid, insight_cover_style, COALESCE(all_exposure_value, 0) AS exp
+            FROM daily_creative_insights
+            WHERE target_date = ?
+              AND COALESCE(TRIM(insight_cover_style), '') <> ''
+              AND COALESCE(TRIM(ad_key), '') <> ''
+              AND COALESCE(TRIM(appid), '') <> ''
+            """,
+            (td,),
+        )
+        by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in cur.fetchall():
+            ak = str(row["ad_key"] or "").strip()
+            aid = str(row["appid"] or "").strip()
+            raw = str(row["insight_cover_style"] or "").strip()
+            if not ak or not aid or not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+                if not isinstance(obj, dict):
+                    continue
+            except Exception:
+                continue
+            by_app[aid].append(
+                {
+                    "ad_key": ak,
+                    "style_json": obj,
+                    "exposure": int(row["exp"] or 0),
+                }
+            )
+        return dict(by_app)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+def _dedupe_intraday_union_by_appid(
+    items: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    按 appid 分桶；桶内若 ad_key 相同、或主媒体 URL 相同、或封面 ahash 汉明距离 ≤ 阈值，则视为同一组。
+    同组保留 impression 最高的一条。
+    返回 (代表素材列表, intraday_removed 明细)。
+    """
+    by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        c = item.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        if not str(c.get("ad_key") or "").strip():
+            continue
+        appid = str(item.get("appid") or "").strip()
+        by_app[appid].append(item)
+
+    canonical_all: List[Dict[str, Any]] = []
+    intraday_removed: List[Dict[str, Any]] = []
+
+    for appid, bucket in by_app.items():
+        n = len(bucket)
+        parent = list(range(n))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i: int, j: int) -> None:
+            pi, pj = find(i), find(j)
+            if pi != pj:
+                parent[pi] = pj
+
+        meta: List[Dict[str, Any]] = []
+        for item in bucket:
+            c = item.get("creative") or {}
+            vurl = _pick_video_url_from_raw(c)
+            iurl = _pick_image_url_from_raw(c) if not vurl else ""
+            media = (vurl or iurl).strip()
+            ahash = str(c.get("image_ahash_md5") or "").strip()
+            ak = str(c.get("ad_key") or "").strip()
+            imp = int(c.get("impression") or 0)
+            meta.append({"ad_key": ak, "media": media, "ahash": ahash, "imp": imp, "item": item})
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = meta[i], meta[j]
+                if a["ad_key"] and a["ad_key"] == b["ad_key"]:
+                    union(i, j)
+                    continue
+                if a["media"] and a["media"] == b["media"]:
+                    union(i, j)
+                    continue
+                if a["ahash"] and b["ahash"]:
+                    d = _ahash_hamming(a["ahash"], b["ahash"])
+                    if d <= AHASH_HAMMING_THRESHOLD:
+                        union(i, j)
+
+        groups: Dict[int, List[int]] = defaultdict(list)
+        for i in range(n):
+            groups[find(i)].append(i)
+
+        for _root, idxs in groups.items():
+            best_i = max(idxs, key=lambda ii: meta[ii]["imp"])
+            canonical_all.append(meta[best_i]["item"])
+            best_ak = meta[best_i]["ad_key"]
+            for ii in idxs:
+                if ii == best_i:
+                    continue
+                intraday_removed.append({
+                    "ad_key": meta[ii]["ad_key"],
+                    "reason": "same_group",
+                    "kept_ad_key": best_ak,
+                    "appid": appid,
+                })
+
+    return canonical_all, intraday_removed
+
+
+def crossday_filter_items_against_creative_library(
+    target_date: str,
+    items: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    与 get_deduped_items_for_analysis 的 Step B 相同：
+    将 items 与 creative_library 中「早于 target_date 已入库」的记录按同 appid 比对，
+    ad_key / 主媒体 URL / 封面 ahash 汉明距离命中则剔除。
+
+    供封面流程在「本日聚类」之前先做一层跨日指纹去重，与灵感分析侧逻辑一致。
+    """
+    init_db()
+    deduped_items: List[Dict[str, Any]] = []
+    crossday_removed: List[Dict[str, Any]] = []
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT ad_key, appid, image_ahash_md5, video_url, image_url, first_target_date
+            FROM creative_library
+            WHERE first_target_date < ?
+              AND first_target_date IS NOT NULL
+            """,
+            (target_date,),
+        )
+        hist_rows = cur.fetchall()
+
+        hist_adkey_date: Dict[str, Dict[str, str]] = defaultdict(dict)
+        hist_urls: Dict[str, Dict[str, Tuple[str, str]]] = defaultdict(dict)
+        hist_ahash: Dict[str, List[Tuple[str, str, str]]] = defaultdict(list)
+
+        for r in hist_rows:
+            aid = str(r["appid"] or "").strip()
+            ak = str(r["ad_key"] or "").strip()
+            fdt = str(r["first_target_date"] or "")
+            if ak:
+                hist_adkey_date[aid][ak] = fdt
+            vurl = str(r["video_url"] or "").strip()
+            iurl = str(r["image_url"] or "").strip()
+            media = vurl or iurl
+            if media:
+                hist_urls[aid][media] = (ak, fdt)
+            h = str(r["image_ahash_md5"] or "").strip()
+            if h:
+                hist_ahash[aid].append((h, ak, fdt))
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            c = item.get("creative") or {}
+            if not isinstance(c, dict):
+                continue
+            ad_key = str(c.get("ad_key") or "").strip()
+            ahash = str(c.get("image_ahash_md5") or "").strip()
+            vurl = _pick_video_url_from_raw(c)
+            iurl = _pick_image_url_from_raw(c) if not vurl else ""
+            media = (vurl or iurl).strip()
+            appid = str(item.get("appid") or "").strip()
+
+            hit_ak = ""
+            hit_date = ""
+            reason_b = ""
+
+            if appid and ad_key and ad_key in hist_adkey_date.get(appid, {}):
+                hit_ak = ad_key
+                hit_date = hist_adkey_date[appid][ad_key]
+                reason_b = "ad_key"
+
+            if not hit_ak and appid and media and media in hist_urls.get(appid, {}):
+                hit_ak, hit_date = hist_urls[appid][media]
+                reason_b = "url"
+
+            if not hit_ak and appid and ahash:
+                best_dist = 999
+                for (h, ak, dt) in hist_ahash.get(appid, []):
+                    d = _ahash_hamming(ahash, h)
+                    if d <= AHASH_HAMMING_THRESHOLD and d < best_dist:
+                        best_dist, hit_ak, hit_date = d, ak, dt
+                if hit_ak:
+                    reason_b = f"ahash(dist={best_dist})"
+
+            if hit_ak:
+                crossday_removed.append(
+                    {
+                        "ad_key": ad_key,
+                        "reason": reason_b,
+                        "matched_ad_key": hit_ak,
+                        "matched_date": hit_date,
+                        "appid": appid,
+                    }
+                )
+            else:
+                deduped_items.append(item)
+    finally:
+        conn.close()
+
+    return deduped_items, crossday_removed
+
+
+# 多维去重过滤：日内 + 跨日，返回进入分析的唯一素材集
+# ---------------------------------------------------------------------------
+
+def get_deduped_items_for_analysis(
+    target_date: str,
+    raw_payload: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    对 raw_payload 中的素材做两步去重，返回 (deduped_items, report)。
+
+    仅在同一 appid 内比较（不同产品互不影响）。
+
+    Step A — 日内去重：
+      同一 appid 内，若 ad_key 相同、或主媒体 URL 相同、或封面 ahash 汉明距离 ≤ 阈值，则归为一组；
+      同组只保留 impression 最高的一条。
+
+    Step B — 跨日去重：
+      将 Step A 的代表素材与 creative_library 中历史记录比对（仅同 appid）：
+      若 ad_key 已在库中、或主媒体 URL 已出现、或 ahash 与历史条在阈值内相似，则剔除。
+
+    report 结构：
+    {
+      "total_input": N,
+      "after_intraday": N,
+      "after_crossday": N,
+      "intraday_removed": [...],
+      "crossday_removed": [...],
+    }
+    """
+    init_db()
+    items = raw_payload.get("items") or []
+    valid_items: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        c = item.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        if not str(c.get("ad_key") or "").strip():
+            continue
+        valid_items.append(item)
+
+    canonical_items_a, intraday_removed = _dedupe_intraday_union_by_appid(valid_items)
+    after_intraday = len(canonical_items_a)
+
+    deduped_items, crossday_removed = crossday_filter_items_against_creative_library(
+        target_date, canonical_items_a
+    )
+
+    report: Dict[str, Any] = {
+        "total_input": len(items),
+        "after_intraday": after_intraday,
+        "after_crossday": len(deduped_items),
+        "intraday_removed_count": len(intraday_removed),
+        "crossday_removed_count": len(crossday_removed),
+        "intraday_removed": intraday_removed,
+        "crossday_removed": crossday_removed,
+    }
+    return deduped_items, report
+
+
+# ---------------------------------------------------------------------------
+# 语义嵌入：存储与查询
+# ---------------------------------------------------------------------------
+SEMANTIC_DEDUP_THRESHOLD = 0.92  # cosine similarity 阈值
+
+def upsert_analysis_embedding(ad_key: str, embedding_blob: bytes) -> bool:
+    """将分析文本的嵌入向量写入 creative_library。"""
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE creative_library SET analysis_embedding = ?, "
+            "updated_at_local = datetime('now','localtime') WHERE ad_key = ?",
+            (embedding_blob, ad_key),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def load_embeddings_for_crossday(
+    target_date: str,
+    appid_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    加载 creative_library 中「早于 target_date」且有嵌入向量的记录。
+    返回 [{ad_key, appid, analysis_embedding(bytes), first_target_date}]。
+    """
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        sql = """
+        SELECT ad_key, appid, analysis_embedding, first_target_date
+        FROM creative_library
+        WHERE first_target_date < ?
+          AND first_target_date IS NOT NULL
+          AND analysis_embedding IS NOT NULL
+        """
+        params: list = [target_date]
+        if appid_filter:
+            sql += " AND appid = ?"
+            params.append(appid_filter)
+        cur.execute(sql, params)
+        return [
+            {
+                "ad_key": r["ad_key"],
+                "appid": r["appid"],
+                "analysis_embedding": bytes(r["analysis_embedding"]),
+                "first_target_date": r["first_target_date"],
+            }
+            for r in cur.fetchall()
+            if r["analysis_embedding"]
+        ]
+    finally:
+        conn.close()
+
+
+def semantic_crossday_filter(
+    target_date: str,
+    items_with_analysis: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    语义嵌入去重：对已有 analysis 的素材，与历史嵌入做 cosine similarity 比较。
+    仅在同 appid 内比较。
+    返回 (kept_items, semantic_removed)。
+    """
+    from llm_client import bytes_to_embedding, call_embedding, cosine_similarity, embedding_to_bytes
+
+    init_db()
+    kept: List[Dict[str, Any]] = []
+    removed: List[Dict[str, Any]] = []
+
+    by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for it in items_with_analysis:
+        appid = str(it.get("appid") or "").strip()
+        by_app[appid].append(it)
+
+    for appid, bucket in by_app.items():
+        hist = load_embeddings_for_crossday(target_date, appid_filter=appid if appid else None)
+        if not hist:
+            kept.extend(bucket)
+            continue
+
+        hist_vecs = [(h["ad_key"], h["first_target_date"], bytes_to_embedding(h["analysis_embedding"])) for h in hist]
+
+        for it in bucket:
+            c = it.get("creative") or {}
+            ad_key = str(c.get("ad_key") or "").strip()
+            analysis_text = str(it.get("_analysis_text") or "").strip()
+            if not analysis_text or not ad_key:
+                kept.append(it)
+                continue
+
+            try:
+                vec = call_embedding(analysis_text[:2000])
+            except Exception as e:
+                print(f"[semantic-dedup] embedding failed ad_key={ad_key[:12]}: {e}")
+                kept.append(it)
+                continue
+
+            upsert_analysis_embedding(ad_key, embedding_to_bytes(vec))
+
+            best_sim = 0.0
+            best_match = ""
+            best_date = ""
+            for h_ak, h_dt, h_vec in hist_vecs:
+                sim = cosine_similarity(vec, h_vec)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_match = h_ak
+                    best_date = h_dt
+
+            if best_sim >= SEMANTIC_DEDUP_THRESHOLD:
+                removed.append({
+                    "ad_key": ad_key,
+                    "reason": f"semantic(sim={best_sim:.3f})",
+                    "matched_ad_key": best_match,
+                    "matched_date": best_date,
+                    "appid": appid,
+                })
+            else:
+                kept.append(it)
+
+    return kept, removed
+
+
+# ---------------------------------------------------------------------------
+# 趋势信号：从 creative_library 聚合
+# ---------------------------------------------------------------------------
+def compute_trend_signals(target_date: str, lookback_days: int = 14) -> Dict[str, Any]:
+    """
+    计算各产品的素材趋势信号。
+
+    返回::
+
+        {
+          "target_date": "...",
+          "per_product": {
+            "ProductName": {
+              "this_week_new": 5,
+              "prev_week_new": 3,
+              "trend": "rising",      # rising / declining / stable
+              "total_unique": 42,
+              "avg_appearance": 1.3,
+            }
+          },
+          "overall": { ... }
+        }
+    """
+    from datetime import date, timedelta
+    init_db()
+
+    try:
+        td = date.fromisoformat(target_date)
+    except ValueError:
+        return {"target_date": target_date, "per_product": {}, "overall": {}}
+
+    week1_start = (td - timedelta(days=6)).isoformat()
+    week1_end = td.isoformat()
+    week2_start = (td - timedelta(days=13)).isoformat()
+    week2_end = (td - timedelta(days=7)).isoformat()
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+
+        def _count_new(start: str, end: str) -> Dict[str, int]:
+            cur.execute(
+                "SELECT product, COUNT(*) as cnt FROM creative_library "
+                "WHERE first_target_date >= ? AND first_target_date <= ? "
+                "AND product IS NOT NULL AND product != '' "
+                "GROUP BY product",
+                (start, end),
+            )
+            return {r["product"]: r["cnt"] for r in cur.fetchall()}
+
+        this_week = _count_new(week1_start, week1_end)
+        prev_week = _count_new(week2_start, week2_end)
+
+        all_products = set(this_week.keys()) | set(prev_week.keys())
+        per_product: Dict[str, Dict[str, Any]] = {}
+        for p in sorted(all_products):
+            tw = this_week.get(p, 0)
+            pw = prev_week.get(p, 0)
+            if tw > pw * 1.3:
+                trend = "rising"
+            elif tw < pw * 0.7:
+                trend = "declining"
+            else:
+                trend = "stable"
+            per_product[p] = {
+                "this_week_new": tw,
+                "prev_week_new": pw,
+                "trend": trend,
+            }
+
+        cur.execute(
+            "SELECT product, COUNT(*) as cnt, AVG(appearance_count) as avg_app "
+            "FROM creative_library WHERE product IS NOT NULL AND product != '' "
+            "GROUP BY product"
+        )
+        for r in cur.fetchall():
+            p = r["product"]
+            if p in per_product:
+                per_product[p]["total_unique"] = r["cnt"]
+                per_product[p]["avg_appearance"] = round(float(r["avg_app"] or 1), 2)
+
+        tw_total = sum(this_week.values())
+        pw_total = sum(prev_week.values())
+        overall_trend = "stable"
+        if tw_total > pw_total * 1.3:
+            overall_trend = "rising"
+        elif tw_total < pw_total * 0.7:
+            overall_trend = "declining"
+
+        return {
+            "target_date": target_date,
+            "per_product": per_product,
+            "overall": {
+                "this_week_new": tw_total,
+                "prev_week_new": pw_total,
+                "trend": overall_trend,
+            },
+        }
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 历史方向卡片查询
+# ---------------------------------------------------------------------------
+def load_recent_direction_cards(
+    target_date: str,
+    n_days: int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    读取 target_date 前 n_days 天的方向卡片摘要（从 daily_ua_push_content）。
+    返回 [{target_date, direction_name, background, ua_suggestion, risk_note}]。
+    """
+    from datetime import date, timedelta
+    init_db()
+
+    try:
+        td = date.fromisoformat(target_date)
+    except ValueError:
+        return []
+
+    start = (td - timedelta(days=n_days)).isoformat()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT target_date, direction_name, background, ua_suggestion, risk_note
+            FROM daily_ua_push_content
+            WHERE target_date >= ? AND target_date < ?
+              AND COALESCE(TRIM(direction_name), '') != ''
+              AND COALESCE(TRIM(ua_suggestion), '') != ''
+            ORDER BY target_date DESC, id ASC
+            """,
+            (start, target_date),
+        )
+        return [
+            {
+                "target_date": r["target_date"],
+                "direction_name": r["direction_name"],
+                "background": r["background"] or "",
+                "ua_suggestion": r["ua_suggestion"] or "",
+                "risk_note": r["risk_note"] or "",
+            }
+            for r in cur.fetchall()
+        ]
+    finally:
+        conn.close()

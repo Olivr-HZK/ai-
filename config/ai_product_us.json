@@ -1,0 +1,56 @@
+{
+  "video enhancer": {
+    "AI Photo Enhancer - Evoke": {
+      "ios_appid": null,
+      "android_appid": "ai.photo.enhancer.ig.tiktok.editor.remini.pixelup.hd.free"
+    },
+    "AI Video Generator - Toki": {
+      "ios_appid": null,
+      "android_appid": "ai.video.photo.animator.face.dance.animation"
+    },
+    "AI Image Creator - ImagineFlow": {
+      "ios_appid": null,
+      "android_appid": "ai.image.playground.generator.free.creator.picture.photo"
+    },
+    "AI Photo Retake - FaceAura": {
+      "ios_appid": null,
+      "android_appid": "ai.photo.enhancer.retake.app.free.face.editor"
+    },
+    "AI Video Generator: Kavi Maker": {
+      "ios_appid": "6746191879",
+      "android_appid": null
+    }
+  },
+  "seek": {
+    "Deep Think - AI Seek Chatbot": {
+      "ios_appid": null,
+      "android_appid": "ai.chatbot.ask.chat.deep.seek.assistant.search.free"
+    },
+    "CastChat - Match & Voice Chat": {
+      "ios_appid": "1539641263",
+      "android_appid": "walkie.talkie.among.us.friends"
+    },
+    "AI Chat Assistant: Gemind AI": {
+      "ios_appid": "6752638454",
+      "android_appid": null
+    }
+  },
+  "other": {
+    "Walkie Talkie, Push to Talk": {
+      "ios_appid": "1505959099",
+      "android_appid": "walkie.talkie.talk"
+    },
+    "AI Emojis: Face Emoji Keyboard": {
+      "ios_appid": null,
+      "android_appid": "ai.emoji.keyboard.face.emojis.sticker.free"
+    },
+    "CalNinja: Contador de Calorias": {
+      "ios_appid": null,
+      "android_appid": "ai.calorie.counter.food.tracker.my.fitness.free"
+    },
+    "AI Calorie Counter - CalNinja": {
+      "ios_appid": "6745591623",
+      "android_appid": null
+    }
+  }
+}

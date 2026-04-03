@@ -1,6 +1,7 @@
 """
 测试：跑 video enhancer 类下的竞品（仅排除 Hula），抓当前 7 天窗口内素材，不入库，写两个 JSON。
-可按日期筛选 target_date；若某个产品在该日命中素材超过 10 条，则仅保留「按热度 heat 降序的前 10 条」。
+可按日期筛选 target_date；若某个产品在该日命中素材超过 10 条，则仅保留「按展示估值 all_exposure_value 降序的前 10 条」。
+重投素材（resume_advertising_flag）一律不纳入。
 
 - 原始 JSON：按产品分组的完整创意列表（raw creative 对象）
 - 提炼 JSON：人气值、展示估值、热度、视频长度、素材链接、投放时间(UTC+8)
@@ -26,7 +27,6 @@ from run_search_workflow import run_batch
 from workflow_guangdada_competitor_yesterday_creatives import (
     _apply_relaunch_pipeline_tag,
     _creative_hits_target_date,
-    _exposure_top_has_any,
     _is_resume_advertising,
     advertiser_matches_product,
 )
@@ -45,9 +45,12 @@ class Competitor:
     appid: str
 
 
-def _load_video_enhancer_competitors(products: list[str] | None = None):
+TARGET_CATEGORIES = ("video", "photo")
+
+
+def _load_workflow_competitors(products: list[str] | None = None):
     """
-    从 ai_product.json 读取 video enhancer 分类，排除 Hula。
+    从 ai_product.json 读取工作流分类（video enhancer），排除 Hula。
     - 若指定 products，则只保留这些产品名；
     - 否则返回该分类下全部（除 Hula）。
     """
@@ -55,14 +58,17 @@ def _load_video_enhancer_competitors(products: list[str] | None = None):
         raise FileNotFoundError(f"未找到配置：{CONFIG_FILE}")
     data = json.load(CONFIG_FILE.open("r", encoding="utf-8"))
     candidates: list[Competitor] = []
-    cat = "video enhancer"
-    if isinstance(data, dict) and isinstance(data.get(cat), dict):
-        for product, appid in data[cat].items():
-            if not product or not (str(appid or "").strip()):
+    if isinstance(data, dict):
+        for cat in TARGET_CATEGORIES:
+            bucket = data.get(cat)
+            if not isinstance(bucket, dict):
                 continue
-            if any(ex in product for ex in EXCLUDE_NAMES):
-                continue
-            candidates.append(Competitor(category=cat, product=str(product), appid=str(appid)))
+            for product, appid in bucket.items():
+                if not product or not (str(appid or "").strip()):
+                    continue
+                if any(ex in product for ex in EXCLUDE_NAMES):
+                    continue
+                candidates.append(Competitor(category=cat, product=str(product), appid=str(appid)))
     if products:
         wanted = {p.strip().lower() for p in products if p and p.strip()}
         selected = [c for c in candidates if c.product.strip().lower() in wanted]
@@ -117,7 +123,7 @@ def _reduce_creative(creative: dict) -> dict:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="测试 video enhancer 竞品，抓 7 天窗口素材，筛选逻辑与主工作流一致")
+    parser = argparse.ArgumentParser(description="测试工作流竞品（video enhancer），抓 7 天窗口素材，筛选逻辑与主工作流一致")
     parser.add_argument(
         "--target-date",
         default=None,
@@ -137,14 +143,14 @@ async def main():
     args = parser.parse_args()
 
     selected_products = [x.strip() for x in (args.products or "").split(",") if x.strip()]
-    competitors = _load_video_enhancer_competitors(products=selected_products or None)
+    competitors = _load_workflow_competitors(products=selected_products or None)
     if not competitors:
-        print("[终止] video enhancer 中无可用竞品（检查 config/ai_product.json）", file=sys.stderr)
+        print("[终止] 工作流分类中无可用竞品（检查 config/ai_product.json 的 video/photo）", file=sys.stderr)
         return
     keywords = [c.appid for c in competitors]
     comp_map = {c.appid: c for c in competitors}
 
-    print(f"[1] 竞品（已排除 Hula）: {[c.product for c in competitors]}")
+    print(f"[1] 竞品（已排除 Hula，分类={','.join(TARGET_CATEGORIES)}）: {[c.product for c in competitors]}")
     if args.target_date:
         print(
             f"[2] 使用主工作流日期筛选：target_date={args.target_date}（仅 first_seen UTC+8；"
@@ -161,14 +167,13 @@ async def main():
         use_popularity_top1=False,
     )
 
-# 应用与主工作流一致的筛选：广告主匹配 + 可选日期命中
-# 截断规则：单个产品在单日候选素材 > 10 条时，仅保留前 5 条（按展示估值 all_exposure_value 降序）
+# 应用与主工作流一致的筛选：广告主匹配 + 可选日期命中；重投一律去掉；单产品候选 >10 则只保留展示估值最高的 10 条
     raw_items: list[dict[str, Any]] = []
     by_product_reduce: dict[str, list[dict]] = {}
     filter_pre_total = 0
     filter_post_total = 0
     filter_threshold = 10
-    filter_keep = 5
+    filter_keep = 10
     filter_sort_metric = "all_exposure_value"
     per_product_before: dict[str, int] = {}
     per_product_after: dict[str, int] = {}
@@ -198,18 +203,16 @@ async def main():
                 if not hit:
                     continue
 
-                # 规则：重投素材如果没有 top 标签，则不纳入（仅对重投生效）
-                if _is_resume_advertising(c) and not _exposure_top_has_any(c):
+                # 重投素材一律不纳入
+                if _is_resume_advertising(c):
                     continue
 
             candidates.append(c)
 
-        # 若某产品在该日命中候选数 > 10，则按 all_exposure_value 降序取前 5 条
         product_key = comp.product or kw
         before_cnt = len(candidates)
         truncated = False
         if args.target_date and before_cnt > filter_threshold:
-            # 按展示估值（all_exposure_value）降序取前 5
             candidates.sort(key=lambda x: int(x.get("all_exposure_value") or 0), reverse=True)
             candidates = candidates[:filter_keep]
             truncated = True
@@ -238,10 +241,10 @@ async def main():
     if args.target_date:
         print(
             f"[filter] 目标日期={args.target_date} "
-            f"筛选前候选总数={filter_pre_total}（按广告主+日期+重投top过滤后、未做单产品截断）"
+            f"筛选前候选总数={filter_pre_total}（广告主+日期；已排除全部重投）"
         )
         print(
-            f"[filter] 截断规则：单产品候选>={filter_threshold+1} 条时，仅保留前 {filter_keep} 条；排序字段={filter_sort_metric}"
+            f"[filter] 截断：单产品候选>{filter_threshold} 条时仅保留前 {filter_keep} 条；排序字段={filter_sort_metric}"
         )
         for k in sorted(per_product_after.keys()):
             print(
@@ -266,10 +269,15 @@ async def main():
             "filter_threshold": filter_threshold,
             "filter_keep": filter_keep,
             "filter_sort_metric": filter_sort_metric,
+            "resume_excluded_all": True,
             "pre_truncation_total": filter_pre_total,
             "post_truncation_total": filter_post_total,
             "per_product": {
-                k: {"before": per_product_before.get(k, 0), "after": per_product_after.get(k, 0), "truncated": per_product_truncated.get(k, False)}
+                k: {
+                    "before": per_product_before.get(k, 0),
+                    "after": per_product_after.get(k, 0),
+                    "truncated": per_product_truncated.get(k, False),
+                }
                 for k in sorted(set(per_product_after.keys()) | set(per_product_before.keys()))
             },
         },

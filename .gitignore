@@ -6,3 +6,4 @@ ua_downloads/
 data/*.json
 data/*.db
 guangdada_auth.json
+credentials.json

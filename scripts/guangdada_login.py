@@ -10,10 +10,44 @@ GUANGDADA_BASE_URL = "https://www.guangdada.net"
 LOGIN_URL = f"{GUANGDADA_BASE_URL}/user/login"
 
 
+def _login_goto_timeout_ms() -> int:
+    """默认 90s；30s 在弱网/未走代理时易触发 Page.goto Timeout。"""
+    raw = (os.getenv("GUANGDADA_LOGIN_GOTO_TIMEOUT_MS") or "").strip()
+    if raw.isdigit():
+        return max(5000, int(raw))
+    return 90000
+
+
+def _login_goto_wait_until() -> str:
+    v = (os.getenv("GUANGDADA_LOGIN_GOTO_WAIT_UNTIL") or "domcontentloaded").strip().lower()
+    if v in ("commit", "domcontentloaded", "load", "networkidle"):
+        return v
+    return "domcontentloaded"
+
+
+async def _goto_login_url(page: Page) -> None:
+    """打开登录页；domcontentloaded 超时时可自动改用 load 再试一次。"""
+    timeout = _login_goto_timeout_ms()
+    wait_until = _login_goto_wait_until()
+    try:
+        await page.goto(LOGIN_URL, wait_until=wait_until, timeout=timeout)
+    except Exception as e:
+        err = str(e).lower()
+        is_timeout = "timeout" in err or type(e).__name__ == "TimeoutError"
+        if is_timeout and wait_until == "domcontentloaded":
+            print(
+                "  [登录] 首次打开登录页超时，改用 wait_until=load 重试一次…",
+                flush=True,
+            )
+            await page.goto(LOGIN_URL, wait_until="load", timeout=timeout)
+        else:
+            raise
+
+
 async def login(page: Page, email: str, password: str) -> bool:
     """使用邮箱密码登录，返回是否成功。每次从 LOGIN_URL 开始"""
     try:
-        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30000)
+        await _goto_login_url(page)
         try:
             await page.wait_for_load_state("networkidle", timeout=20000)
         except Exception:

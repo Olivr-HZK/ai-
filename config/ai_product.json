@@ -1,16 +1,22 @@
 {
-  "video enhancer": {
-    "UpFoto - AI Photo Enhancer": "ai.photo.enhancer.photoclear",
-    "Remini - AI Photo Enhancer": "com.bigwinepot.nwdn.international",
-    "PhotoBoost - AI Photo Enhancer": "tap.photo.boost.restoration",
-    "Hula - AI Video Generator": "com.prequelapp.hula",
+  "video": {
+    "Pixverse:AI Video Generator": "com.pixverseai.pixverse",
+    "Glam AI:Video & Photo Editor":"app.getglam",
+    "DreamFace:AI Video Generator": "com.dreamapp.dubhe",
+    "Creati:Gen AI Content Creator":"org.ai.create.filter",
     "AI Mirror: AI Photo & Video": "com.ai.polyverse.mirror"
+  },
+  "photo": {
+    "Remini - AI Photo Enhancer": "com.bigwinepot.nwdn.international",
+    "Retake AI Face & Selfie Editor": "com.codespaceapps.you",
+    "EPIK - AI Photo & Video Editor": "com.snowcorp.epik",
+    "GIO - AI Photoshoot Generator":"com.prequelapp.aistudio"
   },
   "seek": {
     "AI Chatbot - Nova": "com.scaleup.chatai",
     "ChatOn - AI Chat Bot Assistant": "ai.chat.gpt.bot",
     "Perplexity - Perplexity - Ask Anything": "ai.perplexity.app.android",
-    "Chat & Ask AI by Codeway": "com.codeway.chatapp",
+    "Chat AI: Ask Agent Anything": "com.codeway.chatapp",
     "Chat Smith: AI Chatbot & Agent": "com.smartwidgetlabs.chatgpt"
   }
 }
