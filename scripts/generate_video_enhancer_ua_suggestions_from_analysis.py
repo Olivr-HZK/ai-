@@ -8,6 +8,13 @@
 输出：
   data/video_enhancer_ua_suggestion_from_analysis.json
   data/video_enhancer_ua_suggestion_from_analysis.md
+
+重跑聚类且**暂时不剔除**主流程里打的「出方向卡」排除（`exclude_from_cluster`，含我方已投 / 语义去重等）时：
+
+  --ignore-exclude-from-cluster
+
+或环境变量 `UA_CLUSTER_IGNORE_EXCLUDE_FROM_CLUSTER=1`（与 CLI 二选一即可）。
+仍只会纳入**有有效 analysis 正文**的条目；不会把 [ERROR] 当输入。
 """
 
 from __future__ import annotations
@@ -61,7 +68,19 @@ def parse_args() -> argparse.Namespace:
         default=str(DATA_DIR / "video_enhancer_ua_suggestion_from_analysis.md"),
         help="输出 Markdown 路径",
     )
+    p.add_argument(
+        "--ignore-exclude-from-cluster",
+        action="store_true",
+        help="忽略 results 中 exclude_from_cluster，全部有效分析都参与聚类/方向卡片（重跑用）",
+    )
     return p.parse_args()
+
+
+def _ignore_exclude_from_cluster_flag(args: argparse.Namespace) -> bool:
+    if getattr(args, "ignore_exclude_from_cluster", False):
+        return True
+    v = (os.getenv("UA_CLUSTER_IGNORE_EXCLUDE_FROM_CLUSTER") or "0").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 def _call_llm(system: str, user_content: str) -> str:
@@ -383,26 +402,42 @@ def main() -> None:
     results_all = raw.get("results") or []
     if not isinstance(results_all, list):
         results_all = []
-    results = [
-        r
+    ignore_ex = _ignore_exclude_from_cluster_flag(args)
+    n_flagged = sum(
+        1
         for r in results_all
-        if isinstance(r, dict) and not r.get("exclude_from_cluster")
-    ]
-    cluster_excluded = (
-        len([r for r in results_all if isinstance(r, dict) and r.get("exclude_from_cluster")])
-        if results_all
-        else 0
+        if isinstance(r, dict) and r.get("exclude_from_cluster")
     )
+
+    def _has_usable_analysis(r: dict) -> bool:
+        a = str(r.get("analysis") or "").strip()
+        return bool(a) and not a.startswith("[ERROR]")
+
+    results = []
+    for r in results_all:
+        if not isinstance(r, dict) or not _has_usable_analysis(r):
+            continue
+        if ignore_ex or not r.get("exclude_from_cluster"):
+            results.append(r)
+
+    cluster_excluded = 0 if ignore_ex else n_flagged
 
     out_json = Path(args.output_json)
     out_md = Path(args.output_md)
 
     if not results:
-        print(
-            "警告：输入分析结果为空（results 为空或全部 exclude_from_cluster），跳过 LLM，输出占位文件。"
-            + (f" 本批聚类排除 {cluster_excluded} 条（我方已投套路）。" if cluster_excluded else "")
-        )
-        suggestion: Dict[str, Any] = {
+        print("警告：无可用于聚类的有效 analysis，跳过 LLM，输出占位文件。")
+        if not ignore_ex and n_flagged:
+            print(
+                f"  提示：{n_flagged} 条因 exclude_from_cluster 被排除；"
+                "若需重跑聚类可试 --ignore-exclude-from-cluster"
+            )
+        elif ignore_ex and n_flagged:
+            print(
+                f"  （已开启忽略 exclude_from_cluster，原 {n_flagged} 条带标，"
+                "但仍无可用分析正文。）"
+            )
+        suggestion = {
             "方向卡片": [],
             "共性执行建议": [
                 "今日无命中素材或分析结果为空，无法生成方向卡片；请检查抓取日期筛选（UTC+8）与广告主过滤。"
@@ -412,6 +447,8 @@ def main() -> None:
             "input_file": str(in_path),
             "source_count": 0,
             "cluster_excluded_count": cluster_excluded,
+            "ignore_exclude_from_cluster": ignore_ex,
+            "exclude_from_cluster_flags_in_input": n_flagged,
             "products_context_count": len(_load_video_enhancer_products()),
             "suggestion": suggestion,
             "skipped_llm": True,
@@ -430,9 +467,14 @@ def main() -> None:
         "所有可见文案仅允许中文与英文：遇多语言素材时意译为中文表述，禁止输出阿拉伯文等非中英字符。"
     )
     prompt = _build_prompt(results, products, target_date=td)
-    if cluster_excluded:
+    if ignore_ex and n_flagged:
         print(
-            f"[cluster] 方向卡片输入已排除「我方已投套路」素材 {cluster_excluded} 条，"
+            f"[cluster] 已忽略 exclude_from_cluster（原 {n_flagged} 条带排除标），"
+            f"实际参与聚类 {len(results)} 条。"
+        )
+    elif cluster_excluded:
+        print(
+            f"[cluster] 方向卡片输入已排除 exclude_from_cluster 素材 {cluster_excluded} 条，"
             f"实际参与聚类 {len(results)} 条。"
         )
 
@@ -448,6 +490,8 @@ def main() -> None:
             "input_file": str(in_path),
             "source_count": len(results),
             "cluster_excluded_count": cluster_excluded,
+            "ignore_exclude_from_cluster": ignore_ex,
+            "exclude_from_cluster_flags_in_input": n_flagged,
             "products_context_count": len(products),
             "suggestion": empty_suggestion,
             "llm_error": str(e),
@@ -467,6 +511,8 @@ def main() -> None:
             "input_file": str(in_path),
             "source_count": len(results),
             "cluster_excluded_count": cluster_excluded,
+            "ignore_exclude_from_cluster": ignore_ex,
+            "exclude_from_cluster_flags_in_input": n_flagged,
             "products_context_count": len(products),
             "suggestion": empty_suggestion,
             "llm_error": "invalid_json_output",
@@ -498,6 +544,8 @@ def main() -> None:
         "input_file": str(in_path),
         "source_count": len(results),
         "cluster_excluded_count": cluster_excluded,
+        "ignore_exclude_from_cluster": ignore_ex,
+        "exclude_from_cluster_flags_in_input": n_flagged,
         "products_context_count": len(products),
         "suggestion": suggestion,
     }

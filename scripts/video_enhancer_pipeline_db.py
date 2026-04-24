@@ -7,8 +7,10 @@ Video Enhancer 工作流专用 SQLite 库：
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import os
 import sqlite3
 from pathlib import Path
 from collections import defaultdict
@@ -192,6 +194,10 @@ def init_db() -> None:
         cl_cols2 = {str(r["name"]) for r in cur.fetchall()}
         if "analysis_embedding" not in cl_cols2:
             cur.execute("ALTER TABLE creative_library ADD COLUMN analysis_embedding BLOB")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols3 = {str(r["name"]) for r in cur.fetchall()}
+        if "cover_embedding" not in cl_cols3:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN cover_embedding BLOB")
         conn.commit()
     finally:
         conn.close()
@@ -1275,6 +1281,107 @@ def load_cover_style_rows_for_date_grouped_by_appid(
         conn.close()
 
 
+def load_cover_style_rows_for_dates_grouped_by_appid(
+    dates: List[str],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    多个日历日合并：各日非空 insight_cover_style，按 appid 分组（用于 CLIP 历史参加聚类）。
+    """
+    dlist = [d.strip()[:10] for d in (dates or []) if (d or "").strip()]
+    if not dlist:
+        return {}
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        ph = ",".join(["?"] * len(dlist))
+        cur.execute(
+            f"""
+            SELECT ad_key, appid, insight_cover_style, COALESCE(all_exposure_value, 0) AS exp
+            FROM daily_creative_insights
+            WHERE target_date IN ({ph})
+              AND COALESCE(TRIM(insight_cover_style), '') <> ''
+              AND COALESCE(TRIM(ad_key), '') <> ''
+              AND COALESCE(TRIM(appid), '') <> ''
+            """,
+            dlist,
+        )
+        by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in cur.fetchall():
+            ak = str(row["ad_key"] or "").strip()
+            aid = str(row["appid"] or "").strip()
+            raw = str(row["insight_cover_style"] or "").strip()
+            if not ak or not aid or not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+                if not isinstance(obj, dict):
+                    continue
+            except Exception:
+                continue
+            by_app[aid].append(
+                {
+                    "ad_key": ak,
+                    "style_json": obj,
+                    "exposure": int(row["exp"] or 0),
+                }
+            )
+        return dict(by_app)
+    finally:
+        conn.close()
+
+
+def load_cover_embedding_blob_map_by_ad_keys(ad_keys: List[str]) -> Dict[str, bytes]:
+    """批量读取 creative_library.cover_embedding（非空 BLOB）。"""
+    init_db()
+    keys = [k for k in {str(x or "").strip() for x in (ad_keys or [])} if k]
+    if not keys:
+        return {}
+    conn = _get_conn()
+    out: Dict[str, bytes] = {}
+    try:
+        cur = conn.cursor()
+        batch = 400
+        for i in range(0, len(keys), batch):
+            chunk = keys[i : i + batch]
+            ph = ",".join(["?"] * len(chunk))
+            cur.execute(
+                f"SELECT ad_key, cover_embedding FROM creative_library "
+                f"WHERE ad_key IN ({ph}) AND cover_embedding IS NOT NULL",
+                chunk,
+            )
+            for r in cur.fetchall():
+                b = r["cover_embedding"]
+                if b:
+                    out[str(r["ad_key"])] = bytes(b)
+        return out
+    finally:
+        conn.close()
+
+
+def upsert_cover_embedding(ad_key: str, embedding_blob: bytes) -> bool:
+    """写入/更新主库 creative_library.cover_embedding（用于封面 CLIP 与日内聚类复用）。"""
+    if not (ad_key or "").strip() or not embedding_blob:
+        return False
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE creative_library
+            SET cover_embedding = ?,
+                updated_at_local = datetime('now', 'localtime')
+            WHERE ad_key = ?
+            """,
+            (embedding_blob, ad_key),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 def _dedupe_intraday_union_by_appid(
     items: List[Dict[str, Any]],
@@ -1464,9 +1571,215 @@ def crossday_filter_items_against_creative_library(
 # 多维去重过滤：日内 + 跨日，返回进入分析的唯一素材集
 # ---------------------------------------------------------------------------
 
+
+def resolve_inspiration_crossday_lookback_days() -> int:
+    """与 dedup 报告、日志中 lookback 展示一致（跨日 B 步仍用全历史；本值作展示/对账）。"""
+    raw = (
+        os.getenv("INSPIRATION_DEDUP_LOOKBACK_DAYS")
+        or os.getenv("INSPIRATION_CROSSDAY_LOOKBACK_DAYS")
+        or "7"
+    ).strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 7
+    return max(0, min(365, n))
+
+
+def build_inspiration_dedup_redirect_map(dedup_report: Dict[str, Any]) -> Dict[str, str]:
+    """
+    去重中「被删」的 ad_key -> 可沿用其分析的代表 ad_key（日内同簇 or 跨日匹配）。
+    """
+    m: Dict[str, str] = {}
+    for r in (dedup_report or {}).get("intraday_removed") or []:
+        if not isinstance(r, dict):
+            continue
+        ak = str(r.get("ad_key") or "").strip()
+        kk = str(r.get("kept_ad_key") or "").strip()
+        if ak and kk:
+            m[ak] = kk
+    for r in (dedup_report or {}).get("crossday_removed") or []:
+        if not isinstance(r, dict):
+            continue
+        ak = str(r.get("ad_key") or "").strip()
+        mk = str(r.get("matched_ad_key") or "").strip()
+        if ak and mk:
+            m[ak] = mk
+    return m
+
+
+def _row_from_item_and_patched_analysis(
+    item: Dict[str, Any], analysis: str, ua_sugg: str, ex_meta: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    c = item.get("creative") if isinstance(item.get("creative"), dict) else {}
+    ex_meta = ex_meta or {}
+    ak = str(c.get("ad_key") or "").strip()
+    vurl = str(c.get("video_url") or "").strip()
+    iu = ex_meta.get("image_url", "")
+    if not isinstance(iu, str):
+        iu = str(iu or "")
+    if not vurl and not iu and ex_meta:
+        vurl = str(ex_meta.get("video_url") or "")
+        iu = str(ex_meta.get("image_url") or "")
+    creative_type = str(ex_meta.get("creative_type") or ("image" if iu and not vurl else "video"))
+    return {
+        "category": item.get("category"),
+        "product": item.get("product"),
+        "appid": item.get("appid"),
+        "ad_key": ak,
+        "creative_type": creative_type,
+        "platform": c.get("platform"),
+        "video_duration": c.get("video_duration"),
+        "all_exposure_value": c.get("all_exposure_value"),
+        "heat": c.get("heat"),
+        "impression": c.get("impression"),
+        "video_url": vurl,
+        "tiktok_ytdlp_used": False,
+        "youtube_ytdlp_used": False,
+        "image_url": iu,
+        "preview_img_url": c.get("preview_img_url") or ex_meta.get("preview_img_url") or "",
+        "title": c.get("title") or "",
+        "body": c.get("body") or "",
+        "pipeline_tags": c.get("pipeline_tags")
+        if isinstance(c.get("pipeline_tags"), list)
+        else list(ex_meta.get("pipeline_tags") or []),
+        "analysis": analysis,
+        "inspiration_enrichment": "none",
+        "ua_suggestion_single": ua_sugg,
+        "style_filter_match_summary": "",
+        "material_tags": list(ex_meta.get("material_tags") or []),
+        "arrow2_material_category": str(ex_meta.get("arrow2_material_category") or ""),
+        "ad_one_liner": str(ex_meta.get("ad_one_liner") or ""),
+        "exclude_from_bitable": bool(ex_meta.get("exclude_from_bitable", False)),
+        "exclude_from_cluster": bool(ex_meta.get("exclude_from_cluster", False)),
+    }
+
+
+def combined_analysis_results_for_pipeline(
+    pipeline_items: List[Dict[str, Any]],
+    new_success_by_ad: Dict[str, Dict[str, Any]],
+    existing_analysis: Dict[str, Dict[str, Any]],
+    dedup_redirect: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    """
+    为 raw 中每条 item 产出一行与 analyze_video_from_raw_json 近似的 result。
+    本次成功 > 历史缓存 > 去重重定向；否则为失败占位。
+    """
+    out: List[Dict[str, Any]] = []
+    for item in pipeline_items or []:
+        if not isinstance(item, dict):
+            continue
+        c = item.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        ak = str(c.get("ad_key") or "").strip()
+        if not ak:
+            continue
+
+        if ak in new_success_by_ad:
+            out.append(copy.deepcopy(new_success_by_ad[ak]))
+            continue
+        if ak in existing_analysis:
+            ex = existing_analysis[ak]
+            out.append(
+                _row_from_item_and_patched_analysis(
+                    item,
+                    str(ex.get("analysis") or ""),
+                    str(
+                        ex.get("ua_suggestion_single")
+                        or ex.get("ua_suggestion", "")
+                        or ""
+                    ),
+                    {
+                        "creative_type": ex.get("creative_type"),
+                        "image_url": ex.get("image_url", ""),
+                        "video_url": ex.get("video_url", ""),
+                        "preview_img_url": ex.get("preview_img_url", ""),
+                        "pipeline_tags": ex.get("pipeline_tags") or [],
+                    },
+                )
+            )
+            continue
+        if ak in dedup_redirect:
+            src = str(dedup_redirect[ak] or "").strip()
+            if not src:
+                out.append(
+                    {
+                        "ad_key": ak,
+                        "category": item.get("category"),
+                        "product": item.get("product"),
+                        "appid": item.get("appid"),
+                        "analysis": "[ERROR] 去重映射目标为空",
+                    }
+                )
+                continue
+            if src in new_success_by_ad:
+                base = copy.deepcopy(new_success_by_ad[src])
+            elif src in existing_analysis:
+                ex0 = existing_analysis[src]
+                base = _row_from_item_and_patched_analysis(
+                    {
+                        "creative": c,
+                        "category": item.get("category"),
+                        "product": item.get("product"),
+                        "appid": item.get("appid"),
+                    },
+                    str(ex0.get("analysis") or ""),
+                    str(
+                        ex0.get("ua_suggestion_single")
+                        or ex0.get("ua_suggestion", "")
+                        or ""
+                    ),
+                    {
+                        "creative_type": ex0.get("creative_type"),
+                        "image_url": ex0.get("image_url", ""),
+                        "video_url": ex0.get("video_url", ""),
+                        "preview_img_url": ex0.get("preview_img_url", ""),
+                        "pipeline_tags": ex0.get("pipeline_tags") or [],
+                    },
+                )
+            else:
+                out.append(
+                    {
+                        "ad_key": ak,
+                        "category": item.get("category"),
+                        "product": item.get("product"),
+                        "appid": item.get("appid"),
+                        "analysis": f"[ERROR] 去重重定向 {src!r} 无可用分析",
+                    }
+                )
+                continue
+            b = copy.deepcopy(base) if isinstance(base, dict) else {}
+            b["ad_key"] = ak
+            b["category"] = item.get("category")
+            b["product"] = item.get("product")
+            b["appid"] = item.get("appid")
+            b["video_url"] = str(c.get("video_url") or b.get("video_url") or "")
+            b["image_url"] = str(c.get("image_url") or b.get("image_url") or "")
+            b["preview_img_url"] = str(c.get("preview_img_url") or b.get("preview_img_url") or "")
+            b["impression"] = c.get("impression", b.get("impression"))
+            b["title"] = c.get("title") or b.get("title", "")
+            b["body"] = c.get("body") or b.get("body", "")
+            out.append(b)
+            continue
+
+        out.append(
+            {
+                "ad_key": ak,
+                "category": item.get("category"),
+                "product": item.get("product"),
+                "appid": item.get("appid"),
+                "analysis": "[ERROR] 本批无分析且未匹配历史/去重映射",
+            }
+        )
+    return out
+
+
 def get_deduped_items_for_analysis(
     target_date: str,
     raw_payload: Dict[str, Any],
+    *,
+    history_lookback_days: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     对 raw_payload 中的素材做两步去重，返回 (deduped_items, report)。
@@ -1510,6 +1823,9 @@ def get_deduped_items_for_analysis(
         target_date, canonical_items_a
     )
 
+    hlb = history_lookback_days
+    if hlb is None:
+        hlb = resolve_inspiration_crossday_lookback_days()
     report: Dict[str, Any] = {
         "total_input": len(items),
         "after_intraday": after_intraday,
@@ -1518,6 +1834,7 @@ def get_deduped_items_for_analysis(
         "crossday_removed_count": len(crossday_removed),
         "intraday_removed": intraday_removed,
         "crossday_removed": crossday_removed,
+        "history_lookback_days": hlb,
     }
     return deduped_items, report
 

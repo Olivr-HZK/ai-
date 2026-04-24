@@ -3,6 +3,9 @@
 
 主表同步：仅写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]），
 且 exclude_from_bitable 不为真（命中「我方已经投过」套路的素材不同步主表）。
+同步前会调用 `launched_effects_db.apply_launched_effects_filter`（需 FEISHU 凭证 + 已投放表/API），
+为结果补全 exclude 与补标。封面图、**视频**均尽量下载为附件上传（`VIDEO_BITABLE_MAX_MB` 限制大小；
+`VIDEO_BITABLE_UPLOAD=0` 可关视频上传）。
 不写入 raw 中仅入库、未分析或分析失败的条目。聚类表逻辑不变。
 
 输入：
@@ -78,6 +81,7 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "视频链接", "type": 1},
     {"field_name": "封面图链接", "type": 1},
     {"field_name": "封面图", "type": 17},
+    {"field_name": "视频", "type": 17},
     {"field_name": "AI分析结果", "type": 1},
     {"field_name": "UA灵感借鉴", "type": 1},
     {"field_name": "抓取日期", "type": 5},
@@ -209,6 +213,7 @@ def ensure_cluster_fields(access_token: str, app_token: str, table_id: str) -> N
 
 _LARK_CLIENT: lark.Client | None = None
 _IMAGE_CACHE: Dict[str, str] = {}
+_VIDEO_CACHE: Dict[str, str] = {}
 
 
 def get_lark_client() -> lark.Client:
@@ -252,6 +257,98 @@ def upload_image_as_attachment(image_url: str, app_token: str) -> str | None:
     if resp.success() and resp.data and getattr(resp.data, "file_token", None):
         tk = resp.data.file_token
         _IMAGE_CACHE[image_url] = tk
+        return tk
+    return None
+
+
+def _video_bitable_max_bytes() -> int:
+    try:
+        mb = float((os.getenv("VIDEO_BITABLE_MAX_MB") or "32").strip())
+    except ValueError:
+        mb = 32.0
+    return int(mb * 1024 * 1024)
+
+
+def _guess_video_filename(url: str, ad_key: str) -> str:
+    path = urlparse(url).path
+    name = (path.split("/")[-1] or "").strip() or f"video_{(ad_key or 'a')[:16]}.mp4"
+    return name[:200]
+
+
+def upload_video_as_attachment(video_url: str, app_token: str, ad_key: str = "") -> str | None:
+    """
+    将可直链下载的视频以附件形式上传至多维表，返回 file_token。
+    非直链/过大/HTML 回包时放弃，仅依赖「视频链接」文本列也能工作。
+    """
+    v = (video_url or "").strip()
+    if not v or not v.startswith("http"):
+        return None
+    if v in _VIDEO_CACHE:
+        return _VIDEO_CACHE[v]
+    env_up = (os.getenv("VIDEO_BITABLE_UPLOAD") or "1").strip().lower()
+    if env_up in ("0", "false", "no", "off", ""):
+        return None
+    low = v.lower()
+    if "youtube.com" in low or "youtu.be" in low:
+        return None
+    max_b = _video_bitable_max_bytes()
+    content_type = ""
+    try:
+        with requests.get(v, stream=True, timeout=120) as resp:
+            resp.raise_for_status()
+            cl = resp.headers.get("Content-Length")
+            if cl:
+                try:
+                    if int(cl) > max_b:
+                        print(f"[sync] 视频过大跳过附件 length={cl} url={v[:80]}")
+                        return None
+                except ValueError:
+                    pass
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            parts: list[bytes] = []
+            n = 0
+            for chunk in resp.iter_content(chunk_size=65536):
+                if not chunk:
+                    continue
+                n += len(chunk)
+                if n > max_b:
+                    print(f"[sync] 视频流超过上限 {max_b}B，跳过 url={v[:80]}")
+                    return None
+                parts.append(chunk)
+    except Exception as e:
+        print(f"[sync] 下载视频失败: {e} url={v[:80]!r}")
+        return None
+    content = b"".join(parts)
+    if len(content) < 500:
+        return None
+    if len(content) < 2000 and (
+        b"<html" in content[:2000].lower() or b"<!doctype" in content[:2000].lower()
+    ):
+        print(f"[sync] 视频 URL 返回 HTML 非直链，跳过附件 url={v[:80]}")
+        return None
+    name = _guess_video_filename(v, ad_key)
+    if not re.search(r"\.(mp4|mov|webm|m4v)$", name, re.I):
+        if "webm" in content_type:
+            name = re.sub(r"\.[^.]+$", "", name) + ".webm" if name else "video.webm"
+        else:
+            name = re.sub(r"\.[^.]+$", "", name) + ".mp4" if name else "video.mp4"
+    name = (name or "video.mp4")[:200]
+    body = (
+        UploadAllMediaRequestBody.builder()
+        .file_name(name)
+        .parent_type("bitable")
+        .parent_node(app_token)
+        .size(len(content))
+        .checksum("")
+        .extra("")
+        .file(BytesIO(content))
+        .build()
+    )
+    req = UploadAllMediaRequest.builder().request_body(body).build()
+    resp2: UploadAllMediaResponse = get_lark_client().drive.v1.media.upload_all(req)
+    if resp2.success() and resp2.data and getattr(resp2.data, "file_token", None):
+        tk = resp2.data.file_token
+        _VIDEO_CACHE[v] = tk
         return tk
     return None
 
@@ -652,6 +749,16 @@ def main() -> None:
     need_cluster_sync = args.sync_target in ("both", "cluster")
     if need_raw_sync:
         ensure_fields(token, app_token, table_id)
+        res_list = analysis.get("results")
+        if isinstance(res_list, list) and res_list:
+            try:
+                from launched_effects_db import apply_launched_effects_filter
+
+                n_le, _ = apply_launched_effects_filter(res_list)
+                if n_le:
+                    print(f"[sync] 我方已投放（关键词/embedding）处理 {n_le} 条（排除/补标）")
+            except Exception as e:
+                print(f"[sync] launched_effects 跳过: {e}")
 
     records: List[Dict[str, Any]] = []
     target_date = str(raw.get("target_date") or "")
@@ -750,6 +857,12 @@ def main() -> None:
                 ft = upload_image_as_attachment(img_url, app_token)
                 if ft:
                     fields["封面图"] = [{"file_token": ft}]
+
+            v_direct = (pick_video_url(c) or "").strip()
+            if v_direct and int(c.get("video_duration") or 0) > 0:
+                vf = upload_video_as_attachment(v_direct, app_token, ad_key)
+                if vf:
+                    fields["视频"] = [{"file_token": vf}]
 
             records.append({"fields": fields})
 

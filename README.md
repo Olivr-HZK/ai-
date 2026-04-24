@@ -29,6 +29,8 @@ ua素材/
 ├── config/                 # 配置与输入
 │   ├── operation.json      # 广大大页面选择器（搜索、筛选等）
 │   ├── ai_product.json     # AI 产品列表（用于 AI 产品 UA 流程）
+│   ├── arrow2_competitor.json  # Arrow2 竞品拉取（Tab、pull_specs、渠道与国家）
+│   ├── arrow2_exposure_workflow.md  # Arrow2「展示估值」工作流说明
 │   └── twitter_input.json  # 竞品游戏列表（用于游戏 UA 流程）
 ├── data/                   # 爬取与流程产出
 │   ├── batch_ua_results.json
@@ -44,6 +46,8 @@ ua素材/
 │   ├── path_util.py        # 统一路径配置
 │   ├── guangdada_login.py  # 广大大登录
 │   ├── scrape_guangdada.py
+│   ├── arrow2_exposure_workflow.sh  # Arrow2 展示估值一键流程（推荐）
+│   ├── workflow_arrow2_full_pipeline.py
 │   ├── run_search_workflow.py
 │   ├── batch_fetch_ua.py / batch_fetch_ai_products.py
 │   ├── download_ua_assets.py
@@ -198,3 +202,32 @@ tail -f logs/weekly_ua_job.log
 ```
 
 实时查看每日任务执行进度。
+
+## Arrow2 展示估值工作流（竞品 Tab）
+
+面向广大大 **Arrow2 / 游戏（或工具）Tab** 的竞品素材拉取：默认 **30 天 + 展示估值 + Top10%**（`pull_spec.id = exposure_top10`），入库 `data/arrow2_pipeline.db`，可选封面 CLIP 去重，并同步 **独立** 飞书多维表（与 Video Enhancer 主表不同）。
+
+**推荐一键执行（项目根目录）：**
+
+```bash
+./scripts/arrow2_exposure_workflow.sh
+# 指定业务日、并跑灵感分析（多模态）后仍同步飞书：
+# TARGET_DATE=2026-04-21 ./scripts/arrow2_exposure_workflow.sh --analyze
+```
+
+等价方式：`./scripts/daily_arrow2_workflow.sh`（无参或 `all`），或 `python scripts/workflow_arrow2_full_pipeline.py --pull-only exposure_top10`。
+
+**配置：**
+
+| 位置 | 内容 |
+|------|------|
+| `config/arrow2_competitor.json` | 搜索 Tab、竞品 `products`、`pull_specs`（含 `exposure_top10`）、渠道与国家筛选 |
+| `.env` | `FEISHU_*`、`ARROW2_BITABLE_URL`、广大大账号、`ARROW2_SQLITE_PATH` 等（见 `.env.example`） |
+| `config/arrow2_exposure_workflow.md` | **完整说明**：环境变量、产物路径、与「昨日最新」区别、仅爬取/测试库等 |
+
+爬取阶段在 `test_arrow2_competitors.py` 内 **全局按 `ad_key` 去重**，多轮次同一素材合并为一行。地区补全在 `run_arrow2_batch` 中若未设环境变量，**默认**走 **DOM 点卡**（可 `.env` 显式关）。
+
+**仅爬取、不入库（看 raw JSON，不写 SQLite）**：`./scripts/daily_arrow2_workflow.sh crawl-only` 默认 **`latest_yesterday`**（config 里「7 天 + 最新创意 + 仅昨日 first_seen」那组，不是展示估值）。要用展示估值那组时：`crawl-only exposure_top10`。`--output-prefix` 会带 `…_latest_yesterday` 或 `…_exposure_top10` 后缀，也可用 `ARROW2_OUTPUT_PREFIX` 覆盖整段前缀。
+
+**DOM 地区探针（调试）**：在补全多轮点卡**之前**，只点当前列表**前 N 张**卡、终端打印 `creatives` 前 N 条与 `detail-v2` 摘要，再暂停等你确认。示例：  
+`./scripts/arrow2_exposure_workflow.sh --debug --debug-dom-probe 5`；若只想探针、不要继续多点：加 `--debug-dom-probe-only` 或设 `ARROW2_DEBUG_DOM_PROBE_ONLY=1`。

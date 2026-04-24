@@ -1,0 +1,21 @@
+{
+  "schema": "ua_manual_advertiser_click_v1",
+  "exported_at": "2026-04-23T02:47:50.568697Z",
+  "keyword": "com.arrow.out",
+  "search_input": {
+    "description": "广大大「搜索广告主」ant-select 内的 input.ant-select-selection-search-input"
+  },
+  "clicks": [
+    {
+      "index": 1,
+      "clicked_at": "2026-04-23T02:47:43.582Z",
+      "text": "Arrow Out\ncom.arrow.out",
+      "ancestor_path": "DIV.flex.items-center.gap-x-[4px].leading-[16px] < DIV.flex-1.min-w-0 < DIV.flex.items-center.gap-x-[8px].flex-1 < DIV.m-h-[32px].group.px-[12px].py-[5px] < DIV.max-h-[300px].overflow-auto < DIV.z-[1050].absolute.rounded-lg.shadow-common < DIV#display-search-input-container < DIV.mt-5.w-[640px].mx-auto.relative < DIV.pt-6.pb-5.relative < DIV.bg-white.rounded-lg < DIV.min-h-[1200px] < FORM#filter",
+      "outerHTML": "<div class=\"flex items-center gap-x-[4px] leading-[16px] \"><div class=\"whitespace-nowrap overflow-hidden text-ellipsis\"><span class=\"\">Arrow Out</span></div><div class=\"whitespace-nowrap overflow-hidden text-ellipsis text-[#999] text-xs\"><span class=\"\"><span class=\"text-[#333] font-bold\">com.arrow.out</span></span></div></div>",
+      "parsed": {
+        "product_name": "Arrow Out",
+        "appid": "com.arrow.out"
+      }
+    }
+  ]
+}

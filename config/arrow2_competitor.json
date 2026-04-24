@@ -1,0 +1,84 @@
+{
+  "search_tab": "game",
+  "products": [
+    {
+      "keyword": "Arrows – Puzzle Escape",
+      "match": "Arrows – Puzzle Escape",
+      "appid": "com.ecffri.arrows"
+    },
+    {
+      "keyword": "Arrow Maze - Escape Puzzle",
+      "match": "Arrow Maze - Escape Puzzle",
+      "appid": "com.arrows.escape"
+    },
+    {
+      "keyword": "Arrow Puzzle - Tap Puzzle Games",
+      "match": "Arrow Puzzle - Tap Puzzle Games",
+      "appid": "com.easybrain.arrow.puzzle.game"
+    },
+    {
+      "keyword": "Tap Shift: Arrow Escape Puzzle",
+      "match": "Tap Shift: Arrow Escape Puzzle",
+      "appid": "com.paxiegames.tapshift"
+    },
+    {
+      "keyword": "Arrows GO!",
+      "match": "Arrows GO!",
+      "appid": "com.oakever.arrows"
+    },
+    {
+      "keyword": "Arrowscapes™ - Arrows Puzzle",
+      "match": "Arrowscapes™ - Arrows Puzzle",
+      "appid": "com.red.arrows.android"
+    },
+    {
+      "keyword": "Arrow Flow",
+      "match": "Arrow Flow",
+      "appid": "com.hg.arrow"
+    }
+  ],
+  "extra_keywords": [],
+  "pull_specs": [
+    {
+      "id": "exposure_top10",
+      "day_span": "30",
+      "order_by": "exposure",
+      "popularity_option_text": "Top10%",
+      "max_creatives_per_keyword": 30
+    },
+    {
+      "id": "latest_yesterday",
+      "day_span": "7",
+      "order_by": "latest",
+      "filter_yesterday_only": true,
+      "scroll_until_past_target_date": true,
+      "max_creatives_per_keyword": 30,
+      "comment": "7天+最新创意；持续滚动直到底层出现 first_seen/创建日早于目标昨日；再只保留 first_seen=昨日(UTC+8)。可设 scroll_until_past_target_date 为 false 恢复旧式停法"
+    }
+  ],
+  "filters": {
+    "popularity_option_text": "Top10%",
+    "ad_channels": [
+      "Facebook系",
+      "Google系",
+      "UnityAds",
+      "AppLovin"
+    ],
+    "ad_channels_playable": [
+      "Admob",
+      "UnityAds",
+      "AppLovin"
+    ],
+    "countries": [
+      "USA",
+      "JPN",
+      "KOR",
+      "GBR",
+      "CAN",
+      "AUS",
+      "BRA",
+      "MEX",
+      "RUS"
+    ]
+  }
+}

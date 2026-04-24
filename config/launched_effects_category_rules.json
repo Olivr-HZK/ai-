@@ -1,0 +1,119 @@
+{
+  "_comment": "复制为 config/launched_effects_category_rules.json。example 来自当前 data 首条命中；无命中时 example 为 null。rules 请填写每类抽词要求。",
+  "categories": {
+    "empty": {
+      "label_zh": "空",
+      "hint": "无文本",
+      "example_index": null,
+      "example": null,
+      "example_one_line": null,
+      "example_note": "当前 189 条里无空说明；飞书若删成空行会归此类。",
+      "rules": "空的直接去除"
+    },
+    "doc_with_link": {
+      "label_zh": "含HTTP/飞书链",
+      "hint": "说明里带 http(s) 或 feishu.cn 链接，多为文档型",
+      "example_index": 29,
+      "example": "Santa Call（圣诞老人打视频主题）\nVidu Q2\n参考生图，1080p，尺寸：3:4\n主题id：fun_santa_call_g_251128\nEvoke 以滑动切换的形式展示，与 Avatar的素材分开打包\n\n具体信息填入Avatar内容文档中：\nhttps://oqpc5k0pr2b.feishu.cn/wiki/KFonw0x8HiJDFnkzt4acz13JnXb?from=from_copylink",
+      "example_one_line": "Santa Call（圣诞老人打视频主题） Vidu Q2 参考生图，1080p，尺寸：3:4 主题id：fun_santa_call_g_251128 Evoke 以滑动切换的形式展示，与 Avatar的素材分开打包  具体信息填入Avatar内容文档中： https://oqpc5k0pr2b.feishu.cn/wiki/KFonw0x8HiJDFnkzt4acz13JnXb?from=from_copylink",
+      "rules": "这种只需要保留santa call和括号中的中文"
+    },
+    "doc_theme_or_internal_id": {
+      "label_zh": "含主题id/内部id",
+      "hint": "含「主题id」或 fun_/festival_/video_ 等长内部 id",
+      "example_index": 31,
+      "example": "Santa Call（圣诞老人打视频主题）\n主题id：fun_santa_call_g_251128\n上线新封面，替换掉以前的",
+      "example_one_line": "Santa Call（圣诞老人打视频主题） 主题id：fun_santa_call_g_251128 上线新封面，替换掉以前的",
+      "rules": "保留santacall和括号中的中文"
+    },
+    "ops_changelog_block": {
+      "label_zh": "【】工单块",
+      "hint": "行首为【特效优化】【新增特效】【模型更新】【更新提示词】【添加音效】等运维块",
+      "example_index": 37,
+      "example": "【特效优化】Vidu Q2 模型做了升级，能更好的生成性感动作。麻烦给 Evoke：AI Heat 12 个特效更新提示词，都统一为图生视频，5s，720p，210 点券，打开音效。",
+      "example_one_line": "【特效优化】Vidu Q2 模型做了升级，能更好的生成性感动作。麻烦给 Evoke：AI Heat 12 个特效更新提示词，都统一为图生视频，5s，720p，210 点券，打开音效。",
+      "rules": "直接去掉，不进入关键词"
+    },
+    "ops_surface_meta": {
+      "label_zh": "运维表面操作",
+      "hint": "替换封面/下架再上线/添加背景音乐/更新模型/置顶焦点图等，弱内容语义",
+      "example_index": 32,
+      "example": "AI Love视频封面优化，替换掉以前的",
+      "example_one_line": "AI Love视频封面优化，替换掉以前的",
+      "rules": "直接去掉，不进入后续关键词提取"
+    },
+    "product_line_batch_spec": {
+      "label_zh": "产品行+批次规格",
+      "hint": "Evoke:/Toki 等开头且含 Vidu/720p/参考生/新增N个特效等参数口吻",
+      "example_index": 27,
+      "example": "Evoke：Scene Show 新增 4 个特效，使用 Vidu Q2 的参考生视频，5s，720p，尺寸 3:4，需要打开 BGM",
+      "example_one_line": "Evoke：Scene Show 新增 4 个特效，使用 Vidu Q2 的参考生视频，5s，720p，尺寸 3:4，需要打开 BGM",
+      "rules": "直接去掉，不进入关键词"
+    },
+    "batch_new_effects_list": {
+      "label_zh": "批量列举特效",
+      "hint": "明确出现「新增/上线 … 个特效」且多专名/顿号列举",
+      "example_index": 41,
+      "example": "Toki&Kavi\n1、【 Merry Christmas】上线 7 个新特效：Tree Doll、Snow Bear、Magic Cat、Xmas Poster、Instant Tree、Stocking Sweetie、Snow Globe , 积分不一样\n\n2、【 AI Heat】上线 2 个新特效：Ripped Abs、Flex Bicep , 50积分\n\n3、【 Dress Up】上线 2 个新特效：London Gent、 Bloom Dress , 50积分",
+      "example_one_line": "Toki&Kavi 1、【 Merry Christmas】上线 7 个新特效：Tree Doll、Snow Bear、Magic Cat、Xmas Poster、Instant Tree、Stocking Sweetie、Snow Globe , 积分不一样  2、【 AI Heat】上线 2 个新特效：Ripped Abs、Flex Bicep , 50积分  3、【 Dress Up】上线 2 个新特效：London Gent、 …",
+      "rules": "将特效名都提取出来作为关键词，比如人tree doll，snowbear这样的"
+    },
+    "multi_product_mixed": {
+      "label_zh": "多产品混排长文",
+      "hint": "含 Toki&Kavi / Evoke&… 等多行多块说明",
+      "example_index": 38,
+      "example": "Evoke\n【Merry Christmas】Christmas Card（圣诞贺卡），240点券        \n【Comic Chaos】Shake Fever（摇动热潮）430 点券、Kitchen Shuffle（厨房企鹅舞）290 点券，均设定为 540p\n【Pet Part】Balloon Parade（游行气球），240点券        \n\n Toki&Kavi\n【Comic Chaos】Shake Fever（摇动热潮）90 积分、Kitchen Shuffle（厨房企鹅舞）60 积分，均设定为 540p",
+      "example_one_line": "Evoke 【Merry Christmas】Christmas Card（圣诞贺卡），240点券         【Comic Chaos】Shake Fever（摇动热潮）430 点券、Kitchen Shuffle（厨房企鹅舞）290 点券，均设定为 540p 【Pet Part】Balloon Parade（游行气球），240点券           Toki&Kavi 【Comic Chaos】Shake Fever（摇动热潮…",
+      "rules": "提取christmas card和圣诞贺卡"
+    },
+    "tagged_short_line": {
+      "label_zh": "带【】的短行",
+      "hint": "通常一行、以【主题/活动】开头",
+      "example_index": 34,
+      "example": "【Merry Christmas】Christmas Card（圣诞贺卡）",
+      "example_one_line": "【Merry Christmas】Christmas Card（圣诞贺卡）",
+      "rules": "提取christmas card和圣诞贺卡"
+    },
+    "single_line_effect_name": {
+      "label_zh": "单行特效名片",
+      "hint": "单行、无链接，典型「英文名（中文）」或短英文",
+      "example_index": 0,
+      "example": "Bottle Dweller（瓶中精灵）",
+      "example_one_line": "Bottle Dweller（瓶中精灵）",
+      "rules": "提取英文和中文为关键词"
+    },
+    "single_cn_phrase": {
+      "label_zh": "单行纯中文短语",
+      "hint": "整行主要为中文风格名，如「黑白线稿漫画」",
+      "example_index": 18,
+      "example": "黑白线稿漫画",
+      "example_one_line": "黑白线稿漫画",
+      "rules": "直接提取关键词"
+    },
+    "few_lines_theme_desc": {
+      "label_zh": "少行主题说明",
+      "hint": "2～3 行、偏主题描述/焦点图文案，无链接",
+      "example_index": 79,
+      "example": "【Kavi 新特效】\n下架 Photo Revival 当前所有特效，上线的6 个新特效",
+      "example_one_line": "【Kavi 新特效】 下架 Photo Revival 当前所有特效，上线的6 个新特效",
+      "rules": "直接去除，不进入关键词"
+    },
+    "single_line_long": {
+      "label_zh": "单行偏长",
+      "hint": "无换行但长度较大，需单独规则",
+      "example_index": null,
+      "example": null,
+      "example_one_line": null,
+      "example_note": "当前 189 条里未命中；若单行无换行且长度>120 会归此类，可自行造一条测试。",
+      "rules": "单行过长时尽力提取英文/中文特效专名；无明确专名则输出空数组。"
+    },
+    "other_long_or_mixed": {
+      "label_zh": "其他长文/混合",
+      "hint": "兜底：多行杂糅或未覆盖模式",
+      "example_index": 56,
+      "example": "Evoke&Toki&Kavi\n更新【Santa Call】主题的4张内置图",
+      "example_one_line": "Evoke&Toki&Kavi 更新【Santa Call】主题的4张内置图",
+      "rules": "保留santa call"
+    }
+  }
+}

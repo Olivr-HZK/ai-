@@ -2,6 +2,8 @@
 Video Enhancer 全流程工作流（一键）：
 1) 抓取（按日期 + 指定产品）
 2) 可选封面日内去重（可用 --skip-cover-dedupe 跳过；与抓取拆分请用 workflow_video_enhancer_steps crawl_store --crawl-only + cover_store）
+2.0) DOM 详情补全（广大大登录，对无 video_url 的条目补 source_url 等；需 .env 账号；可用 --skip-dom-enrich 跳过）
+2.0b) 统计灵感分析准入（不删 raw；不符准入的不进分析）
 3) 视频灵感分析（基于 raw JSON）
 4) 生成统一 UA 建议（方向卡片）
 5) 同步 raw + 分析 到多维表
@@ -14,6 +16,9 @@ python scripts/workflow_video_enhancer_full_pipeline.py \
 
 多维表链接可写在 .env：`VIDEO_ENHANCER_BITABLE_URL=...`（含 table= 的完整浏览器地址）。
 也可用 `--bitable-url` 临时覆盖环境变量。
+不设 `VIDEO_ENHANCER_CLUSTER_BITABLE_URL` 时仅同步主表（raw/分析），不写聚类表。
+
+稳定性：可选 `WORKFLOW_SUBPROCESS_TIMEOUT_SEC`（秒，>0 时对子进程生效；默认 0 不限制，避免长任务被误杀）。
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -33,14 +39,35 @@ from path_util import DATA_DIR, PROJECT_ROOT
 
 load_dotenv(PROJECT_ROOT / ".env")
 
+from llm_client import print_openrouter_key_meter
+
+from cover_embedding import maybe_run_cover_embedding_after_library
 from cover_style_intraday import apply_intraday_cover_style_dedupe, is_cover_style_intraday_enabled
+
+from filter_step_report_util import (
+    write_cover_filter_step_json,
+    write_cover_filter_step_json_skipped,
+    write_launched_filter_step_json,
+)
+
+from analyze_video_from_raw_json import is_creative_analyzable
+
+from tiktok_video_resolve import (
+    classify_ineligible_reason,
+    format_inspiration_detail_lines,
+    ineligible_reason_label_cn,
+    merge_inspiration_filter_stats,
+)
 
 from ua_crawl_db import format_video_enhancer_usage_log_line
 
 from video_enhancer_pipeline_db import (
+    build_inspiration_dedup_redirect_map,
+    combined_analysis_results_for_pipeline,
     get_deduped_items_for_analysis,
     init_db as init_pipeline_db,
     load_existing_success_analysis_by_ad_keys,
+    resolve_inspiration_crossday_lookback_days,
     should_persist_suggestion_to_push_table,
     upsert_analysis_embedding,
     upsert_creative_library,
@@ -174,7 +201,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--skip-cover-dedupe",
         action="store_true",
-        help="跳过封面日内多模态聚类去重（抓取后直接用全量 raw 入库并继续后续步骤）",
+        help="跳过封面日内 CLIP 视觉聚类去重（抓取后直接用全量 raw 入库并继续后续步骤）",
+    )
+    p.add_argument(
+        "--skip-dom-enrich",
+        action="store_true",
+        help="跳过 DOM 详情补全（enrich_raw_with_dom_detail.py，无账号或调试时可关）",
     )
     return p.parse_args()
 
@@ -217,7 +249,38 @@ def _ensure_line_buffered_stdio() -> None:
 
 def _run(cmd: list[str]) -> None:
     print("\n$ " + " ".join(cmd))
-    subprocess.run(cmd, check=True, cwd=str(PROJECT_ROOT), env=_subprocess_env())
+    timeout_raw = (os.getenv("WORKFLOW_SUBPROCESS_TIMEOUT_SEC") or "0").strip()
+    try:
+        timeout_sec = int(timeout_raw)
+    except ValueError:
+        timeout_sec = 0
+    kwargs: dict = {"check": True, "cwd": str(PROJECT_ROOT), "env": _subprocess_env()}
+    if timeout_sec > 0:
+        kwargs["timeout"] = timeout_sec
+    subprocess.run(cmd, **kwargs)
+
+
+def _print_dom_enrich_report_summary(output_prefix: str) -> None:
+    """读取 DOM 补全报告，打印待处理/成功/失败条数。"""
+    report_path = DATA_DIR / f"{output_prefix}_dom_enrich_report.json"
+    if not report_path.exists():
+        print("[dom-enrich] 本轮未生成 dom_enrich_report（跳过补全或尚未写出）")
+        return
+    try:
+        r = json.loads(report_path.read_text(encoding="utf-8"))
+    except OSError as e:
+        print(f"[dom-enrich] 读报告失败: {e}")
+        return
+    pending = int(r.get("pending_total") or 0)
+    results = r.get("results") or []
+    ok = sum(1 for x in results if isinstance(x, dict) and x.get("status") == "ok")
+    fail = sum(1 for x in results if isinstance(x, dict) and x.get("status") != "ok")
+    note = str(r.get("note") or "")
+    extra = f" note={note}" if note else ""
+    print(
+        f"[dom-enrich] 补全统计: 待处理 {pending} 条，详情合并成功 {ok} 条，未成功/失败 {fail} 条"
+        f"（报告 {report_path.name}）{extra}"
+    )
 
 
 def _extract_ad_keys(raw_payload: dict) -> list[str]:
@@ -239,6 +302,7 @@ def _extract_ad_keys(raw_payload: dict) -> list[str]:
 
 def main() -> None:
     _ensure_line_buffered_stdio()
+    print_openrouter_key_meter("工作流开始前")
     args = parse_args()
     bitable_url = _resolve_bitable_url(args)
     cluster_bitable_url = _resolve_cluster_bitable_url(args)
@@ -271,11 +335,21 @@ def main() -> None:
     # 2) 先把“原始素材”落库（不带分析），再做增量分析
     init_pipeline_db()
     raw_payload = json.loads(raw_path.read_text(encoding="utf-8"))
+    n_after_crawl = len(raw_payload.get("items") or [])
+    print(f"\n[step:crawl] 抓取完成，raw items={n_after_crawl} 条（{raw_path.name}）")
+
     if args.skip_cover_dedupe:
         print(
             "[cover-style] 已跳过（--skip-cover-dedupe）。"
             "若需与抓取拆分：请用 workflow_video_enhancer_steps.py crawl_store --crawl-only 后再 cover_store。"
         )
+        print(
+            f"\n[step:cover-style] 未做封面筛选，全量 {len(raw_payload.get('items') or [])} 条进入后续"
+        )
+        sk_path = write_cover_filter_step_json_skipped(
+            DATA_DIR, output_prefix, target_date, "SKIP_COVER_DEDUPE_CLI_FLAG"
+        )
+        print(f"[filter-json] {sk_path.name}（封面步骤已跳过）")
     elif is_cover_style_intraday_enabled():
         items = raw_payload.get("items") or []
         items2, cover_rep = apply_intraday_cover_style_dedupe(
@@ -284,6 +358,12 @@ def main() -> None:
         raw_payload["items"] = items2
         raw_payload["cover_style_intraday_report"] = cover_rep
         raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        n_in = int(cover_rep.get("input_count", len(items)))
+        n_out = int(cover_rep.get("output_count", len(items2)))
+        n_rm = n_in - n_out
+        print(
+            f"\n[step:cover-style] 日内封面聚类筛选: 入 {n_in} 条 → 出 {n_out} 条，本环节剔除 {n_rm} 条"
+        )
         print(
             f"[cover-style] 日内同产品封面聚类（展示估值最高保留）: "
             f"{cover_rep.get('input_count', len(items))} → {cover_rep.get('output_count', len(items2))} 条"
@@ -292,44 +372,133 @@ def main() -> None:
         cover_rep_path = DATA_DIR / f"{output_prefix}_cover_style_intraday.json"
         cover_rep_path.write_text(json.dumps(cover_rep, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[cover-style] 报告已写 {cover_rep_path.name}")
+        cf_path = write_cover_filter_step_json(DATA_DIR, output_prefix, target_date, cover_rep)
+        print(f"[filter-json] {cf_path.name}（封面：跨日指纹 + 日内聚类剔除明细）")
     else:
         print(
-            "[cover-style] 多模态封面去重已关闭（COVER_STYLE_INTRADAY_ENABLED=0）；"
-            "去重仅走 get_deduped_items_for_analysis（ahash + URL + ad_key，同 appid）。"
+            "[cover-style] 封面 CLIP 视觉去重已关闭（COVER_STYLE_INTRADAY_ENABLED=0）。"
         )
+        print(
+            f"\n[step:cover-style] 未启用封面筛选，全量 {len(raw_payload.get('items') or [])} 条进入后续"
+        )
+        sk_path = write_cover_filter_step_json_skipped(
+            DATA_DIR, output_prefix, target_date, "COVER_STYLE_INTRADAY_DISABLED"
+        )
+        print(f"[filter-json] {sk_path.name}（封面步骤已跳过）")
+
+    # 2.0) 列表无直链时：浏览器进广大大 DOM 点详情，合并 source_url / resource_urls 等到 raw（再入库）
+    if not args.skip_dom_enrich:
+        email = os.getenv("GUANGDADA_EMAIL") or os.getenv("GUANGDADA_USERNAME")
+        pwd = os.getenv("GUANGDADA_PASSWORD")
+        if email and pwd:
+            print("\n[dom-enrich] 开始 DOM 详情补全（无 video_url 的素材）…")
+            enriched_path = DATA_DIR / f"{output_prefix}_raw_dom_enriched.json"
+            try:
+                enriched_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                _run(
+                    [
+                        py,
+                        "scripts/enrich_raw_with_dom_detail.py",
+                        "--raw",
+                        str(raw_path),
+                    ]
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"[dom-enrich] 子进程失败，沿用补全前 raw: {e}")
+            if enriched_path.exists():
+                raw_payload = json.loads(enriched_path.read_text(encoding="utf-8"))
+                raw_path.write_text(
+                    json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                print(f"[dom-enrich] 已写回 {raw_path.name}（合并自 {enriched_path.name}）")
+        else:
+            print(
+                "[dom-enrich] 跳过：未配置 GUANGDADA_EMAIL（或 GUANGDADA_USERNAME）/ GUANGDADA_PASSWORD"
+            )
+    else:
+        print("[dom-enrich] 已跳过（--skip-dom-enrich）")
+
+    _print_dom_enrich_report_summary(output_prefix)
+
+    raw_payload, _tot, _elig, _skip = merge_inspiration_filter_stats(raw_payload)
+    raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    detail = (raw_payload.get("filter_report") or {}).get("inspiration_detail") or {}
+    print("\n[step:inspiration-gate] 灵感分析准入（raw 不删条，仅统计）")
+    print(
+        f"  · 汇总: 全量 {_tot} 条，可分析 {_elig} 条，本关口不可分析 {_skip} 条"
+    )
+    for line in format_inspiration_detail_lines(detail):
+        print(line)
+    print("  （filter_report.inspiration_detail 已写入）")
 
     n_raw = upsert_daily_creative_insights(target_date, raw_payload, {})
-    print(f"[DB] 原始素材已落库 daily_creative_insights: {n_raw} 条（analysis 为空）。")
+    print(
+        f"\n[step:db-raw] daily_creative_insights 原始快照入库 {n_raw} 行（analysis 仍为空）"
+    )
 
     # 2b) 写入素材主库并执行多维去重归组（记录全量）
     n_lib, n_grouped = upsert_creative_library(target_date, raw_payload)
-    print(f"[DB] 素材主库 creative_library: 写入/更新 {n_lib} 条，发现重复归组 {n_grouped} 条。")
-
-    # 2c) 多维去重过滤：日内去重 + 跨日去重，只保留真正新的唯一素材进入后续分析
-    deduped_items, dedup_report = get_deduped_items_for_analysis(target_date, raw_payload)
-    dedup_report_path = DATA_DIR / f"{output_prefix}_dedup_report.json"
-    dedup_report_path.write_text(json.dumps(dedup_report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
-        f"[dedup] 原始 {dedup_report['total_input']} 条 "
-        f"→ 日内去重后 {dedup_report['after_intraday']} 条（去除 {dedup_report['intraday_removed_count']} 条重复）"
-        f"→ 跨日去重后 {dedup_report['after_crossday']} 条（去除 {dedup_report['crossday_removed_count']} 条历史素材）"
+        f"[step:db-library] creative_library 写入/更新 {n_lib} 条，当日重复归组 {n_grouped} 条"
     )
+    maybe_run_cover_embedding_after_library(target_date)
 
-    # 去重后的素材集作为后续所有步骤的输入（分析/推送/多维表）
-    deduped_raw_payload = {
+    # 2c) 全量 raw 进入后续；灵感分析仅处理「准入 + 未缓存成功分析」
+    pipeline_items: list[dict] = [x for x in (raw_payload.get("items") or []) if isinstance(x, dict)]
+
+    pipeline_raw_payload = {
         "target_date": raw_payload.get("target_date"),
         "crawl_date": raw_payload.get("crawl_date"),
-        "total": len(deduped_items),
-        "items": deduped_items,
+        "total": len(pipeline_items),
+        "items": pipeline_items,
         "filter_report": raw_payload.get("filter_report"),
     }
 
-    # 在去重后素材里再跳过已有成功分析的（复用缓存）
-    deduped_ad_keys = _extract_ad_keys(deduped_raw_payload)
-    existing_analysis = load_existing_success_analysis_by_ad_keys(deduped_ad_keys)
+    pipeline_ad_keys = _extract_ad_keys(pipeline_raw_payload)
+    existing_analysis = load_existing_success_analysis_by_ad_keys(pipeline_ad_keys)
+
+    _lb = resolve_inspiration_crossday_lookback_days()
+    deduped_items, dedup_report = get_deduped_items_for_analysis(
+        target_date,
+        {"items": pipeline_items},
+        history_lookback_days=_lb,
+    )
+    dedup_report_path = DATA_DIR / f"{output_prefix}_analysis_dedup_report.json"
+    dedup_report_path.write_text(
+        json.dumps(dedup_report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    dedup_kept: set[str] = set()
+    for _it in deduped_items:
+        if not isinstance(_it, dict):
+            continue
+        _c = _it.get("creative") or {}
+        if isinstance(_c, dict):
+            _ak = str(_c.get("ad_key") or "").strip()
+            if _ak:
+                dedup_kept.add(_ak)
+    cross_matched = sorted(
+        {
+            str(r.get("matched_ad_key") or "").strip()
+            for r in (dedup_report.get("crossday_removed") or [])
+            if isinstance(r, dict)
+        }
+        - {""}
+    )
+    if cross_matched:
+        existing_analysis.update(load_existing_success_analysis_by_ad_keys(cross_matched))
+
+    dedup_redirect = build_inspiration_dedup_redirect_map(dedup_report)
 
     pending_items: list[dict] = []
-    for item in deduped_items:
+    skipped_no_media = 0
+    skipped_cache = 0
+    skipped_dedup = 0
+    ineligible_reasons: dict[str, int] = defaultdict(int)
+    for item in pipeline_items:
         if not isinstance(item, dict):
             continue
         creative = item.get("creative") or {}
@@ -338,22 +507,42 @@ def main() -> None:
         k = str(creative.get("ad_key") or "").strip()
         if not k:
             continue
+        if k not in dedup_kept:
+            skipped_dedup += 1
+            continue
         if k in existing_analysis:
+            skipped_cache += 1
+            continue
+        if not is_creative_analyzable(creative):
+            skipped_no_media += 1
+            ineligible_reasons[classify_ineligible_reason(creative)] += 1
             continue
         pending_items.append(item)
 
     pending_raw_payload = {
-        "target_date": deduped_raw_payload.get("target_date"),
-        "crawl_date": deduped_raw_payload.get("crawl_date"),
+        "target_date": pipeline_raw_payload.get("target_date"),
+        "crawl_date": pipeline_raw_payload.get("crawl_date"),
         "total": len(pending_items),
         "items": pending_items,
     }
     pending_raw_path = DATA_DIR / f"{output_prefix}_raw_pending_analysis.json"
     pending_raw_path.write_text(json.dumps(pending_raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("\n[step:analysis-queue] 本次灵感分析入队")
+    print(f"  · 全量 items: {len(pipeline_items)}（去重 ad_key 约 {len(pipeline_ad_keys)} 个）")
     print(
-        f"[analysis] 去重后 {len(deduped_ad_keys)} 条；命中历史成功分析 {len(existing_analysis)} 条；"
-        f"本次需新分析 {len(pending_items)} 条。"
+        f"  · 多维去重（日内+跨日，跨日窗口 lookback={dedup_report.get('history_lookback_days')}）: "
+        f"{dedup_report.get('total_input')} → {dedup_report.get('after_crossday')} 条；"
+        f"报告 {dedup_report_path.name}"
     )
+    print(f"  · 因与代表/历史重复跳过 LLM: {skipped_dedup}")
+    print(f"  · 历史已成功分析，跳过（不重复调 LLM）: {skipped_cache}")
+    print(f"  · 不符准入，本环节不上分析: {skipped_no_media}")
+    for rk, rv in sorted(ineligible_reasons.items(), key=lambda x: -x[1]):
+        if rv:
+            print(
+                f"      └ {rk}（{ineligible_reason_label_cn(rk)}）: {rv}"
+            )
+    print(f"  · 本次将调用 analyze 子进程: {len(pending_items)} 条 → {pending_raw_path.name}")
 
     new_analysis_payload = {
         "input_file": str(pending_raw_path),
@@ -413,26 +602,18 @@ def main() -> None:
         for x in failed_analysis:
             print(f"  - ad_key={x.get('ad_key')} error={x.get('error')}")
 
-    # 组装“完整分析结果”（历史成功 + 本次成功），仅包含去重后的唯一素材
-    combined_results: list[dict] = []
-    for item in deduped_items:
-        if not isinstance(item, dict):
-            continue
-        creative = item.get("creative") or {}
-        if not isinstance(creative, dict):
-            continue
-        ad_key = str(creative.get("ad_key") or "").strip()
-        if not ad_key:
-            continue
-        if ad_key in new_success_by_ad:
-            combined_results.append(new_success_by_ad[ad_key])
-        elif ad_key in existing_analysis:
-            combined_results.append(existing_analysis[ad_key])
+    # 组装「完整分析结果」（历史成功 + 本次成功 + 去重副本沿用 canonical 分析）
+    combined_results: list[dict] = combined_analysis_results_for_pipeline(
+        pipeline_items,
+        new_success_by_ad,
+        existing_analysis,
+        dedup_redirect,
+    )
 
     analysis_payload = {
         "input_file": str(raw_path),
         "total_items": len(raw_payload.get("items") or []),
-        "deduped_items": len(deduped_items),
+        "pipeline_items": len(pipeline_items),
         "analyzed_items": len(combined_results),
         "reused_existing": len(existing_analysis),
         "new_success": len(new_success_by_ad),
@@ -442,16 +623,55 @@ def main() -> None:
     analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[analysis] 合并分析结果 {len(combined_results)} 条，输出 {analysis_path}")
 
-    # 2.5) 回写成功分析到 DB（全量原始素材都记录，去重后素材带 analysis）
+    # 2.8) 语义去重：对 combined_results 中的素材与历史嵌入比对，命中则排除出方向卡片
+    n_sem = _apply_semantic_dedup(target_date, combined_results)
+    if n_sem:
+        print(f"[semantic-dedup] 标记 {n_sem} 条语义重复素材（exclude_from_cluster）")
+
+    # 2.9) vs 我方已投放特效库：命中则排除出方向卡片 + 主表不同步 + 打标
+    launched_details: list[dict] = []
+    try:
+        from launched_effects_db import apply_launched_effects_filter
+
+        n_le, launched_details = apply_launched_effects_filter(combined_results)
+        if n_le:
+            print(
+                f"[launched-effects] 标记 {n_le} 条与我方已投放特效匹配的素材"
+                "（主表不同步；仍写入本地 analysis JSON 备查）"
+            )
+    except Exception as e:
+        print(f"[launched-effects] skipped: {e}")
+        n_le = 0
+        launched_details = []
+
+    lf_path = write_launched_filter_step_json(
+        DATA_DIR, output_prefix, target_date, launched_details, marked_count=n_le
+    )
+    print(f"[filter-json] {lf_path.name}（我方已投放特效库匹配 {n_le} 条）")
+
+    # 如有 2.8/2.9 标记，回写 analysis JSON
+    if n_sem or n_le:
+        analysis_payload["results"] = combined_results
+        analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 2.5) 回写成功分析 + 标签到 DB（须在 2.9 特效库打标之后，以便写入 launched_effect_match）
     analysis_by_ad: dict[str, dict] = {}
     for it in combined_results:
         if isinstance(it, dict):
             k = str(it.get("ad_key") or "")
             v = str(it.get("analysis") or "")
             if k and v and not v.startswith("[ERROR]"):
+                mtags = it.get("material_tags")
+                if not isinstance(mtags, list):
+                    mtags = []
                 analysis_by_ad[k] = {
                     "analysis": v,
                     "ua_suggestion_single": str(it.get("ua_suggestion_single") or ""),
+                    "material_tags": mtags,
+                    "exclude_from_bitable": bool(it.get("exclude_from_bitable")),
+                    "exclude_from_cluster": bool(it.get("exclude_from_cluster")),
+                    "style_filter_match_summary": str(it.get("style_filter_match_summary") or ""),
+                    "launched_effect_match": it.get("launched_effect_match"),
                 }
     n_insights = upsert_daily_creative_insights(target_date, raw_payload, analysis_by_ad)
     n_filter_logs = upsert_daily_video_enhancer_filter_log(
@@ -469,19 +689,20 @@ def main() -> None:
     # 2.7) 语义嵌入：对有分析文本的素材计算 embedding 并存入 creative_library
     _store_analysis_embeddings(analysis_by_ad)
 
-    # 2.8) 语义去重：对 combined_results 中的素材与历史嵌入比对，命中则排除出方向卡片
-    n_sem = _apply_semantic_dedup(target_date, combined_results)
-    if n_sem:
-        analysis_payload["results"] = combined_results
-        analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[semantic-dedup] 标记 {n_sem} 条语义重复素材（exclude_from_cluster），已更新 {analysis_path.name}")
-
     # 有失败时：不生成 UA 建议，不入库 push_content，不做后续推送
     if failed_analysis:
         print(
             "[workflow] 检测到视频分析失败，已按要求停止后续 UA 建议/推送入库。"
             f"失败明细见：{failed_path}"
         )
+        try:
+            from workflow_video_enhancer_acceptance import run_acceptance_after_workflow
+
+            run_acceptance_after_workflow(target_date, partial=True)
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[acceptance] {e}")
         return
 
     # 3) 统一 UA 建议（方向卡片）
@@ -600,6 +821,17 @@ def main() -> None:
     # 只有同时 no_wecom + no_sheet 时才跳过
     if not (args.no_wecom and args.no_sheet):
         _run(multi_cmd)
+
+    print_openrouter_key_meter("工作流结束后")
+
+    try:
+        from workflow_video_enhancer_acceptance import run_acceptance_after_workflow
+
+        run_acceptance_after_workflow(target_date, partial=False)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"[acceptance] {e}")
 
     print("\n[完成] 全流程执行完成。")
     print(f"- raw: {raw_path}")

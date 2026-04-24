@@ -1,0 +1,83 @@
+# 广大大详情链接 target_date=2026-04-14 共 27 条（napi detail-v2）
+
+- Glam AI:Video & Photo Editor `0a48bef237d4347779954006ff33e8df`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=0a48bef237d4347779954006ff33e8df&app_type=2&search_flag=145458
+
+- Remini - AI Photo Enhancer `2bc097bec9644e5a651153c77624b967`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=2bc097bec9644e5a651153c77624b967&app_type=2&search_flag=145458
+
+- Glam AI:Video & Photo Editor `2c41f45fa6ebeabb854781741292b8f2`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=2c41f45fa6ebeabb854781741292b8f2&app_type=2&search_flag=145458
+
+- Remini - AI Photo Enhancer `38640767067ca1087fd9102946637a9b`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=38640767067ca1087fd9102946637a9b&app_type=2&search_flag=145458
+
+- AI Mirror: AI Photo & Video `4c05e90a757da4b85a6c5ff7b6e0af27`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=4c05e90a757da4b85a6c5ff7b6e0af27&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `4dd2dca93580cfb847f0b39d26254f15`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=4dd2dca93580cfb847f0b39d26254f15&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `4e49d6cfc89c47eb1d65dafcec84a734`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=4e49d6cfc89c47eb1d65dafcec84a734&app_type=2&search_flag=145458
+
+- AI Mirror: AI Photo & Video `5c401ebdc3d25151e8d95bc93b9c6c80`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=5c401ebdc3d25151e8d95bc93b9c6c80&app_type=2&search_flag=145458
+
+- Remini - AI Photo Enhancer `736e8f6d27eae97a17f8af64a9f08f3f`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=736e8f6d27eae97a17f8af64a9f08f3f&app_type=2&search_flag=145458
+
+- AI Mirror: AI Photo & Video `7481804ffd579aef0a1781b8383d1cac`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=7481804ffd579aef0a1781b8383d1cac&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `804b7adf35c10b4ec590f3692a545522`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=804b7adf35c10b4ec590f3692a545522&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `80b05bc55e6dd04f01c9db87a1cddb5a`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=80b05bc55e6dd04f01c9db87a1cddb5a&app_type=2&search_flag=145458
+
+- GIO - AI Photoshoot Generator `8cb3f8627d65ad58cdf52813d41b4b3e`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=8cb3f8627d65ad58cdf52813d41b4b3e&app_type=2&search_flag=145458
+
+- Retake AI Face & Selfie Editor `8e3391236eb39e5a420e716b53fbb68a`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=8e3391236eb39e5a420e716b53fbb68a&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `a08f536926492bee0cc64ebb0ea04491`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=a08f536926492bee0cc64ebb0ea04491&app_type=2&search_flag=145458
+
+- AI Mirror: AI Photo & Video `b2095bbcb8334b89ade89b52edf529ce`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=b2095bbcb8334b89ade89b52edf529ce&app_type=2&search_flag=145458
+
+- AI Mirror: AI Photo & Video `ce5503d28ecb94ef9546db28a8999a9c`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=ce5503d28ecb94ef9546db28a8999a9c&app_type=2&search_flag=145458
+
+- AI Mirror: AI Photo & Video `d0201ed59906b946f5c1724a6e330fee`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=d0201ed59906b946f5c1724a6e330fee&app_type=2&search_flag=145458
+
+- Glam AI:Video & Photo Editor `d5ff9cdedb536c127ceece48399658c2`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=d5ff9cdedb536c127ceece48399658c2&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `d913a02b739385f3f56f1da0f8849731`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=d913a02b739385f3f56f1da0f8849731&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `dd3c66994164551e0b4b64e94f3994a2`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=dd3c66994164551e0b4b64e94f3994a2&app_type=2&search_flag=145458
+
+- EPIK - AI Photo & Video Editor `e32e02283a03c247a4db4982210006e4`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=e32e02283a03c247a4db4982210006e4&app_type=2&search_flag=145458
+
+- Remini - AI Photo Enhancer `e3a18304f42fe412584d24fc9d1fa8e5`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=e3a18304f42fe412584d24fc9d1fa8e5&app_type=2&search_flag=145458
+
+- AI Mirror: AI Photo & Video `e5298a6d1bdd624f0b57c4586cd76d18`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=e5298a6d1bdd624f0b57c4586cd76d18&app_type=2&search_flag=145458
+
+- Remini - AI Photo Enhancer `ebf7683d9b75fb5031b461b1cf14b883`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=ebf7683d9b75fb5031b461b1cf14b883&app_type=2&search_flag=145458
+
+- Pixverse:AI Video Generator `ed67df48e33d43d16d3db14aaaf5462e`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=ed67df48e33d43d16d3db14aaaf5462e&app_type=2&search_flag=145458
+
+- Remini - AI Photo Enhancer `f95790f5fdb1b5a18371c42a9e4f56a1`
+  https://guangdada.net/napi/v1/creative/detail-v2?ad_key=f95790f5fdb1b5a18371c42a9e4f56a1&app_type=2&search_flag=145458
+

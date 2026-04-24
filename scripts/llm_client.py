@@ -124,13 +124,21 @@ def resolve_text_model() -> str:
 
 
 def resolve_cluster_models() -> List[str]:
-    primary = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
-    fallback = os.getenv("OPENROUTER_CLUSTER_FALLBACK_MODEL", DEFAULT_TEXT_FALLBACK).strip()
-    out: List[str] = []
-    if primary:
-        out.append(primary)
-    if fallback and fallback not in out:
-        out.append(fallback)
+    """
+    聚类 / 方向卡片用纯文本 chat。默认同**多模态脚本的 Qwen 侧**：
+    首选 `OPENROUTER_CLUSTER_MODEL`；否则 = `resolve_text_model()`（即 `OPENROUTER_TEXT_FALLBACK_MODEL`，
+    默认 `qwen/qwen3.5-397b-a17b`）。后续依次尝试 `OPENROUTER_CLUSTER_FALLBACK_MODEL`、
+    `OPENROUTER_VISION_FALLBACK_MODEL`（与视觉主链的兜底一致），最后为 `OPENROUTER_MODEL`（历史默认 gemini）。
+    """
+    primary = (os.getenv("OPENROUTER_CLUSTER_MODEL") or "").strip() or resolve_text_model()
+    out: List[str] = [primary]
+    for m in (
+        (os.getenv("OPENROUTER_CLUSTER_FALLBACK_MODEL") or "").strip(),
+        (os.getenv("OPENROUTER_VISION_FALLBACK_MODEL") or DEFAULT_TEXT_FALLBACK).strip(),
+        (os.getenv("OPENROUTER_MODEL") or "google/gemini-2.5-flash").strip(),
+    ):
+        if m and m not in out:
+            out.append(m)
     return out
 
 
@@ -318,3 +326,39 @@ def embedding_to_bytes(vec: List[float]) -> bytes:
 def bytes_to_embedding(data: bytes) -> List[float]:
     n = len(data) // 4
     return list(struct.unpack(f"{n}f", data))
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter key meter（主流程起止可选打印用量，与 openrouter_key_snapshot.sh 同源 API）
+# ---------------------------------------------------------------------------
+def print_openrouter_key_meter(label: str = "") -> None:
+    """
+    GET https://openrouter.ai/api/v1/key，在日志里对比工作流前/后用量。
+    默认关闭；设 OPENROUTER_METER=1 / true 开启。需 .env 中 OPENROUTER_API_KEY。
+    """
+    v = (os.getenv("OPENROUTER_METER") or "0").strip().lower()
+    if v in ("0", "false", "no", "off", ""):
+        return
+    key = _or_key()
+    if not key:
+        return
+    try:
+        import json as _json
+        import urllib.request
+
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/key",
+            headers={"Authorization": f"Bearer {key}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        try:
+            obj = _json.loads(raw)
+            pretty = _json.dumps(obj, ensure_ascii=False, indent=2)
+        except _json.JSONDecodeError:
+            pretty = raw
+        pre = f"{label} " if label else ""
+        print(f"[openrouter-meter] {pre}\n{pretty}", flush=True)
+    except Exception as e:
+        print(f"[openrouter-meter] {label} 请求失败: {e}", flush=True)

@@ -1,0 +1,2477 @@
+<!DOCTYPE html><html lang=zh-CN><head><meta charset=utf-8>
+<title>封面 CLIP 相似度 · 人工抽检</title>
+<style>body{font-family:system-ui,sans-serif;max-width:1200px;margin:24px auto;padding:0 16px;background:#fafafa;color:#111;}h1{font-size:1.25rem;} h2{font-size:1rem;margin-top:2rem;border-bottom:1px solid #ccc;padding-bottom:6px;}.pair{display:flex;gap:16px;align-items:flex-start;margin:16px 0;padding:12px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;}.pair img{max-width:280px;max-height:360px;object-fit:contain;background:#eee;border-radius:4px;}.meta{font-size:13px;color:#444;max-width:320px;}.sim{font-weight:700;color:#0a5;}.sim-low{font-weight:700;color:#a50;}.hint{color:#666;font-size:13px;}table{border-collapse:collapse;font-size:13px;margin:12px 0;}td,th{border:1px solid #ddd;padding:6px 10px;}</style></head><body>
+<h1>封面图 CLIP 相似度 · 分桶抽检（同 appid 内）</h1>
+<p class=hint>每张卡片为一对素材：左右为 preview 图，中间为余弦相似度。先看<strong>低相似度</strong>区块理解「不像」长什么样，再看高分桶。图裂了多为防盗链，可复制 URL 新开标签查看。</p>
+<h2>候选阈值 T：sim ≥ T（会合并）的对数</h2>
+<table><tr><th>T</th><th>sim ≥ T 的对数</th></tr>
+<tr><td>0.65</td><td>857</td></tr>
+<tr><td>0.7</td><td>499</td></tr>
+<tr><td>0.75</td><td>294</td></tr>
+<tr><td>0.8</td><td>172</td></tr>
+<tr><td>0.85</td><td>124</td></tr>
+<tr><td>0.88</td><td>86</td></tr>
+<tr><td>0.9</td><td>67</td></tr>
+<tr><td>0.92</td><td>52</td></tr>
+<tr><td>0.93</td><td>49</td></tr>
+<tr><td>0.94</td><td>45</td></tr>
+<tr><td>0.95</td><td>41</td></tr>
+<tr><td>0.96</td><td>40</td></tr>
+<tr><td>0.97</td><td>37</td></tr>
+</table>
+<h2>候选阈值 T：sim &lt; T（通常视为不同）的对数</h2>
+<table><tr><th>T</th><th>sim &lt; T 的对数</th></tr>
+<tr><td>0.65</td><td>10334</td></tr>
+<tr><td>0.7</td><td>10692</td></tr>
+<tr><td>0.75</td><td>10897</td></tr>
+<tr><td>0.8</td><td>11019</td></tr>
+<tr><td>0.85</td><td>11067</td></tr>
+<tr><td>0.88</td><td>11105</td></tr>
+<tr><td>0.9</td><td>11124</td></tr>
+<tr><td>0.92</td><td>11139</td></tr>
+<tr><td>0.93</td><td>11142</td></tr>
+<tr><td>0.94</td><td>11146</td></tr>
+<tr><td>0.95</td><td>11150</td></tr>
+<tr><td>0.96</td><td>11151</td></tr>
+<tr><td>0.97</td><td>11154</td></tr>
+</table>
+<p class=hint>说明：对子总数取决于每 app 抽样行数，不是全库穷举；数量仅作相对参考。</p>
+<h2>「不应合并」随机样本：cosine &lt; 0.85 （展示 28 / 共 11067 对）</h2>
+<p class=hint>用于对照：若你认为这些明显不是同一条素材，则阈值应 <strong>高于</strong> 这些对的典型分数（或直接用更高 T，例如 0.93+）。</p>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/7ad2bfbddd0f46556df9cff1201ff5b7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/31243d7547fc535318474ec607f3cc20.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4467</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>ebf689903fecab5ea2f2852f56add19c…</code></p>
+<p><b>ad_key B</b><br><code>5aee4de89b0f65650dbbdaf36f998ac0…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/7ad2bfbddd0f46556df9cff1201ff5b7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/31243d7547fc535318474ec607f3cc20.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0ee7a7a6b4ca7df531fbba6192bfb5a9.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/714f61e067b054b8ffa938a87fca9bef.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5423</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>2dc7a4e96520ce2a7c928c5a1807a2ad…</code></p>
+<p><b>ad_key B</b><br><code>26b51cd41200e3cdbb99f09e895cbea7…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0ee7a7a6b4ca7df531fbba6192bfb5a9.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/714f61e067b054b8ffa938a87fca9bef.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/2053eb455cb9df39701d863438785745.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3e67f75b8ab0160a6d32f5526a9dc862.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4181</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>762fc18f936ad2836ec4ce40cd906c1b…</code></p>
+<p><b>ad_key B</b><br><code>284f7f231a61116b6196d7789b610edd…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/2053eb455cb9df39701d863438785745.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3e67f75b8ab0160a6d32f5526a9dc862.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/01a731722069d6c53f5c783dc0b56fc7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/23a63e4a24c6ebb01612b4111b843dd2.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5400</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>2101529ef934fc7dc12880c8dbcf2cb7…</code></p>
+<p><b>ad_key B</b><br><code>b15cb2f84ea63f61552e2e0a8c226eba…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/01a731722069d6c53f5c783dc0b56fc7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/23a63e4a24c6ebb01612b4111b843dd2.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/47b31c4f3e56e4216bcf8247d6107dab.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3223</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>8c1d3f56c85d2efedd1223731d118081…</code></p>
+<p><b>ad_key B</b><br><code>19ddc0f4346861ed986c302557f18e2d…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/47b31c4f3e56e4216bcf8247d6107dab.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/c4553be6fe8900f25370fb98adfdfce5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0307e86d97cde890c4e1d2927e07276a.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6418</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>441bbac2a50c354297e9ea9d7e75466c…</code></p>
+<p><b>ad_key B</b><br><code>066daa760839b9e0e347d17814bce9e4…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/c4553be6fe8900f25370fb98adfdfce5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0307e86d97cde890c4e1d2927e07276a.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/31243d7547fc535318474ec607f3cc20.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3697</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>5aee4de89b0f65650dbbdaf36f998ac0…</code></p>
+<p><b>ad_key B</b><br><code>fba907d012875d261f929460a44a1ec7…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/31243d7547fc535318474ec607f3cc20.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/a63a507c6c853517cd95bf85b8bac6ba.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3985</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>f59ab8d9806f8ac1712da65599deee40…</code></p>
+<p><b>ad_key B</b><br><code>19ddc0f4346861ed986c302557f18e2d…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/a63a507c6c853517cd95bf85b8bac6ba.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0519f1db498d3911a5666f2fad1e162c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/62b3027502b046da0e77642767cf7a25.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5456</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>760a74bc26ed3c8901c6c3ad004d7cfe…</code></p>
+<p><b>ad_key B</b><br><code>c1aac492def80ad63a35a8635de0070f…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0519f1db498d3911a5666f2fad1e162c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/62b3027502b046da0e77642767cf7a25.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/2c14884d8f15062b9b7f58c46a0a17b0.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/51b1b2e1ae9a3d9934379986e3dddb7d.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5674</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>1ae4a5bf52e606f313f11a659e0d29c3…</code></p>
+<p><b>ad_key B</b><br><code>e65691e35c362158b2670baaa23d9854…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/2c14884d8f15062b9b7f58c46a0a17b0.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/51b1b2e1ae9a3d9934379986e3dddb7d.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c01fa740ad097955bd6d504191c62fc7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3b1fc347cfc0ec2efb4e1ec3d7a6177e.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.2313</p>
+<p><b>appid</b><br>com.prequelapp.aistudio</p>
+<p><b>product</b><br>GIO - AI Photoshoot Generator</p>
+<p><b>ad_key A</b><br><code>e9eaad088f812c035a9c891b687f8193…</code></p>
+<p><b>ad_key B</b><br><code>00f26b3c30b63a61107c2c308fd91497…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c01fa740ad097955bd6d504191c62fc7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3b1fc347cfc0ec2efb4e1ec3d7a6177e.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/9085cfce99032a9e42b87a827c37c9bd.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/124699803f46d2889fec2fc8f4a7724d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4172</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>349ae02e6b81cccfb07bc54e983230bd…</code></p>
+<p><b>ad_key B</b><br><code>9de44bbce3e87286ed0f6cb83e1d5a6f…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/9085cfce99032a9e42b87a827c37c9bd.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/124699803f46d2889fec2fc8f4a7724d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/fda4f8d79a22fed44d7c33c86a27e2f5.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f89989838d661fec0df60cb738519ec4.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5062</p>
+<p><b>appid</b><br>com.codespaceapps.you</p>
+<p><b>product</b><br>Retake AI Face &amp; Selfie Editor</p>
+<p><b>ad_key A</b><br><code>9c8173f2c0ff96e979da7757c4644a78…</code></p>
+<p><b>ad_key B</b><br><code>86471339ac1ea64fa4b285db1814d0d4…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/fda4f8d79a22fed44d7c33c86a27e2f5.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f89989838d661fec0df60cb738519ec4.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4c9606d12a5af6ef80a8edc8666416f0.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/52d39544b265dbffafbf94b5aadef710.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4202</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>9316b1615b5feb55ed56e8c01c0676ed…</code></p>
+<p><b>ad_key B</b><br><code>5d45adbf368f2b8488392631465e5043…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4c9606d12a5af6ef80a8edc8666416f0.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/52d39544b265dbffafbf94b5aadef710.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/814ebffd7800101f92e85416bc6b2e42.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5437</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>e403f9ac69876da91b71aa2f0f6c16bf…</code></p>
+<p><b>ad_key B</b><br><code>6930166784677994726edfd432ea5ee4…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/814ebffd7800101f92e85416bc6b2e42.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/185c13432b826d5bd8b5c1cfbdf27d03.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4635d9353a906c4dfe6417668bbd3c75.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4349</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>e676fdb1cbee28f150b60e425d2f3a95…</code></p>
+<p><b>ad_key B</b><br><code>f2514ab534bb70bcd573b9ff44971663…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/185c13432b826d5bd8b5c1cfbdf27d03.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4635d9353a906c4dfe6417668bbd3c75.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/a027dbc5174ca2532b8c70202f6dc5c0.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/548683a4ed4a52cf518d9f4b17363b60.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4163</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>4c8468b10c35e46b5b22ee583d24a3ff…</code></p>
+<p><b>ad_key B</b><br><code>5368739d21f63e6def75980bbdb037e1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/a027dbc5174ca2532b8c70202f6dc5c0.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/548683a4ed4a52cf518d9f4b17363b60.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/d0c4d1206f65cc69a0b433394a47548d.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/0faae5367107cf98a0839d7652334d42.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5007</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>a46e3d8b8164d08456af4ccf27499c79…</code></p>
+<p><b>ad_key B</b><br><code>701cfc2711ff411023d04cfbaafc3504…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/d0c4d1206f65cc69a0b433394a47548d.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/0faae5367107cf98a0839d7652334d42.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/49f4a54a8170639e697c60e98f89745a.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/91852eb937f90308b7575b22548e2d80.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3757</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>4bef1f38adcddc928750fb41584cefce…</code></p>
+<p><b>ad_key B</b><br><code>fd6049b2567390defb47d70ba7fa0f38…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/49f4a54a8170639e697c60e98f89745a.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/91852eb937f90308b7575b22548e2d80.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/192bf57dc1d59c425d55e335bd783323.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6754668db9f7bbc675c8af1b40d0c68b.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5685</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>4f78c2d3ac0af4108569cc12d6c4f0b3…</code></p>
+<p><b>ad_key B</b><br><code>8640362a85f1d74246f3e13b491d7e1d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/192bf57dc1d59c425d55e335bd783323.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/6754668db9f7bbc675c8af1b40d0c68b.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/350ae3d9ee51a838a63421710c3d95c7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1979bbc3d495e915c1b19f49b4abc535.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6662</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>5d7e7a4ce111ea2c81fff225f15a756e…</code></p>
+<p><b>ad_key B</b><br><code>a1071c1fe42feb1210570d5820efdebc…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/350ae3d9ee51a838a63421710c3d95c7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1979bbc3d495e915c1b19f49b4abc535.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/5cfb435d4584471fca2b6d99ac4e9fdf.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6149</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>7eb4527edaf870202242dd1013070465…</code></p>
+<p><b>ad_key B</b><br><code>3001c1429eeb81390a54fe825e81046c…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/5cfb435d4584471fca2b6d99ac4e9fdf.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/a027dbc5174ca2532b8c70202f6dc5c0.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6212</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>8e63caaf46ec2b6d7f4acccbda52cf66…</code></p>
+<p><b>ad_key B</b><br><code>4c8468b10c35e46b5b22ee583d24a3ff…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/a027dbc5174ca2532b8c70202f6dc5c0.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/52a425ae63af4e198f1b2bbe28a7cf4b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5683</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>5d9c3d5c8d555e2a05c1702085013eae…</code></p>
+<p><b>ad_key B</b><br><code>e795d83237e9ddd6765a12347ebf56da…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/52a425ae63af4e198f1b2bbe28a7cf4b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f1563881fe35a8aeaca8750df2f04cc0.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/9fa494caaf4f31784c1e9cdc0ccb19c3.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3974</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>c560fac06a4cbfc2d3af8d0416556c99…</code></p>
+<p><b>ad_key B</b><br><code>17650875e1a4ba14d0dfeb95b39210d1…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f1563881fe35a8aeaca8750df2f04cc0.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/9fa494caaf4f31784c1e9cdc0ccb19c3.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ec2e592ce0438dd84fbdd6f216608e1a.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/02913e82e1e16e158887e0aa8bde9f36.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3599</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>0db98e7cd6c0ed8748151ae57b4e58c1…</code></p>
+<p><b>ad_key B</b><br><code>954caa08084b000001934075592aebb9…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ec2e592ce0438dd84fbdd6f216608e1a.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/02913e82e1e16e158887e0aa8bde9f36.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/a515a56dd45123475f98974b4852e773.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/70b31e9aeadc827d9bcf977702506ad1.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4405</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>02ed422b968a1345ea5f6e335e09e719…</code></p>
+<p><b>ad_key B</b><br><code>644c5a3e63d6ae273b075ce4a6c30eba…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/a515a56dd45123475f98974b4852e773.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/70b31e9aeadc827d9bcf977702506ad1.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3e67f75b8ab0160a6d32f5526a9dc862.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5032</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>2e1df8d2accd524a6a97054feefc22df…</code></p>
+<p><b>ad_key B</b><br><code>284f7f231a61116b6196d7789b610edd…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3e67f75b8ab0160a6d32f5526a9dc862.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>按相似度从低到高 · 分桶随机展示</h2>
+<h2>[0.00, 0.45) 极低（多半不像） · 随机展示 18 / 本桶共 4009 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/5adb2f60f3b36b712273e49252ca40a6.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/a1b60d25eef06ed63a9cc3d1a18c4998.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4435</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>17192f8d3bc5229cf5be77526bb5183d…</code></p>
+<p><b>ad_key B</b><br><code>ad533ecd9fd4d8782d6f4ffc2276d8c1…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/5adb2f60f3b36b712273e49252ca40a6.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/a1b60d25eef06ed63a9cc3d1a18c4998.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/b08a43d30b5407394e217c2a8f01e7e8.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/9eabc79a4ba89cd1053da59706ca23b7.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4259</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>4930369b2f386b41a4056b67b4848ec7…</code></p>
+<p><b>ad_key B</b><br><code>61058e96fdac4773b6683ff4a5bfe816…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/b08a43d30b5407394e217c2a8f01e7e8.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/9eabc79a4ba89cd1053da59706ca23b7.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cba821f0a08a4a9cc45bbb87c3654f3a.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3222</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b52b4d6428d8bd238e5909a9d63692a8…</code></p>
+<p><b>ad_key B</b><br><code>cb1e4436143669cfba7b514d511736b5…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/cba821f0a08a4a9cc45bbb87c3654f3a.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/57ec32e9226c820ff946c0e8f246ac3e.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/56a1a7756d308dae638953fa18029efc.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3808</p>
+<p><b>appid</b><br>com.dreamapp.dubhe</p>
+<p><b>product</b><br>DreamFace:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>1d42c26399c540c3691c48e17e6c3366…</code></p>
+<p><b>ad_key B</b><br><code>db328aa37842f931cc47521d61721227…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/57ec32e9226c820ff946c0e8f246ac3e.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/56a1a7756d308dae638953fa18029efc.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/47e424cc688401dec74f66833dbd4a53.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4259</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e39d9066d87717b2662b7e897333f1c1…</code></p>
+<p><b>ad_key B</b><br><code>4b8e42f9bb570e56b5fb76c731c77485…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/47e424cc688401dec74f66833dbd4a53.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f61e58dad07db2c36f284fe1076f5fc5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4635d9353a906c4dfe6417668bbd3c75.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4343</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>8c11d1c767e1cf34941bcfe268a57b4b…</code></p>
+<p><b>ad_key B</b><br><code>f2514ab534bb70bcd573b9ff44971663…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f61e58dad07db2c36f284fe1076f5fc5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4635d9353a906c4dfe6417668bbd3c75.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/2053eb455cb9df39701d863438785745.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/9eb40ce9969eb1a4c0442a8a3a4b444c.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4348</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>762fc18f936ad2836ec4ce40cd906c1b…</code></p>
+<p><b>ad_key B</b><br><code>a879fd6620c4588a0c1f568d8ff4b0d2…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/2053eb455cb9df39701d863438785745.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/9eb40ce9969eb1a4c0442a8a3a4b444c.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/625c9d972a72bb3c21c2ccf2e835df58.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/5ad54516f9e8892bd7a20199239437a1.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3867</p>
+<p><b>appid</b><br>com.prequelapp.aistudio</p>
+<p><b>product</b><br>GIO - AI Photoshoot Generator</p>
+<p><b>ad_key A</b><br><code>c98297427a71ef8c01e66ae00fe39230…</code></p>
+<p><b>ad_key B</b><br><code>d049ae6a939986d91094df842d700d04…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/625c9d972a72bb3c21c2ccf2e835df58.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/5ad54516f9e8892bd7a20199239437a1.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/d0c4d1206f65cc69a0b433394a47548d.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4212</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>a46e3d8b8164d08456af4ccf27499c79…</code></p>
+<p><b>ad_key B</b><br><code>64ae2197406c401d348cd85cf4565f4d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/d0c4d1206f65cc69a0b433394a47548d.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/037350a7a42c8dbc4421c5d3cae2d9d0.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cebdf97702c6f8e7cb3cb49041c2b455.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3515</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>6bbf03e0623093e4f941c175dad4169b…</code></p>
+<p><b>ad_key B</b><br><code>156b4cdb865a8dd5dd72434d00093ea8…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/037350a7a42c8dbc4421c5d3cae2d9d0.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/cebdf97702c6f8e7cb3cb49041c2b455.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/b70cb9955bbede835385d474461f1f40.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4336</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>8db1fb43c3ffb6005871ff6d9fd5eb64…</code></p>
+<p><b>ad_key B</b><br><code>64ae2197406c401d348cd85cf4565f4d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/b70cb9955bbede835385d474461f1f40.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3fb774ba452e5f69f3296dd9f0f388b8.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/06089dce3ce38e4bd3002b132ebd0436.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3190</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>15059692e80dc0b2beeb7f04dd9dbf1e…</code></p>
+<p><b>ad_key B</b><br><code>205b2e9a0dc4f9cd39b32c4b63442544…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3fb774ba452e5f69f3296dd9f0f388b8.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/06089dce3ce38e4bd3002b132ebd0436.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/71da901d3314a1420303b89ea17c980c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1f712b58ebd690f572b2838b133fd40d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3841</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>9e95e0293650fc25f85790260242b33b…</code></p>
+<p><b>ad_key B</b><br><code>7cc8a1ce2d97bffca11ac2cec07a426d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/71da901d3314a1420303b89ea17c980c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/1f712b58ebd690f572b2838b133fd40d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/9a3154ec4bb76bdf2f7a2d63f6869ec6.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e922df4c620c841133e4caa6f71e7fe6.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4210</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>457e42e372f94ce7b956b1b47101bfd4…</code></p>
+<p><b>ad_key B</b><br><code>a9f442d00694ff3a168bb0ad5c773b1e…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/9a3154ec4bb76bdf2f7a2d63f6869ec6.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e922df4c620c841133e4caa6f71e7fe6.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/52d39544b265dbffafbf94b5aadef710.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/b08a43d30b5407394e217c2a8f01e7e8.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.3645</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>5d45adbf368f2b8488392631465e5043…</code></p>
+<p><b>ad_key B</b><br><code>4930369b2f386b41a4056b67b4848ec7…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/52d39544b265dbffafbf94b5aadef710.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/b08a43d30b5407394e217c2a8f01e7e8.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/94aaefb3aac2dfa57f89fb5d4b38d439.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cac8325e3a7bfb7c0900b938fe8b1f9e.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.2861</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>00d3298f369653daf9af703b6a0a4333…</code></p>
+<p><b>ad_key B</b><br><code>aed36cb70f54944eec7108cbf0aac184…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/94aaefb3aac2dfa57f89fb5d4b38d439.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/cac8325e3a7bfb7c0900b938fe8b1f9e.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f3412eb12fa513534242f2d34bfae783.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3d115029bb9638713b86f853b8747d8f.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4233</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>1427d36ed58dbad0786255e74e31e5bb…</code></p>
+<p><b>ad_key B</b><br><code>82af6901b6c89f00131618287b723052…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f3412eb12fa513534242f2d34bfae783.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3d115029bb9638713b86f853b8747d8f.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/05dc019452dbe6a85ea74f7cb07d9a21.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/6d38e6446ff20bb07261a16731b86cb2.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.2939</p>
+<p><b>appid</b><br>com.codespaceapps.you</p>
+<p><b>product</b><br>Retake AI Face &amp; Selfie Editor</p>
+<p><b>ad_key A</b><br><code>ea98ba19a1aaa3069a871f58afb36fbb…</code></p>
+<p><b>ad_key B</b><br><code>3804b0ecfe6fa41b92edff682629a7d8…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/05dc019452dbe6a85ea74f7cb07d9a21.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/6d38e6446ff20bb07261a16731b86cb2.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.45, 0.55) 很低 · 随机展示 18 / 本桶共 4163 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5074</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>26e9ee9f251657175b7f50fb85c8bd0e…</code></p>
+<p><b>ad_key B</b><br><code>05ede7ea3fdf3d9c42a15dd94c6380c1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/b2c9ea59f1a17fcc9146fba0108b1a78.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/10fef3a4e8524ebd0092776272374771.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4740</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>f87a8115fda9ca677396ef723fe38b61…</code></p>
+<p><b>ad_key B</b><br><code>b8d569c581a8095b9008e763b91586eb…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/b2c9ea59f1a17fcc9146fba0108b1a78.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/10fef3a4e8524ebd0092776272374771.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/661993bb849d5a85a4e084cd6d2b911e.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/90ac8a360844cb35aa26ffba0e630fde.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5207</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>577d7954dfaf3877dbdc34663f6f36ab…</code></p>
+<p><b>ad_key B</b><br><code>c2bda36833f725c670056c56330f3e9f…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/661993bb849d5a85a4e084cd6d2b911e.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/90ac8a360844cb35aa26ffba0e630fde.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/274d17546c203335f843314a21cfa3f5.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4e2e911db30b6fd571215b4f1358c32b.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4587</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>4bf3738f260dc3a84bf9bb13706c656b…</code></p>
+<p><b>ad_key B</b><br><code>e8a904c87aba2c8bd59da210c2facc5c…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/274d17546c203335f843314a21cfa3f5.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4e2e911db30b6fd571215b4f1358c32b.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/2053eb455cb9df39701d863438785745.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4517</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>762fc18f936ad2836ec4ce40cd906c1b…</code></p>
+<p><b>ad_key B</b><br><code>e39d9066d87717b2662b7e897333f1c1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/2053eb455cb9df39701d863438785745.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/168a29d408d8fd42d761e54074d03450.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0519f1db498d3911a5666f2fad1e162c.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4644</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>a90fd1df6da47b841e9058f730c85499…</code></p>
+<p><b>ad_key B</b><br><code>760a74bc26ed3c8901c6c3ad004d7cfe…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/168a29d408d8fd42d761e54074d03450.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0519f1db498d3911a5666f2fad1e162c.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f89989838d661fec0df60cb738519ec4.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/74992d92bc45f3c4ceb2551c3d894cfc.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4839</p>
+<p><b>appid</b><br>com.codespaceapps.you</p>
+<p><b>product</b><br>Retake AI Face &amp; Selfie Editor</p>
+<p><b>ad_key A</b><br><code>86471339ac1ea64fa4b285db1814d0d4…</code></p>
+<p><b>ad_key B</b><br><code>3b0fd4f6df07f2f6c78fd5af97502ae0…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f89989838d661fec0df60cb738519ec4.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/74992d92bc45f3c4ceb2551c3d894cfc.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/e55b901799a514db1ca3ac6df7d432bf.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/b323e4d9f1ddc7ff029288465317bf03.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5240</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>678b5a319cab990f57c666bd1e6e70d9…</code></p>
+<p><b>ad_key B</b><br><code>feec924abfaa2883179c840ffdf987fb…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/e55b901799a514db1ca3ac6df7d432bf.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/b323e4d9f1ddc7ff029288465317bf03.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/26cf1c837bfa578e3ad60552b6e30302.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/d7862cc60df0da4ba1eecea9f3088646.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4584</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>a2d31e2774672b607c1dcc8ec78825b7…</code></p>
+<p><b>ad_key B</b><br><code>f18563b241a65af9f85aeb06488215be…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/26cf1c837bfa578e3ad60552b6e30302.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/d7862cc60df0da4ba1eecea9f3088646.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/198fd7ac9e93b822f90cbecae26664f5.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/21342935e3153a0f4185d78e4b2f4b41.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4583</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>ff3c09a90fc970912cff46fb8e3cf6ff…</code></p>
+<p><b>ad_key B</b><br><code>b73fa96094493b6d737a6b5d5950cc44…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/198fd7ac9e93b822f90cbecae26664f5.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/21342935e3153a0f4185d78e4b2f4b41.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4d94501ed6fc325277b735a590eb3133.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4783</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>6930166784677994726edfd432ea5ee4…</code></p>
+<p><b>ad_key B</b><br><code>b013c4708565f2bcdb7bbd5baba7c52e…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4d94501ed6fc325277b735a590eb3133.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/9a3154ec4bb76bdf2f7a2d63f6869ec6.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bb639d3cc19b2cc21800404a12502a77.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5098</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>457e42e372f94ce7b956b1b47101bfd4…</code></p>
+<p><b>ad_key B</b><br><code>45855c5d4dcce1af2f194ffc325fd6b6…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/9a3154ec4bb76bdf2f7a2d63f6869ec6.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bb639d3cc19b2cc21800404a12502a77.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0ed6a4ac11db3a2f0537a24805275f85.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e5b62f669bd99537b9d387326e587a6d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5271</p>
+<p><b>appid</b><br>com.codespaceapps.you</p>
+<p><b>product</b><br>Retake AI Face &amp; Selfie Editor</p>
+<p><b>ad_key A</b><br><code>5e5eb3c7e38972f415d8d52f21a7617e…</code></p>
+<p><b>ad_key B</b><br><code>c69a838bd4549d678dd55b07bcc89884…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0ed6a4ac11db3a2f0537a24805275f85.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e5b62f669bd99537b9d387326e587a6d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e3f97dc6b3517bdec10b6acd4eb12bfe.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4615</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>d0eca3a04b14c2e8f1e1ae3eb84136c2…</code></p>
+<p><b>ad_key B</b><br><code>a6578efafd952fe83fb83cfdc03a0408…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e3f97dc6b3517bdec10b6acd4eb12bfe.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/040758e5a8f40534fed3a4f2ea5eb8bc.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4747</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>6684520ecec81c721909b89ec6a002f4…</code></p>
+<p><b>ad_key B</b><br><code>4b813685dcb8a8c17a876048246aa199…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/040758e5a8f40534fed3a4f2ea5eb8bc.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ea185965264966d41ec573d5f15a91a0.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/9eabc79a4ba89cd1053da59706ca23b7.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.4932</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>1b0a6b7a762cd1e69a196d330503568d…</code></p>
+<p><b>ad_key B</b><br><code>61058e96fdac4773b6683ff4a5bfe816…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ea185965264966d41ec573d5f15a91a0.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/9eabc79a4ba89cd1053da59706ca23b7.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ab252fae211de76ec4d9a906c8905661.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5403</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>a93ed3632d3c9ed7299fd24e5743b939…</code></p>
+<p><b>ad_key B</b><br><code>c70436fa93ee90946da23eccb3d2fe4f…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ab252fae211de76ec4d9a906c8905661.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/e9eb9a518022fd310c02091ef01ffe88.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ca4f01573f99377eff98a344d8930a3d.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5016</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>18bb4d72bdcd74fed2c3219771a04a98…</code></p>
+<p><b>ad_key B</b><br><code>574e3ebd77e0fe5152a26a56aa8cbb23…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/e9eb9a518022fd310c02091ef01ffe88.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ca4f01573f99377eff98a344d8930a3d.image" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.55, 0.65) 低 · 随机展示 18 / 本桶共 2162 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/659c513f2b850c04ab2c0a32eb922608.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd215b328bf17f98f0a7d6ffa88c2d7e.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6087</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>4661f3bbe3334372600e8cb5c8473968…</code></p>
+<p><b>ad_key B</b><br><code>dcb87acd183b38d118808a103aa49939…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/659c513f2b850c04ab2c0a32eb922608.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd215b328bf17f98f0a7d6ffa88c2d7e.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/a027dbc5174ca2532b8c70202f6dc5c0.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e980bb562493eda8449e495610074b01.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5564</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>4c8468b10c35e46b5b22ee583d24a3ff…</code></p>
+<p><b>ad_key B</b><br><code>bc404a6e9241ff548a06ded8a96ef041…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/a027dbc5174ca2532b8c70202f6dc5c0.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e980bb562493eda8449e495610074b01.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/85a1dca7077aa925e9d6d5015daaec4b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5987</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>cfebec9a047a31db7191fe25f77ad062…</code></p>
+<p><b>ad_key B</b><br><code>6930166784677994726edfd432ea5ee4…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/85a1dca7077aa925e9d6d5015daaec4b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5950</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>73726770b3fb4cbd034b3b8e7b5d56e6…</code></p>
+<p><b>ad_key B</b><br><code>c0223f2a51ee9e330c9173f14e88c818…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/503faae061315aa5a2cf69888d6d18bc.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/8e82e10f4a41eb282a879e31e691639b.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5617</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>7d22aed5da7b24fc4bd780564a82c7f5…</code></p>
+<p><b>ad_key B</b><br><code>67d24f22a348a4130af0dec6c1257228…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/503faae061315aa5a2cf69888d6d18bc.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/8e82e10f4a41eb282a879e31e691639b.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/9d15493555e6040a66481a6d6a9bab43.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1f712b58ebd690f572b2838b133fd40d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5764</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>f885d75a144d62ac928abcf8d1a78d86…</code></p>
+<p><b>ad_key B</b><br><code>7cc8a1ce2d97bffca11ac2cec07a426d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/9d15493555e6040a66481a6d6a9bab43.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/1f712b58ebd690f572b2838b133fd40d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/741cc3250552154d6889de3691ced2fc.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ffae73aa58502f028b145f696d22b97f.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5666</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>28fad739ca882fd25f5593148b711846…</code></p>
+<p><b>ad_key B</b><br><code>39acc1310d30e0519a30c14e41886231…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/741cc3250552154d6889de3691ced2fc.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ffae73aa58502f028b145f696d22b97f.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f6deaf0e05355427e289729c2df77e02.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e418805b250a82eaa8217a398a408489.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5993</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>73fe9e72ba379abd79a13f281cae30a6…</code></p>
+<p><b>ad_key B</b><br><code>0b8a1b5b46a212e6462e3acc4a2b95a8…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f6deaf0e05355427e289729c2df77e02.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e418805b250a82eaa8217a398a408489.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/d6c6f1f360ad6c1a7d5710fdbd702157.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/cd6d97560ba045042fe71a1e2b5dce5e.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5750</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>2618985aa984092087a1a6b888db0369…</code></p>
+<p><b>ad_key B</b><br><code>543dda75a32537e36e809e5bcb1669de…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/d6c6f1f360ad6c1a7d5710fdbd702157.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/cd6d97560ba045042fe71a1e2b5dce5e.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5709</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>7addfdacc538f28fd6beed14f88d810a…</code></p>
+<p><b>ad_key B</b><br><code>6930166784677994726edfd432ea5ee4…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b016aa5275774b7557355f2172b981b.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6127</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>afcc232e7f122a1568d91a2eb418f3d5…</code></p>
+<p><b>ad_key B</b><br><code>b52b4d6428d8bd238e5909a9d63692a8…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ae2ca3b2584ed8ea85fc11277b6d1acf.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd215b328bf17f98f0a7d6ffa88c2d7e.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5821</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b6a796259b2763db8a2fa8124c5ad557…</code></p>
+<p><b>ad_key B</b><br><code>dcb87acd183b38d118808a103aa49939…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ae2ca3b2584ed8ea85fc11277b6d1acf.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd215b328bf17f98f0a7d6ffa88c2d7e.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/541d6933448923cee7dfceae26289969.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4d94501ed6fc325277b735a590eb3133.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5763</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>9e0d5c856cdf5a506642b3dba1aa452e…</code></p>
+<p><b>ad_key B</b><br><code>b013c4708565f2bcdb7bbd5baba7c52e…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/541d6933448923cee7dfceae26289969.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4d94501ed6fc325277b735a590eb3133.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/f62332b3747e1292961ab740b585cfc2.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/09b9253baf3ea4700e253dc6d89f320e.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5867</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>45e59b9e7530f4d91be5f22d6a6b5544…</code></p>
+<p><b>ad_key B</b><br><code>8c04aa925d4b9037eec46609aeb8b850…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/f62332b3747e1292961ab740b585cfc2.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/09b9253baf3ea4700e253dc6d89f320e.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/0faae5367107cf98a0839d7652334d42.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5982</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>701cfc2711ff411023d04cfbaafc3504…</code></p>
+<p><b>ad_key B</b><br><code>64ae2197406c401d348cd85cf4565f4d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/0faae5367107cf98a0839d7652334d42.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/697cbfe789fb01ee7b1936485a6ddf31.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5826</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>1ddce6786b13bd4d99e544a403e95ff4…</code></p>
+<p><b>ad_key B</b><br><code>f9eb9b615fb539f4263e9d12aa259ba7…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/697cbfe789fb01ee7b1936485a6ddf31.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/2164f057ebb56fe0615d1c16b8f659e1.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/89d8893d7263d0d126af7f678828c936.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.5781</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>c730799edd5bf4df8c46f7975ac8947d…</code></p>
+<p><b>ad_key B</b><br><code>e4c315d7649d62964f969356036ebf6f…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/2164f057ebb56fe0615d1c16b8f659e1.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/89d8893d7263d0d126af7f678828c936.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/5be16879fec464ebd0f8d89770df941f.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4910f155fb62689ae17c21773feb303c.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6191</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>ef5401988a261bb432ed625a5b13f2c3…</code></p>
+<p><b>ad_key B</b><br><code>093dcacc6c6540861f9b32279cd09eb6…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/5be16879fec464ebd0f8d89770df941f.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4910f155fb62689ae17c21773feb303c.image" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.65, 0.75) 中低 · 随机展示 18 / 本桶共 563 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/4070b267a1867921fb8410c37b97b592.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/91852eb937f90308b7575b22548e2d80.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7392</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>bf53705469197fe3818637e2f734c72d…</code></p>
+<p><b>ad_key B</b><br><code>fd6049b2567390defb47d70ba7fa0f38…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/4070b267a1867921fb8410c37b97b592.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/91852eb937f90308b7575b22548e2d80.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/b323e4d9f1ddc7ff029288465317bf03.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6927</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>feec924abfaa2883179c840ffdf987fb…</code></p>
+<p><b>ad_key B</b><br><code>d2936413a5acdce5cadf3ff6de3a54d8…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/b323e4d9f1ddc7ff029288465317bf03.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/7332219738ba332c2f2824eb435b4561.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7096</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>cbbf90a196f7d57ecf9017f6b0de049e…</code></p>
+<p><b>ad_key B</b><br><code>3ebf63e7bed7e752aec442f659cebdfe…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/7332219738ba332c2f2824eb435b4561.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ebaeeb66d62052d8bcb553d4873185b5.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6839</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>a93ed3632d3c9ed7299fd24e5743b939…</code></p>
+<p><b>ad_key B</b><br><code>141253d23eb6a1622cc4b0fd24bed013…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ebaeeb66d62052d8bcb553d4873185b5.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/51b1b2e1ae9a3d9934379986e3dddb7d.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/49e49c263a2dd13b1e716c271dbc5206.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7452</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>e65691e35c362158b2670baaa23d9854…</code></p>
+<p><b>ad_key B</b><br><code>f808a7a6a09ed04ce90bd7ae8194842e…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/51b1b2e1ae9a3d9934379986e3dddb7d.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/49e49c263a2dd13b1e716c271dbc5206.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd3b9c1b61aa0d596d3f86620957da0e.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/fafd45d21ea595546217d9dc005ba1d6.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7449</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>669f8c51efaa1e59d8457494c05f115a…</code></p>
+<p><b>ad_key B</b><br><code>3ebf1c0fec57899295f1f0690d59b034…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd3b9c1b61aa0d596d3f86620957da0e.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/fafd45d21ea595546217d9dc005ba1d6.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/185c13432b826d5bd8b5c1cfbdf27d03.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/67664bdfdade5cafca30cc3f7d6c777d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6555</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>e676fdb1cbee28f150b60e425d2f3a95…</code></p>
+<p><b>ad_key B</b><br><code>fb22917ba72378e92b44e5a8ad4ee626…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/185c13432b826d5bd8b5c1cfbdf27d03.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/67664bdfdade5cafca30cc3f7d6c777d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/15465176ebf35a0919cfd045b8d7dea2.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1979bbc3d495e915c1b19f49b4abc535.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6587</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>0c97fc2c8926c518330e7c724ce7d58f…</code></p>
+<p><b>ad_key B</b><br><code>a1071c1fe42feb1210570d5820efdebc…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/15465176ebf35a0919cfd045b8d7dea2.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1979bbc3d495e915c1b19f49b4abc535.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1d8bdc39d11c2d11404ca6e63947f6fc.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/fc78f1b23a9e2ab2ef8c6ceb1db1bbe2.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7432</p>
+<p><b>appid</b><br>com.prequelapp.aistudio</p>
+<p><b>product</b><br>GIO - AI Photoshoot Generator</p>
+<p><b>ad_key A</b><br><code>a90e13e633bb3b6801dd55ebb0209f8e…</code></p>
+<p><b>ad_key B</b><br><code>4a8d4f4b211aec12e31b898598eb61da…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1d8bdc39d11c2d11404ca6e63947f6fc.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/fc78f1b23a9e2ab2ef8c6ceb1db1bbe2.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3bd1668f544789d704684dc3b2a94640.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6584</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>a93ed3632d3c9ed7299fd24e5743b939…</code></p>
+<p><b>ad_key B</b><br><code>f65086a88da7c64472c6053e5fc45146…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3bd1668f544789d704684dc3b2a94640.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ccedf322202fa22cfc2ad0b1dee3f992.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0307e86d97cde890c4e1d2927e07276a.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6659</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>8b9720cfa3923812481822ce5ecf1aea…</code></p>
+<p><b>ad_key B</b><br><code>066daa760839b9e0e347d17814bce9e4…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ccedf322202fa22cfc2ad0b1dee3f992.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0307e86d97cde890c4e1d2927e07276a.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/10fef3a4e8524ebd0092776272374771.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd63c0f98ef867f7834f7485f9df5dfb.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6860</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>b8d569c581a8095b9008e763b91586eb…</code></p>
+<p><b>ad_key B</b><br><code>93fa80e8c77c0b98f176ef722efa6b15…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/10fef3a4e8524ebd0092776272374771.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd63c0f98ef867f7834f7485f9df5dfb.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e3f97dc6b3517bdec10b6acd4eb12bfe.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6770</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>a6578efafd952fe83fb83cfdc03a0408…</code></p>
+<p><b>ad_key B</b><br><code>c0223f2a51ee9e330c9173f14e88c818…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e3f97dc6b3517bdec10b6acd4eb12bfe.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/cf3eaea38f91725136fe4276d33269ba.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e5b95b919eea139071ddfc9ed845bcb3.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6997</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>5307deb6f281c81e4771427185a42288…</code></p>
+<p><b>ad_key B</b><br><code>772e33885aa8e10084a452f4cef235cb…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/cf3eaea38f91725136fe4276d33269ba.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e5b95b919eea139071ddfc9ed845bcb3.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6531</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b0073abd8722ec5638577f3c1a6fe99f…</code></p>
+<p><b>ad_key B</b><br><code>f0e815417345d9acb4940e1fca8d24d1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/60f3af946d2ab240e42ffac6b0bf4310.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7229</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>2ac11cf6a26dbaa70539b65044e02a19…</code></p>
+<p><b>ad_key B</b><br><code>d92b6d54c40554eccdcb915c56514930…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/60f3af946d2ab240e42ffac6b0bf4310.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/2c14884d8f15062b9b7f58c46a0a17b0.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/67664bdfdade5cafca30cc3f7d6c777d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6757</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>1ae4a5bf52e606f313f11a659e0d29c3…</code></p>
+<p><b>ad_key B</b><br><code>fb22917ba72378e92b44e5a8ad4ee626…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/2c14884d8f15062b9b7f58c46a0a17b0.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/67664bdfdade5cafca30cc3f7d6c777d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/38e4fd05e125f670dfea612f7289bf74.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.6547</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>439b3155ad53083dc562a9ba8cf50411…</code></p>
+<p><b>ad_key B</b><br><code>30138999e7063d405297682e6ad04315…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/38e4fd05e125f670dfea612f7289bf74.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.75, 0.80) 偏低 · 随机展示 18 / 本桶共 122 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/43be81d7cab1fabe071ea523e79f7864.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ff655c3d8022b97caede5546e89ab139.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7697</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>e32a573d4637894030b395b444903ac7…</code></p>
+<p><b>ad_key B</b><br><code>8449f56202976fc5b9494b4f1bd2f0a4…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/43be81d7cab1fabe071ea523e79f7864.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ff655c3d8022b97caede5546e89ab139.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/5be16879fec464ebd0f8d89770df941f.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7507</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>a93ed3632d3c9ed7299fd24e5743b939…</code></p>
+<p><b>ad_key B</b><br><code>ef5401988a261bb432ed625a5b13f2c3…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/2ecc2a8df8dd841c068161a22d4bf5a2.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/5be16879fec464ebd0f8d89770df941f.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f725cda561e43ef10e257c9da598c2b1.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/5789763cb8335adbea0e2b105bd5e710.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7774</p>
+<p><b>appid</b><br>com.prequelapp.aistudio</p>
+<p><b>product</b><br>GIO - AI Photoshoot Generator</p>
+<p><b>ad_key A</b><br><code>11f0c41db89c004e3e3ab4d177b5ca2c…</code></p>
+<p><b>ad_key B</b><br><code>b316d96ceed13bfc319b49f89f737c67…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f725cda561e43ef10e257c9da598c2b1.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/5789763cb8335adbea0e2b105bd5e710.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bb639d3cc19b2cc21800404a12502a77.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7646</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>cbbf90a196f7d57ecf9017f6b0de049e…</code></p>
+<p><b>ad_key B</b><br><code>45855c5d4dcce1af2f194ffc325fd6b6…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bb639d3cc19b2cc21800404a12502a77.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/dee53668d2b22aa7303f088cf8df8270.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7526</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b0073abd8722ec5638577f3c1a6fe99f…</code></p>
+<p><b>ad_key B</b><br><code>52cf370b64d60965a24e4c1ae1043313…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/dee53668d2b22aa7303f088cf8df8270.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/85a1dca7077aa925e9d6d5015daaec4b.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7889</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>64a3c4b11b182780e68c2c786c50d237…</code></p>
+<p><b>ad_key B</b><br><code>cfebec9a047a31db7191fe25f77ad062…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/85a1dca7077aa925e9d6d5015daaec4b.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7531</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>cbbf90a196f7d57ecf9017f6b0de049e…</code></p>
+<p><b>ad_key B</b><br><code>c0223f2a51ee9e330c9173f14e88c818…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/4ffdbeb9dd98373c4b526e6b4648a66e.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/c41135ca990f6482572304caf4758918.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7748</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>d4ba7b90d8082ef2a50a5a122436fc2e…</code></p>
+<p><b>ad_key B</b><br><code>54b1060918f1f7b68115bcc639c5da27…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/4ffdbeb9dd98373c4b526e6b4648a66e.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/c41135ca990f6482572304caf4758918.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/c4553be6fe8900f25370fb98adfdfce5.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7856</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>0c00fe2dd5d163f0efa8ba091c04b291…</code></p>
+<p><b>ad_key B</b><br><code>441bbac2a50c354297e9ea9d7e75466c…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/c4553be6fe8900f25370fb98adfdfce5.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/e63289c4cca3e2951d22b40fa7fcc939.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7679</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>59db6bbbecba3a7a0bdd4ff55643c9da…</code></p>
+<p><b>ad_key B</b><br><code>05ede7ea3fdf3d9c42a15dd94c6380c1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/e63289c4cca3e2951d22b40fa7fcc939.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7633</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>cbbf90a196f7d57ecf9017f6b0de049e…</code></p>
+<p><b>ad_key B</b><br><code>7addfdacc538f28fd6beed14f88d810a…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e3f97dc6b3517bdec10b6acd4eb12bfe.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/64a0735110cf024c5d94cd76d28e62f7.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7779</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>a6578efafd952fe83fb83cfdc03a0408…</code></p>
+<p><b>ad_key B</b><br><code>991cba5b5a482a193a873b68d364452b…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e3f97dc6b3517bdec10b6acd4eb12bfe.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/64a0735110cf024c5d94cd76d28e62f7.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3be6a91b293d021dab2698b6c9fe298f.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7646</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>8e63caaf46ec2b6d7f4acccbda52cf66…</code></p>
+<p><b>ad_key B</b><br><code>0c6956eff028491c1dbc65ef38518987…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3be6a91b293d021dab2698b6c9fe298f.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/21aaba14d5edbe53051a2319a6b96811.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/479d3f6da572773fdcd96837a4678bc4.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7564</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>f4d0e0b6acce453b1240dd560d0d3c34…</code></p>
+<p><b>ad_key B</b><br><code>1759020c046353f4b7c1ea935ff1faac…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/21aaba14d5edbe53051a2319a6b96811.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/479d3f6da572773fdcd96837a4678bc4.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4363744ecc821c9271370d1c93d8a30f.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/d757d50728dce8951f86eae4aa0279b1.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7536</p>
+<p><b>appid</b><br>com.prequelapp.aistudio</p>
+<p><b>product</b><br>GIO - AI Photoshoot Generator</p>
+<p><b>ad_key A</b><br><code>ea134f41817ee62244b78df90e662c27…</code></p>
+<p><b>ad_key B</b><br><code>cc0b50cd85a0cd80c8c436ab353ab9dc…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4363744ecc821c9271370d1c93d8a30f.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/d757d50728dce8951f86eae4aa0279b1.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/a2b84e8180516b9ba6f052dcef40f353.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7623</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>aad4bd1885414ba7f713a2db4b35e591…</code></p>
+<p><b>ad_key B</b><br><code>fba907d012875d261f929460a44a1ec7…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/a2b84e8180516b9ba6f052dcef40f353.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/932f5ca28ddce4cf7948258779529b1a.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7777</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b5189f527318f8ee82402a70da9980f1…</code></p>
+<p><b>ad_key B</b><br><code>e657fba206bff934afddb2349ba50fde…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/932f5ca28ddce4cf7948258779529b1a.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/9d508ad97e8f1de04ca892aa73a91ae6.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/44d6688f6c2e0ab9e0a630b0c6911763.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.7760</p>
+<p><b>appid</b><br>com.prequelapp.aistudio</p>
+<p><b>product</b><br>GIO - AI Photoshoot Generator</p>
+<p><b>ad_key A</b><br><code>ed087d377398b64bd669032f81b54e1d…</code></p>
+<p><b>ad_key B</b><br><code>f0c6f5c202ff25610400fbc00bca2b2b…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/9d508ad97e8f1de04ca892aa73a91ae6.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/44d6688f6c2e0ab9e0a630b0c6911763.image" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.80, 0.85) 边缘偏低 · 随机展示 18 / 本桶共 48 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8379</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>6684520ecec81c721909b89ec6a002f4…</code></p>
+<p><b>ad_key B</b><br><code>19ddc0f4346861ed986c302557f18e2d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bb639d3cc19b2cc21800404a12502a77.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd3b9c1b61aa0d596d3f86620957da0e.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8270</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>45855c5d4dcce1af2f194ffc325fd6b6…</code></p>
+<p><b>ad_key B</b><br><code>669f8c51efaa1e59d8457494c05f115a…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bb639d3cc19b2cc21800404a12502a77.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bd3b9c1b61aa0d596d3f86620957da0e.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3be6a91b293d021dab2698b6c9fe298f.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ca4f01573f99377eff98a344d8930a3d.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8341</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>0c6956eff028491c1dbc65ef38518987…</code></p>
+<p><b>ad_key B</b><br><code>574e3ebd77e0fe5152a26a56aa8cbb23…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3be6a91b293d021dab2698b6c9fe298f.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ca4f01573f99377eff98a344d8930a3d.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8082</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>c0223f2a51ee9e330c9173f14e88c818…</code></p>
+<p><b>ad_key B</b><br><code>64a3c4b11b182780e68c2c786c50d237…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8412</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>cbbf90a196f7d57ecf9017f6b0de049e…</code></p>
+<p><b>ad_key B</b><br><code>64a3c4b11b182780e68c2c786c50d237…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/cce79731675370f5e065d77d5a89dda6.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4a6ce8dc2b161c41cf662d0bd835466d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8084</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>7addfdacc538f28fd6beed14f88d810a…</code></p>
+<p><b>ad_key B</b><br><code>e62c7da85679cad72ecc3b34a4684ec7…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4a6ce8dc2b161c41cf662d0bd835466d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/503faae061315aa5a2cf69888d6d18bc.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8102</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e39d9066d87717b2662b7e897333f1c1…</code></p>
+<p><b>ad_key B</b><br><code>7d22aed5da7b24fc4bd780564a82c7f5…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/503faae061315aa5a2cf69888d6d18bc.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8156</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e8ca2e0f140fc5d05b584e070428bf24…</code></p>
+<p><b>ad_key B</b><br><code>19ddc0f4346861ed986c302557f18e2d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/cc20e718e67ab280bed9338447c4abea.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8475</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e39d9066d87717b2662b7e897333f1c1…</code></p>
+<p><b>ad_key B</b><br><code>2e1df8d2accd524a6a97054feefc22df…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3be6a91b293d021dab2698b6c9fe298f.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8021</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>2e1df8d2accd524a6a97054feefc22df…</code></p>
+<p><b>ad_key B</b><br><code>0c6956eff028491c1dbc65ef38518987…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3be6a91b293d021dab2698b6c9fe298f.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/e9eb9a518022fd310c02091ef01ffe88.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8044</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>6684520ecec81c721909b89ec6a002f4…</code></p>
+<p><b>ad_key B</b><br><code>18bb4d72bdcd74fed2c3219771a04a98…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/e9eb9a518022fd310c02091ef01ffe88.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/64a0735110cf024c5d94cd76d28e62f7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/fafd45d21ea595546217d9dc005ba1d6.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8134</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>991cba5b5a482a193a873b68d364452b…</code></p>
+<p><b>ad_key B</b><br><code>3ebf1c0fec57899295f1f0690d59b034…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/64a0735110cf024c5d94cd76d28e62f7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/fafd45d21ea595546217d9dc005ba1d6.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e154807e4769750f24cfd3dfac9636c5.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8277</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>e795d83237e9ddd6765a12347ebf56da…</code></p>
+<p><b>ad_key B</b><br><code>c776c846ab977e11e2f656736462227b…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e154807e4769750f24cfd3dfac9636c5.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e6a9f29079f549044d1ee79af5f3711d.image" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8073</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>fba907d012875d261f929460a44a1ec7…</code></p>
+<p><b>ad_key B</b><br><code>4f99ce41eb25deaa628a31162b2362f2…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e6a9f29079f549044d1ee79af5f3711d.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bac444b93e4ff4ef48d12611e6e7435b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/a137908a595aeea24b48bf816ef27fa7.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8150</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>29638d8fb2cef9b666d8567fd7966c0e…</code></p>
+<p><b>ad_key B</b><br><code>5ae7526d7435b118fdfd858b37ec2d4c…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bac444b93e4ff4ef48d12611e6e7435b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/a137908a595aeea24b48bf816ef27fa7.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/4a6ce8dc2b161c41cf662d0bd835466d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8435</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>c0223f2a51ee9e330c9173f14e88c818…</code></p>
+<p><b>ad_key B</b><br><code>e62c7da85679cad72ecc3b34a4684ec7…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/4a6ce8dc2b161c41cf662d0bd835466d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c0cfe54b08ce9c2ca99807a2314407ce.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/95ca5466325ded7976126a83e621360e.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8473</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>0e50131f9ac32ce01a516e1e83ebf8bd…</code></p>
+<p><b>ad_key B</b><br><code>4d96e70c5d82a00b340bef468870fc65…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c0cfe54b08ce9c2ca99807a2314407ce.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/95ca5466325ded7976126a83e621360e.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/bceb962e607bc9e059e4f63ac39b058c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ffae73aa58502f028b145f696d22b97f.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim-low">cosine = 0.8036</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>ef08893c801cfb4cd6772d7ed8349d51…</code></p>
+<p><b>ad_key B</b><br><code>39acc1310d30e0519a30c14e41886231…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/bceb962e607bc9e059e4f63ac39b058c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ffae73aa58502f028b145f696d22b97f.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.85, 0.90) 边缘偏高 · 随机展示 18 / 本桶共 57 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8568</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>6684520ecec81c721909b89ec6a002f4…</code></p>
+<p><b>ad_key B</b><br><code>4f9fdd7741dd18269156aaa0659993a9…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/f2e91abfdaf6b49641d0d6f213fcb60f.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8652</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e8ca2e0f140fc5d05b584e070428bf24…</code></p>
+<p><b>ad_key B</b><br><code>5708e522fbf2b28aeebc93a4ce9d1cfd…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/f2e91abfdaf6b49641d0d6f213fcb60f.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8666</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>822a3c071b006aba3fc2938662c70c4b…</code></p>
+<p><b>ad_key B</b><br><code>73726770b3fb4cbd034b3b8e7b5d56e6…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/eaaa3641ba7e62eb0bd0861a47f14fd5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8522</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>c883dc5c055b583c5b7d3d0aebc87816…</code></p>
+<p><b>ad_key B</b><br><code>2e1df8d2accd524a6a97054feefc22df…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/eaaa3641ba7e62eb0bd0861a47f14fd5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/f249e45bfacc717aeb4f297016c1cdd9.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/274d17546c203335f843314a21cfa3f5.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8687</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>e34d788f32e49a205cf6a7c5b73a98c8…</code></p>
+<p><b>ad_key B</b><br><code>4bf3738f260dc3a84bf9bb13706c656b…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/f249e45bfacc717aeb4f297016c1cdd9.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/274d17546c203335f843314a21cfa3f5.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/d1367b21c5e91bc2659d218e42340ae5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/eaaa3641ba7e62eb0bd0861a47f14fd5.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8518</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>42e185a8a3ddf845a3a1ec2b57af6cb1…</code></p>
+<p><b>ad_key B</b><br><code>c883dc5c055b583c5b7d3d0aebc87816…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/d1367b21c5e91bc2659d218e42340ae5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/eaaa3641ba7e62eb0bd0861a47f14fd5.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8776</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>6684520ecec81c721909b89ec6a002f4…</code></p>
+<p><b>ad_key B</b><br><code>fba907d012875d261f929460a44a1ec7…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8666</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>73726770b3fb4cbd034b3b8e7b5d56e6…</code></p>
+<p><b>ad_key B</b><br><code>56ed408608a991659fe4fc6d53e17fe3…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3bd1668f544789d704684dc3b2a94640.image" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/36801341737823f82eb105b2720841dd.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8817</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>f65086a88da7c64472c6053e5fc45146…</code></p>
+<p><b>ad_key B</b><br><code>6c0d729cb07aed362b2e4def842e3507…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3bd1668f544789d704684dc3b2a94640.image" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/36801341737823f82eb105b2720841dd.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/3a85adc4a51a8163dea7d52f9105f0d3.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/541d6933448923cee7dfceae26289969.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8646</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>f51ca463e612ce8ba40b3927ba0b2fb0…</code></p>
+<p><b>ad_key B</b><br><code>9e0d5c856cdf5a506642b3dba1aa452e…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/3a85adc4a51a8163dea7d52f9105f0d3.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/541d6933448923cee7dfceae26289969.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e6a9f29079f549044d1ee79af5f3711d.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8539</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e8ca2e0f140fc5d05b584e070428bf24…</code></p>
+<p><b>ad_key B</b><br><code>4f99ce41eb25deaa628a31162b2362f2…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e6a9f29079f549044d1ee79af5f3711d.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8666</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>cc56800363e6d969d7a85c3fba1d9a7b…</code></p>
+<p><b>ad_key B</b><br><code>822a3c071b006aba3fc2938662c70c4b…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/d1367b21c5e91bc2659d218e42340ae5.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8648</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>8e63caaf46ec2b6d7f4acccbda52cf66…</code></p>
+<p><b>ad_key B</b><br><code>42e185a8a3ddf845a3a1ec2b57af6cb1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/d1367b21c5e91bc2659d218e42340ae5.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8666</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>822a3c071b006aba3fc2938662c70c4b…</code></p>
+<p><b>ad_key B</b><br><code>a1ef3eb9349722dec24c978e99f23705…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/14bad0957440fc691552a0f2747d35ee.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c74324421aa62d97393cb9692432fd22.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/274d17546c203335f843314a21cfa3f5.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/84d4897037dde09bacd76055279dd531.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8833</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>4bf3738f260dc3a84bf9bb13706c656b…</code></p>
+<p><b>ad_key B</b><br><code>128fa81d750297fd166bd57b8178cea3…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/274d17546c203335f843314a21cfa3f5.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/84d4897037dde09bacd76055279dd531.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/503faae061315aa5a2cf69888d6d18bc.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8918</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>8e63caaf46ec2b6d7f4acccbda52cf66…</code></p>
+<p><b>ad_key B</b><br><code>7d22aed5da7b24fc4bd780564a82c7f5…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/503faae061315aa5a2cf69888d6d18bc.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8826</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>8e63caaf46ec2b6d7f4acccbda52cf66…</code></p>
+<p><b>ad_key B</b><br><code>e39d9066d87717b2662b7e897333f1c1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/1a4561d145ce01c431896c53db95950a.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.8974</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b52b4d6428d8bd238e5909a9d63692a8…</code></p>
+<p><b>ad_key B</b><br><code>05ede7ea3fdf3d9c42a15dd94c6380c1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.90, 0.93) 中上 · 随机展示 18 / 本桶共 18 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9140</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>0c00fe2dd5d163f0efa8ba091c04b291…</code></p>
+<p><b>ad_key B</b><br><code>3001c1429eeb81390a54fe825e81046c…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/72810d33e56f7dd7f1012580c5072dab.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9107</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>6684520ecec81c721909b89ec6a002f4…</code></p>
+<p><b>ad_key B</b><br><code>cd41cd37f2f4bf9fcdd32350520456d3…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/24f4dfcdcc1e9fc6755f0b3f6ebc912c.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/72810d33e56f7dd7f1012580c5072dab.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/741cc3250552154d6889de3691ced2fc.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9103</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>28fad739ca882fd25f5593148b711846…</code></p>
+<p><b>ad_key B</b><br><code>64a3c4b11b182780e68c2c786c50d237…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/741cc3250552154d6889de3691ced2fc.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/415d0baa6843d4b3cc281d324f548717.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/f19db51995db349f8db777e54d197189.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e5b62f669bd99537b9d387326e587a6d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9037</p>
+<p><b>appid</b><br>com.codespaceapps.you</p>
+<p><b>product</b><br>Retake AI Face &amp; Selfie Editor</p>
+<p><b>ad_key A</b><br><code>2dafd06c1230e837c01bb8a716c1d647…</code></p>
+<p><b>ad_key B</b><br><code>c69a838bd4549d678dd55b07bcc89884…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/f19db51995db349f8db777e54d197189.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e5b62f669bd99537b9d387326e587a6d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/7332219738ba332c2f2824eb435b4561.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/ffae73aa58502f028b145f696d22b97f.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9016</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>3ebf63e7bed7e752aec442f659cebdfe…</code></p>
+<p><b>ad_key B</b><br><code>39acc1310d30e0519a30c14e41886231…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/7332219738ba332c2f2824eb435b4561.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/ffae73aa58502f028b145f696d22b97f.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9020</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b52b4d6428d8bd238e5909a9d63692a8…</code></p>
+<p><b>ad_key B</b><br><code>b0073abd8722ec5638577f3c1a6fe99f…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/02913e82e1e16e158887e0aa8bde9f36.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/9eb40ce9969eb1a4c0442a8a3a4b444c.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9090</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>954caa08084b000001934075592aebb9…</code></p>
+<p><b>ad_key B</b><br><code>a879fd6620c4588a0c1f568d8ff4b0d2…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/02913e82e1e16e158887e0aa8bde9f36.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/9eb40ce9969eb1a4c0442a8a3a4b444c.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9111</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>0c00fe2dd5d163f0efa8ba091c04b291…</code></p>
+<p><b>ad_key B</b><br><code>1ddce6786b13bd4d99e544a403e95ff4…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/72810d33e56f7dd7f1012580c5072dab.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9009</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>fba907d012875d261f929460a44a1ec7…</code></p>
+<p><b>ad_key B</b><br><code>cd41cd37f2f4bf9fcdd32350520456d3…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/94dfdd0a4bde78bea3d12bdeada358ea.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/72810d33e56f7dd7f1012580c5072dab.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c54d2eb57b1e697b0a8509cbd44f4dd9.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e980bb562493eda8449e495610074b01.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9244</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>f8b99ee4c9e3508e21089f8c9c2e59bf…</code></p>
+<p><b>ad_key B</b><br><code>bc404a6e9241ff548a06ded8a96ef041…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c54d2eb57b1e697b0a8509cbd44f4dd9.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e980bb562493eda8449e495610074b01.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9155</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>8e63caaf46ec2b6d7f4acccbda52cf66…</code></p>
+<p><b>ad_key B</b><br><code>2e1df8d2accd524a6a97054feefc22df…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3f5121cc9ca9b6d378cb663e6e13b42b.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/3439c6fbddaa7027a40f3d58753e6b44.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e6a9f29079f549044d1ee79af5f3711d.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/f2e91abfdaf6b49641d0d6f213fcb60f.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9075</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>4f99ce41eb25deaa628a31162b2362f2…</code></p>
+<p><b>ad_key B</b><br><code>5708e522fbf2b28aeebc93a4ce9d1cfd…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e6a9f29079f549044d1ee79af5f3711d.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/f2e91abfdaf6b49641d0d6f213fcb60f.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/b323e4d9f1ddc7ff029288465317bf03.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9065</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>feec924abfaa2883179c840ffdf987fb…</code></p>
+<p><b>ad_key B</b><br><code>64ae2197406c401d348cd85cf4565f4d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/b323e4d9f1ddc7ff029288465317bf03.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9218</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>2ac11cf6a26dbaa70539b65044e02a19…</code></p>
+<p><b>ad_key B</b><br><code>3001c1429eeb81390a54fe825e81046c…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9111</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>0c00fe2dd5d163f0efa8ba091c04b291…</code></p>
+<p><b>ad_key B</b><br><code>2ac11cf6a26dbaa70539b65044e02a19…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/082381b9bbb7a1ce7dd87cabdbcd9ec5.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9218</p>
+<p><b>appid</b><br>com.bigwinepot.nwdn.international</p>
+<p><b>product</b><br>Remini - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>3001c1429eeb81390a54fe825e81046c…</code></p>
+<p><b>ad_key B</b><br><code>1ddce6786b13bd4d99e544a403e95ff4…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/bcd9f104e6faa2cf30ead43ce52c2404.image" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/1d30edd2482ff54f859f2593ee4a73cf.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/89d8893d7263d0d126af7f678828c936.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/e980bb562493eda8449e495610074b01.image" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9197</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e4c315d7649d62964f969356036ebf6f…</code></p>
+<p><b>ad_key B</b><br><code>bc404a6e9241ff548a06ded8a96ef041…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/89d8893d7263d0d126af7f678828c936.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/e980bb562493eda8449e495610074b01.image" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3fb774ba452e5f69f3296dd9f0f388b8.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9080</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>15059692e80dc0b2beeb7f04dd9dbf1e…</code></p>
+<p><b>ad_key B</b><br><code>b52b4d6428d8bd238e5909a9d63692a8…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3fb774ba452e5f69f3296dd9f0f388b8.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/76236b4d6d09adfda43642bc5beb7e11.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.93, 0.95) 高 · 随机展示 8 / 本桶共 8 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9331</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>fac9ed9e88e655bc34168fe85873717b…</code></p>
+<p><b>ad_key B</b><br><code>8c423a2c9bda7d5f01dd7ef4daec62c5…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/b70cb9955bbede835385d474461f1f40.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9457</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>26e9ee9f251657175b7f50fb85c8bd0e…</code></p>
+<p><b>ad_key B</b><br><code>8db1fb43c3ffb6005871ff6d9fd5eb64…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/b70cb9955bbede835385d474461f1f40.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9463</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>26e9ee9f251657175b7f50fb85c8bd0e…</code></p>
+<p><b>ad_key B</b><br><code>b5189f527318f8ee82402a70da9980f1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/61955f5670a9490883a2c6d4d12ef057.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9433</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>26e9ee9f251657175b7f50fb85c8bd0e…</code></p>
+<p><b>ad_key B</b><br><code>92042e28f9cc10d333423addb1e0704e…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/31115dbb4d1adc3925993b5c8441776a.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/61955f5670a9490883a2c6d4d12ef057.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/c54d2eb57b1e697b0a8509cbd44f4dd9.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/89d8893d7263d0d126af7f678828c936.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9491</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>f8b99ee4c9e3508e21089f8c9c2e59bf…</code></p>
+<p><b>ad_key B</b><br><code>e4c315d7649d62964f969356036ebf6f…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/c54d2eb57b1e697b0a8509cbd44f4dd9.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/89d8893d7263d0d126af7f678828c936.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9312</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>7addfdacc538f28fd6beed14f88d810a…</code></p>
+<p><b>ad_key B</b><br><code>c0223f2a51ee9e330c9173f14e88c818…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/581a68b86626580b43418bf78e388931.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/71c12432503e9ce043f64c573a416815.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9336</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>afcc232e7f122a1568d91a2eb418f3d5…</code></p>
+<p><b>ad_key B</b><br><code>8c423a2c9bda7d5f01dd7ef4daec62c5…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9331</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>52d832b5849d72569b38de9550b3650d…</code></p>
+<p><b>ad_key B</b><br><code>8c423a2c9bda7d5f01dd7ef4daec62c5…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.95, 0.97) 很高 · 随机展示 4 / 本桶共 4 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/d6f3432271551b7ee67db3f0019a5876.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/5b86e0c58375b139f60a44d38f68e4ac.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9629</p>
+<p><b>appid</b><br>com.pixverseai.pixverse</p>
+<p><b>product</b><br>Pixverse:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>15327f93572936b69c2ce9c58d1a58cb…</code></p>
+<p><b>ad_key B</b><br><code>e9600e9d261d964d9d5777ae2e6b2188…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/d6f3432271551b7ee67db3f0019a5876.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/5b86e0c58375b139f60a44d38f68e4ac.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/e63289c4cca3e2951d22b40fa7fcc939.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/dee53668d2b22aa7303f088cf8df8270.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9673</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>59db6bbbecba3a7a0bdd4ff55643c9da…</code></p>
+<p><b>ad_key B</b><br><code>52cf370b64d60965a24e4c1ae1043313…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/e63289c4cca3e2951d22b40fa7fcc939.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/dee53668d2b22aa7303f088cf8df8270.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9608</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>afcc232e7f122a1568d91a2eb418f3d5…</code></p>
+<p><b>ad_key B</b><br><code>f0e815417345d9acb4940e1fca8d24d1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9560</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>8c423a2c9bda7d5f01dd7ef4daec62c5…</code></p>
+<p><b>ad_key B</b><br><code>f0e815417345d9acb4940e1fca8d24d1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/fe8d7b8863344cb8e7bff8bcc02bd619.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<h2>[0.97, 1.00] 极高（常同图/裁切） · 随机展示 18 / 本桶共 37 对</h2>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/61955f5670a9490883a2c6d4d12ef057.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9832</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>92042e28f9cc10d333423addb1e0704e…</code></p>
+<p><b>ad_key B</b><br><code>b5189f527318f8ee82402a70da9980f1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/61955f5670a9490883a2c6d4d12ef057.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/659a0e2a18e2bd5b731d1afc328a2e56.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9887</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>595c7225bede5df8d36ca0db9542f9f3…</code></p>
+<p><b>ad_key B</b><br><code>64ae2197406c401d348cd85cf4565f4d…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/659a0e2a18e2bd5b731d1afc328a2e56.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/4e082f424346f878fa39f0e82d207f0d.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 1.0000</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>d0eca3a04b14c2e8f1e1ae3eb84136c2…</code></p>
+<p><b>ad_key B</b><br><code>439b3155ad53083dc562a9ba8cf50411…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b91f4e04c28ca4d55b0c810f2f08cc7.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/b70cb9955bbede835385d474461f1f40.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9832</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>8db1fb43c3ffb6005871ff6d9fd5eb64…</code></p>
+<p><b>ad_key B</b><br><code>b5189f527318f8ee82402a70da9980f1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/b70cb9955bbede835385d474461f1f40.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/67d924eee5cf10dd133fce287e1bcdcd.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3e9eb01c47b29094b1bea8a3332b39d2.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9817</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b8c137da7be8de83e06dfcfd73b572c4…</code></p>
+<p><b>ad_key B</b><br><code>d2936413a5acdce5cadf3ff6de3a54d8…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3e9eb01c47b29094b1bea8a3332b39d2.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cd9b9b2469e2d846bfd99bc8a2642889.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9973</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>9347c3a7f6338164361943a2f43f4e5f…</code></p>
+<p><b>ad_key B</b><br><code>d2936413a5acdce5cadf3ff6de3a54d8…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/cd9b9b2469e2d846bfd99bc8a2642889.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/57ec32e9226c820ff946c0e8f246ac3e.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/57ec32e9226c820ff946c0e8f246ac3e.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 1.0000</p>
+<p><b>appid</b><br>com.dreamapp.dubhe</p>
+<p><b>product</b><br>DreamFace:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>1d42c26399c540c3691c48e17e6c3366…</code></p>
+<p><b>ad_key B</b><br><code>200883bd4600263bdd94f3d8fa1e256b…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/57ec32e9226c820ff946c0e8f246ac3e.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/57ec32e9226c820ff946c0e8f246ac3e.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/56a1a7756d308dae638953fa18029efc.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/56a1a7756d308dae638953fa18029efc.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 1.0000</p>
+<p><b>appid</b><br>com.dreamapp.dubhe</p>
+<p><b>product</b><br>DreamFace:AI Video Generator</p>
+<p><b>ad_key A</b><br><code>db328aa37842f931cc47521d61721227…</code></p>
+<p><b>ad_key B</b><br><code>f0681a600047030b7abbb5fb9f9393d6…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/56a1a7756d308dae638953fa18029efc.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/56a1a7756d308dae638953fa18029efc.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b85febe1abbb157d6bb1e7353bf0726.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b85febe1abbb157d6bb1e7353bf0726.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 1.0000</p>
+<p><b>appid</b><br>app.getglam</p>
+<p><b>product</b><br>Glam AI:Video &amp; Photo Editor</p>
+<p><b>ad_key A</b><br><code>3ba3c70622c2d7d3e83a02fc13226bad…</code></p>
+<p><b>ad_key B</b><br><code>1a069f080fd4db09c70ee251f626d66c…</code></p>
+<p><a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b85febe1abbb157d6bb1e7353bf0726.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp2cdn-idea-global.zingfront.com/sp_opera/0b85febe1abbb157d6bb1e7353bf0726.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 1.0000</p>
+<p><b>appid</b><br>ai.photo.enhancer.photoclear</p>
+<p><b>product</b><br>UpFoto - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>e795d83237e9ddd6765a12347ebf56da…</code></p>
+<p><b>ad_key B</b><br><code>f688d6bd684ba30f421e0b8edea477bb…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/44f3ba208046c53dabb4d0c99577d345.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9767</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>afcc232e7f122a1568d91a2eb418f3d5…</code></p>
+<p><b>ad_key B</b><br><code>fac9ed9e88e655bc34168fe85873717b…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3362957ebab16614314c4e41c3d25b17.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6cc7f876b8fae115bfcd64f9249a1b21.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9770</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>d2936413a5acdce5cadf3ff6de3a54d8…</code></p>
+<p><b>ad_key B</b><br><code>782ae0162f9b2681a60a6e64d55c38ae…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/df5ff56d996cc41b99f0a63fdac67274.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/6cc7f876b8fae115bfcd64f9249a1b21.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 1.0000</p>
+<p><b>appid</b><br>com.ai.polyverse.mirror</p>
+<p><b>product</b><br>AI Mirror: AI Photo &amp; Video</p>
+<p><b>ad_key A</b><br><code>e8ca2e0f140fc5d05b584e070428bf24…</code></p>
+<p><b>ad_key B</b><br><code>4f9fdd7741dd18269156aaa0659993a9…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/1ec8fb9423b3c4bf7d7a6c8b49f06dbb.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 1.0000</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>52d832b5849d72569b38de9550b3650d…</code></p>
+<p><b>ad_key B</b><br><code>fac9ed9e88e655bc34168fe85873717b…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9954</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b0073abd8722ec5638577f3c1a6fe99f…</code></p>
+<p><b>ad_key B</b><br><code>05ede7ea3fdf3d9c42a15dd94c6380c1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/6d712c6b0f40aa246d083438dae85f44.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/35471e344f13fa5fbadbcfcb34b74fb7.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/cd9b9b2469e2d846bfd99bc8a2642889.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6cc7f876b8fae115bfcd64f9249a1b21.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9798</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>9347c3a7f6338164361943a2f43f4e5f…</code></p>
+<p><b>ad_key B</b><br><code>782ae0162f9b2681a60a6e64d55c38ae…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/cd9b9b2469e2d846bfd99bc8a2642889.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/6cc7f876b8fae115bfcd64f9249a1b21.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9720</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>52d832b5849d72569b38de9550b3650d…</code></p>
+<p><b>ad_key B</b><br><code>f0e815417345d9acb4940e1fca8d24d1…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/08bd386c8cae7d895a861b05894d3159.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/d2d6fd748d750a92b5d6d491c1d7dfb9.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+<div class=pair>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/3e9eb01c47b29094b1bea8a3332b39d2.jpg" alt="a"></div>
+<div><img loading=lazy src="https://sp.dataideaglobal.com/sp_opera/6cc7f876b8fae115bfcd64f9249a1b21.jpg" alt="b"></div>
+<div class=meta>
+<p class="sim">cosine = 0.9930</p>
+<p><b>appid</b><br>tap.photo.boost.restoration</p>
+<p><b>product</b><br>PhotoBoost - AI Photo Enhancer</p>
+<p><b>ad_key A</b><br><code>b8c137da7be8de83e06dfcfd73b572c4…</code></p>
+<p><b>ad_key B</b><br><code>782ae0162f9b2681a60a6e64d55c38ae…</code></p>
+<p><a href="https://sp.dataideaglobal.com/sp_opera/3e9eb01c47b29094b1bea8a3332b39d2.jpg" target=_blank>图 A URL</a><br>
+<a href="https://sp.dataideaglobal.com/sp_opera/6cc7f876b8fae115bfcd64f9249a1b21.jpg" target=_blank>图 B URL</a></p>
+</div></div>
+</body></html>

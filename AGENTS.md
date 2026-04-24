@@ -4,9 +4,137 @@
 
 ---
 
+## 文档与代码对齐说明（2026-04-13 修订）
+
+以下历史段落曾描述**已变更**行为，以本说明为准：
+
+| 主题 | 原文档说法 | 当前代码事实 |
+|------|------------|----------------|
+| **灵感「套路」筛选** | 同一次多模态输出 `flower_background` / `bw_blockbuster` 等，或 `config/style_filters.json` 配置化 | **已移除**。`analyze_video_from_raw_json.py` 仅输出纯文本灵感（或解析 JSON 中的 `analysis`）。`style_filter_match_summary` 等字段可仍为列占位，恒为空。**「我方已投」**由 `launched_effects_db.apply_launched_effects_filter`（主流程 Step 2.9）及 `sync_raw_analysis_to_bitable_and_push_card.py` 补标处理。 |
+| **一键主流程 Step 2c 多维去重进分析** | `get_deduped_items_for_analysis` → `*_dedup_report.json`，仅去重后子集进分析 | **`workflow_video_enhancer_full_pipeline.py` 未调用**该函数。入库仍用全量 `items`；分析队列为 **准入 + 未命中历史成功缓存** 的 `pending_items`（见 `[step:analysis-queue]`）。`get_deduped_items_for_analysis` 仍保留在 `video_enhancer_pipeline_db.py`（供封面指纹等复用逻辑），**不等同于当前一键分析入队口径**。 |
+| **定时任务** | 每天 10:30 crontab | **`daily_video_enhancer_workflow.sh` / `daily_ua_job.sh` 注释为手动执行**；若本机仍挂 crontab 为旧配置，以实际 shell 为准。 |
+| **OpenRouter 用量** | 仅 shell 内 `curl` | **主流程**在 `workflow_video_enhancer_full_pipeline.py` 内调用 `llm_client.print_openrouter_key_meter`（工作流开始/结束）；与 `.env` 中 `OPENROUTER_METER` 等一致。 |
+| **特效库语义阈值** | 文档某处写默认 0.80 | **`launched_effects_db.py` 中默认 `LAUNCHED_EFFECTS_MATCH_THRESHOLD` 为 0.65**（以代码与环境变量为准）。 |
+| **封面日内 / 跨日向量去重** | 多模态抽封面 + 文本 LLM 聚类；跨日仅载入「昨日」`insight_cover_style` 与今日同 appid 比较 | **CLIP**（`clip-ViT-B-32`）封面向量并查集，`cosine ≥ COVER_VISUAL_DEDUP_THRESHOLD`（默认 **0.8**），无 LLM。跨日参照为 **`target_date` 之前连续 N 个日历日**（默认 **7**，`COVER_STYLE_HISTORY_LOOKBACK_DAYS`，上限 60），`load_cover_style_rows_for_dates_grouped_by_appid` 批量读库；簇内历史胜出时 `reason` 仍为 **`cover_style_cluster_vs_yesterday`**（兼容旧筛选）。指纹层不变：`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED` + `crossday_filter_items_against_creative_library`。 |
+
+---
+
+## 2026-03-31
+
+### `analyze_video_from_raw_json`：格式异常时多模态重试 3 次，纯文本 JSON 修复改默认关
+
+- **新**：`VIDEO_ANALYSIS_MULTIMODAL_FORMAT_RETRIES`（默认 3，0=关）—— 解析/正文过短等触发 `_needs_json_or_format_repair` 时，**串行**再调多模态（视频/图），不叠加 `PARALLEL_SHARDS`；成功打标 `inspiration_enrichment=multimodal_format_retry`。
+- **改**：`VIDEO_ANALYSIS_JSON_REPAIR` 默认由开改为**关**；仅多模态仍失败时可选开启。纯文本收束**去掉 16k 截断**（全量原文进兜底 prompt）。
+- 模块头 docstring 已同步说明。
+
+### 飞书主表 `视频` 附件 + 恢复 `launched_effects_db.py`（我方已投 + embedding）
+
+- **`sync_raw_analysis_to_bitable_and_push_card.py`**：`FIELD_DEFS` 增「视频」(type=17)；对 `video_duration>0` 且可直链下载的 `pick_video_url` 拉流上传（`VIDEO_BITABLE_MAX_MB` / `VIDEO_BITABLE_UPLOAD`）；主表同步前对 `analysis["results"]` 调用 `apply_launched_effects_filter`（与全链路 Step 2.9 一致）。
+- **`launched_effects_db.py`**：仓库中曾为空导致 Step 2.9 未生效；已补全：飞书已投放表拉取 + 本地缓存 + **关键词子串** + **`llm_client.call_embedding` 语义 cosine ≥ `LAUNCHED_EFFECTS_MATCH_THRESHOLD`（默认 0.65）**；无飞书时降级 `data/launched_effects_descriptions_only.json`。
+- **`workflow_video_enhancer_acceptance.py`**：已补全实现；`run_acceptance_after_workflow` 汇总 raw/analysis/方向卡片/封面与已投放 step/推送表行数/历史截断量，写 `data/workflow_video_enhancer_{date}_acceptance.json` 与 `reports/…_acceptance.md`；环境变量与 AGENTS 中「工作流验收」说明一致。未增加 `daily_video_enhancer_acceptance` 表（文档曾提及，当前以文件落盘 + 既有 DB 查询为主）。
+
+---
+
+## 2026-04-20
+
+### Arrow2 `latest_yesterday`：滚动越过「昨日」边界 + 竞品配置
+
+- **`run_search_workflow._search_one_keyword`**：可选 `scroll_until_older_than_date`（目标昨日 YYYY-MM-DD）。在「最新创意」下持续滚动直到底层 napi 合并结果里出现 **first_seen 或 created_at（UTC+8）早于该日** 的素材（认为已扫完目标日窗口），或仍受「连续 3 轮无新批次」与**约 48 轮**上限约束。之后 `filter_yesterday_only` 仍只保留 `first_seen=昨日`。
+- **`run_arrow2_batch`**：对 `order_by=latest` 且 `filter_yesterday_only` 的 pull_spec，默认开启上述滚动（`scroll_until_past_target_date` 缺省为真）；显式设为 `false` 可恢复较短轮数 + idle 的旧停法。
+- **`config/arrow2_competitor.json`**：移除 `com.arrow.out` 行；`latest_yesterday` 中说明 `scroll_until_past_target_date`。
+- **`test_arrow2_competitors.py`**：未指定 `--products` 时默认只跑配置中**第一个**产品；`--all-products` 跑全部。
+- **Arrow2 `order_by=latest`（含 latest_yesterday）**：与 `exposure` 一样改为 **`arrow2_build_result_from_dom_after_search`**，列表为 **DOM 卡片 + detail-v2**（`list_source=dom`）；`filter_yesterday_only` 时单词默认多取卡（`max_n` 默认 120、硬顶 200）再按 first_seen 筛昨日。旧无 `pull_specs` 矩阵里 `latest` 亦走 DOM。
+- **DOM 广告主过滤**：`run_arrow2_batch` 增加 `keyword_product`（搜索框 key → 与 config `match` 一致的产品名）；`arrow2_build_result_from_dom_after_search` 在 detail-v2 后调用 `advertiser_matches_product` 剔除与目标产品不一致的卡。`test_arrow2_competitors` 自动传入各条目的 `product`。
+
+---
+
+## 2026-04-14
+
+### 封面去重改为 CLIP 向量 + 7 日历史窗口
+
+**动机**：去掉封面多模态与封面聚类 LLM，改为与主库一致的 **CLIP 封面向量**（`creative_library.cover_embedding`），阈值可调、成本更低。
+
+**实现概要**（`scripts/cover_style_intraday.py`）：
+- **指纹**（默认开，`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED`）：在算 CLIP 前仍调用 `crossday_filter_items_against_creative_library`，与文首「封面跨日指纹」一致。
+- **向量**：优先读库 `load_cover_embedding_blob_map_by_ad_keys`；缺失则 `cover_embedding.compute_cover_embedding_vector_from_url` 仅算向量、不写库（当日首轮入库前新 `ad_key` 可能无行；后续 `run_cover_embedding_job` 等仍会补 `cover_embedding`）。
+- **占位入库**：`insight_cover_style` 写入 CLIP 占位 JSON（如 `style_type`: 「CLIP视觉」），`upsert_single_cover_style_insight` 逐条更新。
+- **聚类**：同 `appid` 内并查集，边条件 `cosine_similarity ≥` **`COVER_VISUAL_DEDUP_THRESHOLD`**（默认 **0.8**）；簇内保留 `all_exposure_value` 最大一条；若最优来自**历史窗口**则剔今日（`cover_style_cluster_vs_yesterday`），若最优为今日则日内互斥（`cover_style_cluster`）。报告 `cover_dedupe_mode`: **`clip_visual`**。
+- **历史窗口**：`COVER_STYLE_CROSS_DAY_ENABLED` 开启时，加载 **`target_date` 前连续 N 日**（**`COVER_STYLE_HISTORY_LOOKBACK_DAYS`**，默认 **7**，即 T-1…T-7）内非空 `insight_cover_style`；`video_enhancer_pipeline_db.load_cover_style_rows_for_dates_grouped_by_appid` 合并多日，同一 `ad_key` 取 exposure 更高的一条。报告含 `cross_day_history_dates`、`cross_day_history_lookback_days`；`cross_day_prev_date` 仍为 **T-1**（兼容旧读者）；`per_appid` 增加 `history_ref_count`，并保留 `yesterday_ref_count` 与同长度（兼容）。
+
+**环境变量**（`.env.example` 已列）：`COVER_VISUAL_DEDUP_THRESHOLD`、`COVER_STYLE_HISTORY_LOOKBACK_DAYS`；其余 `COVER_STYLE_INTRADAY_ENABLED`、`COVER_STYLE_CROSS_DAY_*`、`COVER_STYLE_WORKERS` 仍适用。
+
+**联动**：`workflow_video_enhancer_full_pipeline.py` / `workflow_video_enhancer_steps.py` / `daily_video_enhancer_workflow.sh` / `run_cover_style_intraday.py` / `workflow_video_enhancer_acceptance.py` 中用户可见文案已由「多模态封面」改为 **CLIP 封面**。
+
+**注意**：历史窗口内条目需库内已有 **`cover_embedding`** 才参与向量聚类；过去未跑封面或未回填向量时，参照会变弱。
+
+---
+
+## 2026-04-13
+
+### 工作流验收：`workflow_video_enhancer_acceptance.py`
+
+- **用途**：对指定日期的 Video Enhancer 产物做可重复检查（文件存在与 JSON 结构、本次新分析成功率阈值、封面/语义等异常提示、方向卡片字段与参考链接、推送表行数、`daily_video_enhancer_workflow_{date}.log` 中子进程错误线索、近 N 日截断后条数对比）。
+- **输出**：`data/workflow_video_enhancer_{date}_acceptance.json`、`reports/workflow_video_enhancer_{date}_acceptance.md`。
+- **SQLite**：`daily_video_enhancer_acceptance` 表（`init_db()` 自动补齐），`upsert_daily_video_enhancer_acceptance` 写入；另增 `query_filter_log_post_total`、`count_daily_ua_push_rows`、`load_filter_log_post_totals_lookback` 供验收与历史对比。
+- **接入**：`workflow_video_enhancer_full_pipeline.py` 在「全流程正常结束」或「灵感分析失败提前 return」前调用 `run_acceptance_after_workflow`；`workflow_video_enhancer_steps.py` 的 `push_sync` 结束调用。
+- **环境变量**：`ACCEPTANCE_ENABLED`（默认开启，设为 `0`/`false` 关闭）、`ACCEPTANCE_BLOCK_ON_FAIL`（硬失败时进程退出码 2）、`ACCEPTANCE_MIN_SUCCESS_RATE`、`ACCEPTANCE_COVER_REMOVAL_WARN`、`ACCEPTANCE_LOOKBACK_DAYS`、`ACCEPTANCE_LOW_VS_MEAN`、`ACCEPTANCE_HIGH_VS_MEAN`、`ACCEPTANCE_EXIT_ON_SOFT`、`ACCEPTANCE_STRICT`（详见脚本文件头注释）。
+- **飞书通知**：配置 `ACCEPTANCE_FEISHU_WEBHOOK`（群机器人 webhook，可与业务 UA 卡片 webhook 分开）后，每次验收结束发送 **interactive 卡片**（紧凑摘要：状态/得分/问题/阶段一行摘要）；`ACCEPTANCE_FEISHU_ENABLED=0` 关闭；`ACCEPTANCE_FEISHU_STRICT=1` 时推送失败会抛错。CLI：`--feishu-webhook`、`--no-feishu`。
+
+---
+
+## 2026-04-09
+
+### 逐条主表同步：`sync_raw_analysis_to_bitable_and_push_card.py`
+
+- **我方已投放**：在 `main()` 读入 analysis 后**先**调用 `apply_launched_effects_filter`，单独跑同步脚本也会排除已投放命中（不再依赖必须先跑 `cluster_store`）。`apply_launched_effects_filter` 对历史 JSON 中已有 `launched_effect_match` / 「我方已投放」标签但未写 `exclude_from_bitable` 的行**补写**主表排除。
+- **封面图附件**：路径以 `.image` 结尾时，下载**优先**用 `.png` 替换后的 URL；`upload_image_as_attachment` 中飞书附件 `file_name` 对 `.image` 后缀**强制改为** `.png`，避免多维表里仍显示 `.image`。
+- **视频**：仅「视频链接」文本列，**无**视频附件列。
+
+---
+
+## 2026-04-08
+
+### `llm_client.call_vision` 文本降级时剥离媒体 URL
+
+**问题**：部分图片素材在多模态与纯文本路径均被 OpenRouter 返回 403（TOS）；根因之一是视觉失败后 `call_text` 仍携带与请求相同的图片/视频直链，网关对同一 URL 再次拦截。
+
+**改动**（`scripts/llm_client.py`）：新增 `_text_fallback_user_text`，在「全部视觉模型失败 → 纯文本降级」时，将 `user_text` 中的 `media_url` 替换为简短中文说明，避免重复提交直链；分析可仅依据标题、文案与指标推断。
+
+---
+
 ## 2026-04-03
 
-### 架构优化：五项改进（统一 LLM 层 / 配置化套路 / 语义嵌入 / 历史卡片 / 趋势信号）
+### 我方已投放特效库匹配 `scripts/launched_effects_db.py`（新增）
+
+**背景**：我方有一个飞书多维表（194 条记录），记录了已上线到 Evoke/Kavi/Toki/Avatar 各产品的特效/主题。竞品抓取的素材中可能包含与我方已投放特效相同概念的创意——需要识别并标记。
+
+**数据源**：飞书多维表 `JhMMbPlSUaE6G7siF0RcQn6jnlg` / `tblo36ykG6Pl2X04`，含字段：说明（特效名+描述）、类型、来源、已上线产品、日期。
+
+**新增文件 `scripts/launched_effects_db.py`**：
+- `sync_launched_effects()` — 通过 FEISHU_APP_ID/SECRET 拉取飞书多维表全量记录。
+- **24h 本地缓存**：`data/launched_effects_cache.json`，过期自动重新拉取；网络异常时降级到过期缓存。
+- `_extract_effect_names(desc)` — 从说明字段提取特效名关键词（英文名 + 中文名 + 【brackets】内名 + 列表名），当前提取 **481 个关键词（303 唯一）**。
+- **双层匹配** `match_against_launched_effects(analysis, title, body)`：
+  - **Layer 1 — 关键词硬匹配**：特效名（英文/中文）在竞品 title+body+analysis 中出现即命中（精度极高）。
+  - **Layer 2 — 语义嵌入匹配**：对特效说明前 200 字做 embedding，与竞品分析文本 cosine similarity ≥ 0.65 即命中。默认使用**本地模型** `BAAI/bge-small-zh-v1.5`（中英双语、512 维、33M 参数、零 API 成本）。实测：纯中文"圣诞老人打视频电话"（无任何关键词命中）→ 语义层成功匹配到 Santa Call 特效（sim=0.72）。
+- `apply_launched_effects_filter(combined_results)` — Pipeline 集成入口；命中素材设 `exclude_from_cluster=True` + 标签 `我方已投放: XXX特效`。
+
+**Embedding 基础设施升级**（`scripts/llm_client.py`）：
+- `call_embedding()` 改为**本地模型优先**策略：先尝试 `sentence-transformers` + `BAAI/bge-small-zh-v1.5`，不可用时降级到 API。
+- 模型进程内单例加载（首次调用 ~10s，后续调用 <10ms）。
+- 环境变量 `EMBEDDING_PROVIDER=api` 可强制走 API；`LOCAL_EMBEDDING_MODEL` 可切换本地模型。
+
+**Pipeline 集成**：
+- 全流程 `workflow_video_enhancer_full_pipeline.py` Step 2.9（语义去重之后、方向卡片之前）。
+- 分步流程 `workflow_video_enhancer_steps.py` `step_cluster_store` 在生成方向卡片之前。
+- 命中素材不进入方向卡片生成（`exclude_from_cluster`），但仍保留在 analysis JSON 和多维表中供查看。
+
+**环境变量**：
+- `LAUNCHED_EFFECTS_BITABLE_URL`（默认内置）、`LAUNCHED_EFFECTS_MATCH_THRESHOLD`（代码默认 **0.65**，可通过 `.env` 覆盖）、`LAUNCHED_EFFECTS_ENABLED`（默认开启）。
+
+---
+
+### 架构优化：五项改进（统一 LLM 层 / 配置化套路已废弃 / 语义嵌入 / 历史卡片 / 趋势信号）
 
 #### 1) 统一 LLM 调用层 `scripts/llm_client.py`（新增）
 
@@ -19,17 +147,13 @@
 - **Usage tracking**：所有调用的 token 用量集中在 `llm_client._usage_patch`，各脚本结束时 `flush_usage(target_date)` 统一写入 `ai_llm_usage_daily`。
 - `analyze_video_from_raw_json.py` 中 `_call_llm_text` / `_call_llm_video` / `_call_llm_image` 精简为 3-5 行的 `llm_client` 委托，删除 ~200 行重复重试逻辑。
 - `generate_video_enhancer_ua_suggestions_from_analysis.py` 中 `_call_llm` 精简为 1 行 `llm_client.call_text()`。
-- `cover_style_intraday.py` 无需改动（继续 import analyze 中的 wrapper）。
+- `cover_style_intraday.py`：**（2026-04-14 起）** 封面步骤已改为 CLIP 向量聚类，**不再**经 `llm_client` 做多模态封面；见 **§2026-04-14**。
 
-#### 2) 套路过滤配置化 `config/style_filters.json`（新增）
+#### 2) 套路过滤配置化 `config/style_filters.json`（**已废弃**）
 
-**背景**：「花卉背景」「黑白大片」两个过滤器硬编码在提示词和 JSON 解析中，新增过滤器需改多处代码。
+**历史（2026-04-03）**：曾新增 `config/style_filters.json`，并在 `analyze_video_from_raw_json.py` 中动态加载，与灵感分析同一次多模态输出套路 JSON。
 
-**变更**：
-- 新增 `config/style_filters.json`，每个条目含 `id`、`label`、`description`、`enabled`。
-- `analyze_video_from_raw_json.py` 改为动态加载配置：`_load_style_filters()` → `_style_filter_ids()` → `_style_filter_prompt_section()` → `_json_output_constraint()`。
-- 提示词中的套路描述列表、JSON 输出字段约束、system message 的输出约束、JSON 解析 `_parse_inspiration_json_response()` 全部改为按 filter_ids 动态生成。
-- **新增过滤器仅需编辑 JSON 文件**，不改代码。配置不存在时回退到内置默认（向下兼容）。
+**当前**：该能力**已从分析脚本移除**（见上文「文档与代码对齐说明」）。`config/style_filters.json` 若仍存在，仅为遗留文件，**分析流程不再读取**。若需「我方已投」类排除，**仅**依赖 `launched_effects_db` 与下游同步补标。
 
 #### 3) 语义嵌入去重
 
@@ -88,7 +212,7 @@
 
 ### 爬取与封面去重拆分（分步工作流）
 
-**背景**：将「抓取」与「封面日内多模态 + 聚类去重」解耦，便于独立执行或重跑。
+**背景**：将「抓取」与「封面日内去重（现为 CLIP，见 **§2026-04-14**）」解耦，便于独立执行或重跑。
 
 **变更**：
 - `scripts/workflow_video_enhancer_steps.py`：`crawl_store` 增加 **`--crawl-only`** — 只跑 `test_video_enhancer_two_competitors_318.py` 写 `workflow_video_enhancer_{日期}_raw.json`，**不**做封面去重、**不**写库；终端提示下一步执行 `cover_store`。
@@ -99,15 +223,17 @@
 
 ### 封面去重：与「昨日」同 appid 参照（跨日）
 
-**背景**：封面聚类原先仅对比**当日**同产品；现增加**昨日**已入库的 `insight_cover_style` 作为参照，减少与昨天视觉套路重复的今日素材。
+**（2026-04-14 修订）** 下文「昨日」在**产品语义**上已扩展为 **过去 N 日历史窗口**（默认 7 日），实现为 CLIP 向量并查集而非 LLM；详见 **§2026-04-14** 与文首对齐表「封面日内 / 跨日向量去重」。
+
+**背景**：封面聚类原先仅对比**当日**同产品；现增加**历史**已入库的 `insight_cover_style`（及库内 `cover_embedding`）作为参照，减少与近几日视觉重复的今日素材。
 
 **逻辑**（`scripts/cover_style_intraday.py`）：
-- 从 DB 读取 **`target_date` 前一天**（日历减 1 天）各 `appid` 下非空 `insight_cover_style`（`video_enhancer_pipeline_db.load_cover_style_rows_for_date_grouped_by_appid`），与今日条目一并进入聚类提示词（行内带 `source: yesterday` / `today`）。
-- 簇内保留 **`all_exposure_value` 最高**的一条（昨日、今日同一比较口径）。若昨日 `ad_key` 胜出，今日同簇素材剔除，`removed` 中 **`reason`** 为 **`cover_style_cluster_vs_yesterday`**；若今日胜出，逻辑同原 **`cover_style_cluster`**。
-- 报告字段：`cross_day_prev_date`、`cross_day_rows_loaded`；每 app 增加 `yesterday_ref_count`。
-- 环境变量 **`COVER_STYLE_CROSS_DAY_ENABLED`**（默认开启；`0`/`false`/`no`/`off` 关闭跨日，仅日内聚类）。`.env.example` 已补充说明。
+- 从 DB 读取 **`target_date` 之前连续 N 日**（默认 **7**）各 `appid` 下非空 `insight_cover_style`（`load_cover_style_rows_for_dates_grouped_by_appid`；单日查询仍可用 `load_cover_style_rows_for_date_grouped_by_appid`），与今日条目一并进入 **CLIP 余弦聚类**。
+- 簇内保留 **`all_exposure_value` 最高**的一条（历史、今日同一比较口径）。若历史侧 `ad_key` 胜出，今日同簇素材剔除，`removed` 中 **`reason`** 仍为 **`cover_style_cluster_vs_yesterday`**；若今日胜出，逻辑为 **`cover_style_cluster`**。
+- 报告字段：`cross_day_history_dates`、`cross_day_rows_loaded` 等；`per_appid` 含 `history_ref_count` / `yesterday_ref_count`。
+- 环境变量 **`COVER_STYLE_CROSS_DAY_ENABLED`**（默认开启；`0`/`false`/`no`/`off` 关闭历史向量参照，仅日内 CLIP）；**`COVER_STYLE_HISTORY_LOOKBACK_DAYS`**（默认 7）。`.env.example` 已补充说明。
 
-**监控关注点**：跨日依赖前一日 `daily_creative_insights` 中已有封面风格数据；新日期或昨日未跑封面时，该 appid 仅有今日数据，行为退化为原日内逻辑。
+**监控关注点**：历史窗口依赖过去 N 日 `daily_creative_insights` 中已有封面占位且 **`creative_library.cover_embedding` 非空**；新日期或历史未跑封面时，该 appid 可能仅有今日数据，行为退化为日内逻辑。
 
 ### 封面跨日指纹（与 `creative_library` / 灵感分析 Step B 对齐）
 
@@ -115,11 +241,11 @@
 
 **变更**：
 - `scripts/video_enhancer_pipeline_db.py`：抽取 **`crossday_filter_items_against_creative_library(target_date, items)`**（同 appid 下对 `creative_library` 早于当日的记录比对 `ad_key` / 主媒体 URL / 封面 `image_ahash_md5` 汉明距离 ≤ 阈值）。**`get_deduped_items_for_analysis`** 的 Step B 改为调用该函数，避免重复实现。
-- `scripts/cover_style_intraday.py`：在 `apply_intraday_cover_style_dedupe` 内、封面多模态**之前**默认执行上述过滤；命中则从本条列表剔除，**不再调用**封面视觉模型。报告含 **`cross_day_fingerprint_removed_count` / `cross_day_fingerprint_removed`**、**`input_count_before_cross_day_fingerprint`**；若过滤后无剩余素材，返回 **`empty_after_cross_day_fingerprint`**。
-- 环境变量 **`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED`**（默认开启；`0`/`false`/`no`/`off` 关闭指纹层；**不**影响上文「昨日 insight_cover_style」的 LLM 跨日，后者仍由 **`COVER_STYLE_CROSS_DAY_ENABLED`** 控制）。
+- `scripts/cover_style_intraday.py`：在 `apply_intraday_cover_style_dedupe` 内、**CLIP 编码之前**默认执行上述过滤；命中则从本条列表剔除，不再进入后续封面向量步骤。报告含 **`cross_day_fingerprint_removed_count` / `cross_day_fingerprint_removed`**、**`input_count_before_cross_day_fingerprint`**；若过滤后无剩余素材，返回 **`empty_after_cross_day_fingerprint`**。
+- 环境变量 **`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED`**（默认开启；`0`/`false`/`no`/`off` 关闭指纹层；**不**影响上文「历史 `insight_cover_style` + CLIP」跨日，后者仍由 **`COVER_STYLE_CROSS_DAY_ENABLED`** / **`COVER_STYLE_HISTORY_LOOKBACK_DAYS`** 控制）。
 - `.env.example` 已补充 `COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED` 说明。
 
-**监控关注点**：指纹层依赖 `creative_library` 已有历史行（`first_target_date < 当日`）；冷启动或从未入库的竞品首日可能无命中，仅靠 LLM 昨日参照兜底。
+**监控关注点**：指纹层依赖 `creative_library` 已有历史行（`first_target_date < 当日`）；冷启动或从未入库的竞品首日可能无命中，仅靠 **CLIP 历史窗口**参照兜底（见 **§2026-04-14**）。
 
 ---
 
@@ -127,33 +253,33 @@
 
 ### OpenRouter 用量：工作流前后各查一次 Key
 
-**变更**：`scripts/daily_video_enhancer_workflow.sh` 在 `workflow_video_enhancer_full_pipeline.py` 前后各执行一次 `curl -i https://openrouter.ai/api/v1/key -H "Authorization: Bearer $OPENROUTER_API_KEY"`（需 `.env` 中 `OPENROUTER_API_KEY`）。默认关闭；设 **`OPENROUTER_METER=1`**（可写入 `.env` 或命令行前缀）开启，输出经 `tee` 进入当日 `logs/daily_video_enhancer_workflow_${TARGET_DATE}.log`。独立脚本 **`scripts/openrouter_key_snapshot.sh`** 供单次手动对比。
+**变更**：主流程在 `workflow_video_enhancer_full_pipeline.py` 内调用 **`llm_client.print_openrouter_key_meter`**（工作流开始前 / 结束后各一次，需 `.env` 中 `OPENROUTER_API_KEY`）。默认关闭；设 **`OPENROUTER_METER=1`** 等开启（以 `llm_client` 内逻辑为准），输出经 `tee` 进入当日 `logs/daily_video_enhancer_workflow_${TARGET_DATE}.log`。独立脚本 **`scripts/openrouter_key_snapshot.sh`** 供单次手动对比（可能用 `curl`）。
 
 ### 终端耗时：灵感多模态 / 封面多模态
 
-**变更**：`analyze_video_from_raw_json.py` 每条素材在 `_call_llm_video` / `_call_llm_image`（灵感分析）结束后打印 `灵感多模态耗时 X.Xs · [video|image]`。`cover_style_intraday.py` 每条封面 `_call_llm_image` 后打印 `封面多模态耗时`；同 appid 多封面聚类时额外打印 `封面聚类 LLM 耗时`（文本模型）。
+**变更**：`analyze_video_from_raw_json.py` 每条素材在 `_call_llm_video` / `_call_llm_image`（灵感分析）结束后打印 `灵感多模态耗时 X.Xs · [video|image]`。**（2026-04-14 起）** 封面步骤已改为 CLIP，**不再**打印「封面多模态 / 封面聚类 LLM」耗时；历史描述保留供对照。
 
 ---
 
 ### 封面风格日内：进度日志 + 逐条入库
 
-**变更**：`scripts/cover_style_intraday.py` 每条封面多模态前后打印 `[cover-style] [i/total]`，完成后调用 `video_enhancer_pipeline_db.upsert_single_cover_style_insight` 写入 `daily_creative_insights.insight_cover_style`；`apply_intraday_cover_style_dedupe(..., crawl_date)` 第三参传入 `raw_payload["crawl_date"]`。`workflow_video_enhancer_full_pipeline.py` / `workflow_video_enhancer_steps.py` 已传参。
+**变更**：`scripts/cover_style_intraday.py` 每条封面处理前后打印进度，完成后调用 `video_enhancer_pipeline_db.upsert_single_cover_style_insight` 写入 `daily_creative_insights.insight_cover_style`（**2026-04-14 起** 为 CLIP 占位 JSON，非多模态描述）；`apply_intraday_cover_style_dedupe(..., crawl_date)` 第三参传入 `raw_payload["crawl_date"]`。`workflow_video_enhancer_full_pipeline.py` / `workflow_video_enhancer_steps.py` 已传参。
 
 ---
 
 ## 2026-03-31
 
-### 灵感分析：花卉背景 / 黑白大片套路过滤
+### 灵感分析：花卉背景 / 黑白大片套路过滤（**已废弃**）
 
-**逻辑**（`scripts/analyze_video_from_raw_json.py`）：与主灵感分析**同一次**多模态请求；提示词内要求仅输出 JSON，含 `analysis`（正文）与 `flower_background`、`bw_blockbuster`。视频依据**整支视频**、图片依据**整张图**判断套路。命中任一则 `material_tags=["我方已经投过"]`，`exclude_from_bitable` / `exclude_from_cluster`，并跳过单条 UA 建议。`VIDEO_ANALYSIS_STYLE_FILTER_DISABLED=1` 恢复纯文本、不做套路字段。
+**历史逻辑**：曾与主灵感分析同一次多模态输出套路布尔字段；命中则打「我方已经投过」等。**该能力已移除**，详见文首「文档与代码对齐说明」。
 
-**下游**：`sync_raw_analysis_to_bitable_and_push_card.py` 主表跳过 `exclude_from_bitable`；`generate_video_enhancer_ua_suggestions_from_analysis.py` 聚类输入排除 `exclude_from_cluster`（`cluster_excluded_count`）。
+**下游（仍适用）**：`sync_raw_analysis_to_bitable_and_push_card.py` 仍对 `exclude_from_bitable` 等字段做主表是否同步；`generate_video_enhancer_ua_suggestions_from_analysis.py` 仍对 `exclude_from_cluster` 做聚类排除（`cluster_excluded_count`）。**来源**以主流程 **Step 2.8 语义去重**、**Step 2.9 已投放特效库**、`material_tags` 补标为主，而非分析脚本内套路。
 
 ---
 
 ### 多模态封面日内去重默认开启
 
-**变更**：`scripts/cover_style_intraday.py` 中 `is_cover_style_intraday_enabled()` 默认改为开启；通过 `COVER_STYLE_INTRADAY_ENABLED=0`（或 `false`/`no`/`off`）关闭。`scripts/daily_video_enhancer_workflow.sh` 中 `export COVER_STYLE_INTRADAY_ENABLED="${COVER_STYLE_INTRADAY_ENABLED:-1}"`，便于定时任务显式覆盖。`.env.example` 已补充说明。
+**变更**：`scripts/cover_style_intraday.py` 中 `is_cover_style_intraday_enabled()` 默认改为开启；通过 `COVER_STYLE_INTRADAY_ENABLED=0`（或 `false`/`no`/`off`）关闭。`scripts/daily_video_enhancer_workflow.sh` 中 `export COVER_STYLE_INTRADAY_ENABLED="${COVER_STYLE_INTRADAY_ENABLED:-1}"`，便于环境变量显式覆盖。`.env.example` 已补充说明。**（2026-04-14）** 实现已为 **CLIP 封面**，标题中「多模态」为历史命名。
 
 ---
 
@@ -359,20 +485,13 @@ print(f"[DB] creative_library 分析结果已同步。")
 
 ---
 
-#### `scripts/workflow_video_enhancer_full_pipeline.py`
+#### `scripts/workflow_video_enhancer_full_pipeline.py`（与一键流程的关系）
 
-**Step 2c**（新增，在 2b creative_library 写库后）：
-```
-原始 N 条
-→ 日内去重后 M 条（去除 X 条重复）
-→ 跨日去重后 K 条（去除 Y 条历史素材）
-```
-- **全量原始素材**仍写入 `daily_creative_insights` 和 `creative_library`（完整存档）
-- **去重后唯一素材**才进入分析（Step 3）、多维表同步（Step 5）、飞书卡片推送（Step 5）
-- `combined_results` 改为基于 `deduped_items` 构建（原为 `raw_payload.get("items")`）
-- `analysis_payload` 新增 `deduped_items` 字段记录去重后数量
+**历史设计**：曾计划在 Step 2c 调用 `get_deduped_items_for_analysis`，仅让去重后子集进入分析并写 `*_dedup_report.json`。
 
-**首次运行说明**：`creative_library` 为空时，跨日去重命中 0 条（正常现象），随日积累数据后跨日去重会逐步生效。
+**当前一键流程（`workflow_video_enhancer_full_pipeline.py`）**：**未接入**上述步骤。`creative_library` 仍会在 Step 2b 对全量 raw 做归组；**分析入队**为：全量 `items` 中，**未复用历史成功分析**且 **符合灵感准入** 的条目 → `*_raw_pending_analysis.json` → `analyze_video_from_raw_json.py`。`get_deduped_items_for_analysis` 函数仍存在于 `video_enhancer_pipeline_db.py`，供库内逻辑复用，**与当前一键分析入队无直接调用关系**。
+
+**首次运行说明**（仍适用于 `creative_library`）：冷启动时跨日指纹等命中 0 条为正常现象。
 
 ---
 
@@ -398,70 +517,52 @@ print(f"[DB] creative_library 分析结果已同步。")
 
 ## 当前主工作流（Video Enhancer 日流程）
 
-每天 10:30 由 crontab 自动触发：
+**触发方式**：`scripts/daily_video_enhancer_workflow.sh` 与 `daily_ua_job.sh` 注释均为 **手动执行**（默认 `TARGET_DATE` = 昨天；使用项目根 `.venv/bin/python3`）。若本机仍配置 crontab，以实际为准。
 
 ```
-daily_ua_job.sh
-  └→ daily_video_enhancer_workflow.sh   # export PYTHONUNBUFFERED=1；可选 OPENROUTER_METER=1
-       └→ workflow_video_enhancer_full_pipeline.py --date 昨天
+daily_ua_job.sh（可选）
+  └→ daily_video_enhancer_workflow.sh   # PYTHONUNBUFFERED=1；COVER_STYLE_INTRADAY_ENABLED 等
+       └→ workflow_video_enhancer_full_pipeline.py --date <TARGET_DATE>
             │
             ├─ Step 1  爬取
-            │     scripts/test_video_enhancer_two_competitors_318.py
-            │     → workflow_video_enhancer_{日期}_raw.json
+            │     test_video_enhancer_two_competitors_318.py → workflow_video_enhancer_{日期}_raw.json
             │
-            ├─ Step 2  可选封面日内多模态去重（COVER_STYLE_INTRADAY_ENABLED；可用 --skip-cover-dedupe 跳过）
-            │     cover_style_intraday.apply_intraday_cover_style_dedupe → 写回 raw + *_cover_style_intraday.json
+            ├─ Step 2  可选封面日内 CLIP 去重（COVER_STYLE_INTRADAY_ENABLED；--skip-cover-dedupe 跳过）
+            │     apply_intraday_cover_style_dedupe → 写回 raw + *_cover_style_intraday.json
             │
-            ├─ Step 2a 原始落库
-            │     upsert_daily_creative_insights（仅 raw，无 analysis）
+            ├─ Step 2.0  可选 DOM 详情补全（--skip-dom-enrich 跳过）
+            ├─ 灵感准入统计（merge_inspiration_filter_stats，raw 不删条）
             │
-            ├─ Step 2b 素材主库
-            │     upsert_creative_library（全量去重归组）
+            ├─ Step 2a  原始落库：upsert_daily_creative_insights（仅 raw，无 analysis）
+            ├─ Step 2b  素材主库：upsert_creative_library（全量归组）
             │
-            ├─ Step 2c 多维去重报告
-            │     get_deduped_items_for_analysis → *_dedup_report.json；仅去重后进入分析
+            ├─ Step 2c  分析入队（非 get_deduped_items_for_analysis）
+            │     全量 items → 复用历史成功分析跳过 → 准入 + 待分析 → *_raw_pending_analysis.json
             │
-            ├─ Step 2d 增量分析准备
-            │     复用历史成功分析；pending → *_raw_pending_analysis.json
+            ├─ Step 3  灵感分析子进程：analyze_video_from_raw_json.py → 合并写入 analysis JSON
             │
-            ├─ Step 3  灵感分析（子进程；多模态经 llm_client：熔断 + 模型链）
-            │     scripts/analyze_video_from_raw_json.py
-            │     → video_analysis_*_raw.json（合并历史+本次；含 deduped_items 等）
+            ├─ Step 2.8  语义去重：_apply_semantic_dedup → exclude_from_cluster（可回写 analysis JSON）
+            ├─ Step 2.9  已投放特效库：apply_launched_effects_filter → exclude_* / material_tags / launched_effect_match
             │
-            ├─ Step 2.5 / 2.6 回写 DB
-            │     upsert_daily_creative_insights（带 analysis）+ upsert_daily_video_enhancer_filter_log
-            │     upsert_creative_library（同步 analysis）
+            ├─ Step 2.5  回写 DB：upsert_daily_creative_insights（带 analysis）+ upsert_daily_video_enhancer_filter_log
+            ├─ Step 2.6  creative_library 同步 analysis
+            ├─ Step 2.7  语义嵌入：call_embedding → upsert_analysis_embedding（analysis_embedding）
             │
-            ├─ Step 2.7 语义嵌入
-            │     llm_client.call_embedding → upsert_analysis_embedding（creative_library.analysis_embedding）
+            ├─ （若本次存在分析失败）提前 return；可跑验收（partial）
             │
-            ├─ Step 2.8 语义去重（聚类输入）
-            │     与历史嵌入比对 → exclude_from_cluster；写回 analysis JSON
+            ├─ Step 4  方向卡片：generate_video_enhancer_ua_suggestions_from_analysis.py
+            ├─ Step 5  飞书多维表同步：sync_raw_analysis_to_bitable_and_push_card.py（--no-card）
+            ├─ Step 6  飞书聊天卡片：push_video_enhancer_feishu_card_only.py
+            ├─ Step 7  推送表：upsert_daily_push_content（daily_ua_push_content）
+            ├─ Step 8  企业微信 + Google Sheet：push_video_enhancer_multichannel.py
             │
-            ├─ （若本次存在分析失败）提前 return，不跑 UA/推送
-            │
-            ├─ Step 4  方向卡片（子进程；llm_client.call_text + 历史卡片/趋势等上下文）
-            │     scripts/generate_video_enhancer_ua_suggestions_from_analysis.py
-            │     → ua_suggestion_*.json / .md
-            │
-            ├─ Step 5  飞书多维表同步（子进程，--no-card，不写聊天卡片）
-            │     scripts/sync_raw_analysis_to_bitable_and_push_card.py
-            │     --sync-target both（有 VIDEO_ENHANCER_CLUSTER_BITABLE_URL）| raw（无聚类表）
-            │     可选 --cluster-url
-            │
-            ├─ Step 6  飞书卡片推送（子进程）
-            │     scripts/push_video_enhancer_feishu_card_only.py
-            │
-            ├─ Step 7  推送表入库
-            │     upsert_daily_push_content（daily_ua_push_content）
-            │
-            └─ Step 8  企业微信 + Google Sheet（子进程）
-                  scripts/push_video_enhancer_multichannel.py
+            ├─ OpenRouter 用量：print_openrouter_key_meter（工作流结束，若启用）
+            └─ 验收：run_acceptance_after_workflow（workflow_video_enhancer_acceptance.py）
 ```
 
 **分步等价**：`workflow_video_enhancer_steps.py`：`crawl_store` → `cover_store`（可选与爬取拆分）→ `analyze_store` → `cluster_store` → `push_sync`。
 
-**代码量（约数，2026-04）**：`scripts/**/*.py` 合计约 **2.47 万行**（`find scripts -name '*.py' | xargs wc -l`）。与工作流强相关的单文件示例：`workflow_video_enhancer_full_pipeline.py` ~616 行、`video_enhancer_pipeline_db.py` ~1800 行、`llm_client.py` ~320 行。
+**代码量**：请以实际 `wc -l` 为准；工作流核心文件见 `workflow_video_enhancer_full_pipeline.py`、`video_enhancer_pipeline_db.py`、`llm_client.py`。
 
 ## 数据结构备忘
 
@@ -481,3 +582,6 @@ daily_ua_job.sh
 - `video_analyzed`: 视频分析数量
 - `image_analyzed`: 图片分析数量
 - `skipped`: 跳过数量（无视频也无图片）
+- `style_filter_match_summary`: 可为空串（套路筛选已移除后的列兼容）
+
+主流程合并后的 `analysis` JSON 还可能含：`pipeline_items`、`exclude_from_cluster`（2.8）、`launched_effect_match`（2.9）、`semantic_dedup_*` 等，以当日产物为准。
