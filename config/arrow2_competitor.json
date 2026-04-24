@@ -12,8 +12,8 @@
       "appid": "com.arrows.escape"
     },
     {
-      "keyword": "Arrow Puzzle - Tap Puzzle Games",
-      "match": "Arrow Puzzle - Tap Puzzle Games",
+      "keyword": "Arrow Puzzle: Tap Puzzle Games",
+      "match": "Arrow Puzzle: Tap Puzzle Games",
       "appid": "com.easybrain.arrow.puzzle.game"
     },
     {
@@ -25,6 +25,16 @@
       "keyword": "Arrows GO!",
       "match": "Arrows GO!",
       "appid": "com.oakever.arrows"
+    },
+    {
+      "keyword": "Snake Escape",
+      "match": "Snake Escape",
+      "appid": "com.snake.escape.maze.slither.puzzle"
+    },
+    {
+      "keyword": "Arrow Out",
+      "match": "Arrow Out",
+      "appid": "com.arrow.out"
     },
     {
       "keyword": "Arrowscapes™ - Arrows Puzzle",

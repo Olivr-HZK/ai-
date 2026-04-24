@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-04-15
+
+### Arrow2：`first_seen` 早于目标日则提前停滚、停 DOM 点卡
+
+- **`run_search_workflow.py`**：新增 `_oldest_first_seen_ymd_among_creatives`；**`_search_one_keyword`** 可选 `stop_scroll_if_oldest_first_seen_before_ymd`——napi 已合并行中最早 `first_seen`（北京日）**严格早于**该 ISO 日（与「仅该日 `first_seen`」目标一致）时不再向下滚。**`_click_cards_for_details`** 可选 `stop_after_detail_first_seen_before_ymd`：某次详情里 `first_seen` 早于该日则关弹层后不再点后续卡（新→旧）。**`run_arrow2_batch` → `_collect_keyword_crawl_result_arrow2_latest_dom`**：在 `filter_yesterday_only` 的 latest+DOM 路径上传入 `first_seen_ymd`。环境变量 **`ARROW2_FIRST_SEEN_EARLY_STOP=0`** 关闭上述早停（默认开）。
+- **`run_search_workflow.py`**：`_merge_prefer_dom_detail` 改为按 **展示估值工作流入库口径** 合并：latest+DOM 时，**`impression` / `all_exposure_value` / `heat` / `days_count` / `new_week_exposure_value` 固定优先取同 `ad_key` 的 napi 行**（与 exposure_top10 直接用列表 creative 入库一致）；detail 继续用于补正文、素材链接、首末次时间等详情字段。`preview_img_url`、`platform`、`advertiser_name`、`resource_urls` 等基础字段若 detail 缺失仍会回填，避免性能指标被 detail 覆盖或丢失。
+- **`test_arrow2_competitors.py`**：补传 `keyword_product` 到 `run_arrow2_batch`。此前终端 `print_arrow2_matched_creatives` 使用的 `all_creatives` 在 latest_yesterday 调试场景里只过了日期筛选、**未走 keyword→广告主匹配**，会短暂打印出 `Arrow Maze` / `Arrows Out` 等相邻广告主；而 raw 落盘前又在脚本里二次 `advertiser_matches_product`，导致“终端条数”和“raw 条数”不一致。现已统一为：**终端打印 / run 返回 / raw 落盘**都使用同一广告主过滤口径。
+
+---
+
 ## 文档与代码对齐说明（2026-04-13 修订）
 
 以下历史段落曾描述**已变更**行为，以本说明为准：

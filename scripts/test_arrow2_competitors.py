@@ -396,6 +396,7 @@ async def main() -> None:
             )
 
     keyword_appid = {_arrow2_search_query(e): (e.appid or "").strip() for e in entries}
+    keyword_product = {_arrow2_search_query(e): (e.product or "").strip() for e in entries}
 
     results = await run_arrow2_batch(
         keywords=keywords,
@@ -411,6 +412,7 @@ async def main() -> None:
         pull_spec_defaults=pull_spec_defaults if pull_spec_defaults else None,
         search_tab=tab,
         keyword_appid=keyword_appid,
+        keyword_product=keyword_product,
         debug_step_per_product=args.debug_step_products,
     )
 
