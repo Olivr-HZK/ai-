@@ -35,6 +35,7 @@ from run_search_workflow import (
     _beijing_dt_from_unix_sec,
     _beijing_ymd_from_first_seen,
     _do_setup,
+    _extract_creative_lists,
     _search_one_keyword,
     _try_click_search_tab,
 )
@@ -154,7 +155,34 @@ async def _run_one_product(
 
     page.on("response", _on_detail_response)
 
+    # ─── napi 列表拦截器（供 _search_one_keyword 的 batches_ref 填充） ───
+    async def _on_napi_response(response):
+        if not capture_state.get("enabled"):
+            return
+        url = response.url or ""
+        if "guangdada.net/napi" not in url or response.status != 200:
+            return
+        try:
+            body = await response.json()
+        except Exception:
+            return
+        lists = _extract_creative_lists(body)
+        for lst in lists:
+            if isinstance(lst, list) and lst:
+                batches_ref.append(lst)
+        if len(batches_ref) > 80:
+            batches_ref.pop(0)
+
+    page.on("response", _on_napi_response)
+
     try:
+        # ─── 确保页面滚回顶部 ───
+        try:
+            await page.evaluate("window.scrollTo(0, 0)")
+            await page.wait_for_timeout(500)
+        except Exception:
+            pass
+
         # ─── 搜索 + 滚动 ───
         print(f"  [1/3] 搜索关键词: {search_query!r}，滚动到出现 first_seen < {target_date}…")
         await _search_one_keyword(
@@ -177,7 +205,18 @@ async def _run_one_product(
 
         if card_count == 0:
             print("  [终止] 页面上无卡片")
-            return {"product": match_name, "target_date": target_date, "matched": [], "early_stop": False}
+            return {
+                "product": match_name,
+                "target_date": target_date,
+                "search_query": search_query,
+                "appid": appid,
+                "total_detail": 0,
+                "fs_filtered_out": 0,
+                "adv_filtered_out": 0,
+                "matched_count": 0,
+                "early_stop": False,
+                "matched": [],
+            }
 
         # ─── 逐张点击卡片，拦截 detail-v2 ───
         print(f"  [2/3] 逐张点击卡片，拦截 detail-v2（目标日={target_date}）…")
@@ -344,6 +383,7 @@ async def _run_one_product(
 
     finally:
         page.remove_listener("response", _on_detail_response)
+        page.remove_listener("response", _on_napi_response)
 
 
 async def main() -> None:
