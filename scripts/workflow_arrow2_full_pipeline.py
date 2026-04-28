@@ -3,6 +3,9 @@ Arrow2 全流程：爬取 → 写入 arrow2 主库 → 封面 CLIP 去重 →（
 默认**不跑**灵感分析，仅按 raw 同步多维表（含素材类型：视频/图片/试玩广告）；需 LLM 分析时加 --analyze。
 无聚类、无 Video Enhancer daily_creative_insights、无「我方已投」筛选。
 
+爬取统一使用 test_arrow2_first_card_fields.py（detail-v2 逐张点击 + ad_key 去重入库），
+支持 latest_yesterday 和 exposure_top10 两种 pull_spec。
+
 用法（项目根目录）：
   ./scripts/arrow2_exposure_workflow.sh
   ./scripts/daily_arrow2_workflow.sh all
@@ -12,7 +15,7 @@ Arrow2 全流程：爬取 → 写入 arrow2 主库 → 封面 CLIP 去重 →（
   .venv/bin/python scripts/workflow_arrow2_full_pipeline.py --date 2026-04-14 --pull-only latest_yesterday
   TARGET_DATE=2026-04-14 .venv/bin/python scripts/workflow_arrow2_full_pipeline.py --skip-sync
   .venv/bin/python scripts/workflow_arrow2_full_pipeline.py --test-db --wipe-db --products com.arrow.out --pull-only exposure_top10
-  .venv/bin/python scripts/workflow_arrow2_full_pipeline.py --debug --debug-dom-probe 5 --debug-dom-probe-only --skip-sync
+  .venv/bin/python scripts/workflow_arrow2_full_pipeline.py --debug
   # --test-db：写入 data/arrow2_pipeline_test.db，不碰默认 arrow2_pipeline.db
 """
 
@@ -56,28 +59,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--output-prefix",
         default="",
-        help="与 test_arrow2_competitors --output-prefix 一致；默认 workflow_arrow2_<date>",
+        help="输出文件前缀；默认 workflow_arrow2_<date>",
     )
     p.add_argument(
         "--pull-only",
         default="exposure_top10",
-        help="pull_specs 的 id，逗号分隔；默认 exposure_top10（30 天+展示估值+Top10%%）。"
-        "多类示例：latest_yesterday,exposure_top10",
-    )
-    p.add_argument(
-        "--all-pull-specs",
-        action="store_true",
-        help="不按 --pull-only 过滤，按 config 中全部 pull_specs 执行（含 latest_yesterday）",
+        help="pull_spec id：latest_yesterday 或 exposure_top10；默认 exposure_top10（30 天+展示估值+Top10%%）",
     )
     p.add_argument(
         "--products",
         default="",
-        help="传给 test_arrow2_competitors：逗号分隔，只跑这些产品（与 config 中 keyword / match / appid 匹配）",
-    )
-    p.add_argument(
-        "--skip-products",
-        default="",
-        help="传给 test_arrow2_competitors --skip-products；未传时读环境变量 ARROW2_SKIP_PRODUCTS",
+        help="逗号分隔，只跑这些产品（与 config 中 keyword / match / appid 匹配）",
     )
     p.add_argument("--skip-cover", action="store_true", help="跳过封面 CLIP 去重")
     p.add_argument(
@@ -89,7 +81,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--wipe-db",
         action="store_true",
-        help="Step1 爬取前传给 test_arrow2_competitors：清空 arrow2 SQLite 两表全部行",
+        help="Step1 爬取前清空 arrow2 SQLite 两表全部行",
     )
     p.add_argument(
         "--test-db",
@@ -100,19 +92,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--debug",
         action="store_true",
-        help="有头浏览器：传给 test_arrow2_competitors --debug",
-    )
-    p.add_argument(
-        "--debug-dom-probe",
-        type=int,
-        default=0,
-        metavar="N",
-        help="地区 DOM 探针：点当前列表前 N 张卡、打印并暂停；同 ARROW2_DEBUG_DOM_PROBE_FIRST",
-    )
-    p.add_argument(
-        "--debug-dom-probe-only",
-        action="store_true",
-        help="与 --debug-dom-probe 同用：多轮点卡前即结束（探针后返回）",
+        help="有头浏览器",
     )
     return p.parse_args()
 
@@ -137,27 +117,30 @@ def main() -> None:
     prefix = (args.output_prefix or "").strip() or f"workflow_arrow2_{td}"
     raw_path = DATA_DIR / f"{prefix}_raw.json"
 
-    cmd = [PY, str(PROJECT_ROOT / "scripts" / "test_arrow2_competitors.py"), "--output-prefix", prefix]
-    if args.all_pull_specs:
-        pass
-    elif (args.pull_only or "").strip():
-        cmd.extend(["--pull-only", args.pull_only.strip()])
+    pull_id = (args.pull_only or "").strip() or "exposure_top10"
+
+    # 统一使用 detail-v2 逐张点击爬虫
+    cmd = [
+        PY,
+        str(PROJECT_ROOT / "scripts" / "test_arrow2_first_card_fields.py"),
+        "--date", td,
+        "--no-pause",
+        "--output-prefix", prefix,
+        "--pull-only", pull_id,
+    ]
     if (args.products or "").strip():
         cmd.extend(["--products", args.products.strip()])
-    _skip = (args.skip_products or os.getenv("ARROW2_SKIP_PRODUCTS") or "").strip()
-    if _skip:
-        cmd.extend(["--skip-products", _skip])
-    if args.wipe_db:
-        cmd.append("--wipe-db")
+    else:
+        cmd.append("--all-products")
     if getattr(args, "debug", False):
         cmd.append("--debug")
-    ddp = int(getattr(args, "debug_dom_probe", 0) or 0)
-    if ddp > 0:
-        cmd.extend(["--debug-dom-probe", str(ddp)])
-    if getattr(args, "debug_dom_probe_only", False):
-        os.environ["ARROW2_DEBUG_DOM_PROBE_ONLY"] = "1"
 
-    print(f"[arrow2-pipeline] Step1 爬取: {' '.join(cmd)}")
+    if args.wipe_db:
+        from arrow2_pipeline_db import wipe_arrow2_sqlite_all_rows
+        wiped = wipe_arrow2_sqlite_all_rows()
+        print(f"[arrow2-pipeline] 清空 arrow2 两表: {wiped}")
+
+    print(f"[arrow2-pipeline] Step1 爬取 (pull_id={pull_id}): {' '.join(cmd)}")
     r = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     if r.returncode != 0:
         raise SystemExit(r.returncode)

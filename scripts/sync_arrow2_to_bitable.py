@@ -39,11 +39,18 @@ import argparse
 import json
 import re
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
 import requests
+import lark_oapi as lark
+from lark_oapi.api.drive.v1.model import (
+    UploadAllMediaRequest,
+    UploadAllMediaRequestBody,
+    UploadAllMediaResponse,
+)
 from guangdada_detail_url import try_build_url_spa
 from tiktok_video_resolve import is_playable_ads_creative, pick_playable_html_url
 from sync_raw_analysis_to_bitable_and_push_card import (
@@ -54,8 +61,7 @@ from sync_raw_analysis_to_bitable_and_push_card import (
     pick_video_urls,
     to_ms_from_date_str,
     to_ms_from_unix_sec,
-    upload_cover_image_with_fallback,
-    upload_playable_html_as_attachment,
+    upload_image_as_attachment,
     upload_video_as_attachment,
 )
 
@@ -78,6 +84,13 @@ def get_tenant_access_token() -> str:
     if data.get("code") != 0:
         raise RuntimeError(f"get tenant_access_token failed: {data}")
     return str(data["tenant_access_token"])
+
+
+def _get_lark_client() -> lark.Client:
+    """构建 lark.Client（复用 .env 中的 FEISHU_APP_ID / FEISHU_APP_SECRET）。"""
+    app_id = (os.getenv("FEISHU_APP_ID") or "").strip()
+    app_secret = (os.getenv("FEISHU_APP_SECRET") or "").strip()
+    return lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
 
 DEFAULT_ARROW2_BITABLE_URL = (
     "https://scnmrtumk0zm.feishu.cn/base/W8QMbUR1vaiUGUskOF2cwnXenBe"
@@ -338,6 +351,57 @@ def _arrow2_playable_html_attach_enabled() -> bool:
     return True
 
 
+def _arrow2_upload_cover_image_with_fallback(
+    creative: Dict[str, Any], app_token: str
+) -> str | None:
+    """上传封面图附件：优先 resource_urls.image_url，其次 preview_img_url（.image→.png）。"""
+    cover_url = ""
+    for r in creative.get("resource_urls") or []:
+        if isinstance(r, dict) and r.get("image_url"):
+            cover_url = str(r["image_url"])
+            break
+    if not cover_url:
+        cover_url = str(creative.get("preview_img_url") or "").strip()
+    cover_url = normalize_cover_image_url_for_bitable(cover_url)
+    if not cover_url:
+        return None
+    return upload_image_as_attachment(cover_url, app_token)
+
+
+def _arrow2_upload_playable_html_as_attachment(
+    html_url: str, app_token: str, *, log_errors: bool = True
+) -> str | None:
+    """下载试玩 HTML 直链后上传为飞书附件，返回 file_token。"""
+    if not html_url:
+        return None
+    try:
+        resp = requests.get(html_url, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        if log_errors:
+            print(f"[sync] 下载试玩 HTML 失败: {e}")
+        return None
+    filename = "playable.html"
+    body = (
+        UploadAllMediaRequestBody.builder()
+        .file_name(filename)
+        .parent_type("bitable")
+        .parent_node(app_token)
+        .size(len(resp.content))
+        .checksum("")
+        .extra("")
+        .file(BytesIO(resp.content))
+        .build()
+    )
+    req = UploadAllMediaRequest.builder().request_body(body).build()
+    resp_obj: UploadAllMediaResponse = _get_lark_client().drive.v1.media.upload_all(req)
+    if resp_obj.success() and resp_obj.data and getattr(resp_obj.data, "file_token", None):
+        return resp_obj.data.file_token
+    if log_errors:
+        print(f"[sync] 上传试玩 HTML 附件失败: code={getattr(resp_obj, 'code', '?')}")
+    return None
+
+
 def _try_arrow2_video_file_token(
     vu: str,
     vurls: List[str],
@@ -354,9 +418,7 @@ def _try_arrow2_video_file_token(
             cands.append(x)
     slice_c = cands[:3]
     for i, u in enumerate(slice_c):
-        ft = upload_video_as_attachment(
-            u, app_token, log_errors=(i == len(slice_c) - 1)
-        )
+        ft = upload_video_as_attachment(u, app_token)
         if ft:
             return ft
     return None
@@ -613,13 +675,13 @@ def _arrow2_row_fields_dict(
         link_video = (vu_base or "")[:2000]
 
     vurls = pick_video_urls(c) if mat_type == "视频" and link_video else ([link_video] if link_video else [])
-    cover_tok = upload_cover_image_with_fallback(c, app_token)
+    cover_tok = _arrow2_upload_cover_image_with_fallback(c, app_token)
     video_file_tok = None
     if mat_type == "视频":
         video_file_tok = _try_arrow2_video_file_token(link_video, vurls, app_token)
     playable_html_tok = None
     if mat_type == "试玩广告" and link_playable and _arrow2_playable_html_attach_enabled():
-        playable_html_tok = upload_playable_html_as_attachment(
+        playable_html_tok = _arrow2_upload_playable_html_as_attachment(
             link_playable, app_token, log_errors=True
         )
 

@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-04-28
+
+### Arrow2 爬虫统一替换为 `test_arrow2_first_card_fields.py`（detail-v2 逐张点击 + ad_key 去重入库）
+
+- **动机**：原 `test_arrow2_competitors.py` 走 napi + DOM 混合路径，数据源和口径较重。新爬虫 `test_arrow2_first_card_fields.py` 仅用 detail-v2 一种数据源，逐张点击卡片拦截详情，逻辑更简单可靠；入库时按 ad_key 全局去重。
+- **`scripts/test_arrow2_first_card_fields.py`**：
+  - 支持 **两种 pull_spec 模式**：
+    - `latest_yesterday`（默认）：7天+最新创意+滚动到 first_seen < target_date 停止+仅保留 first_seen=昨日+不限条数
+    - `exposure_top10`：30天+展示估值排序+Top10%人气标签+不限 first_seen+每词最多 30 条
+  - 新增 `--pull-only` 参数（默认 `latest_yesterday`），根据模式调整 `_do_setup` 参数（day_span / order_by / popularity_option_text）和 `_run_one_product` 的筛选逻辑
+  - `_run_one_product`：按 pull_spec 决定是否做 first_seen 筛选和早停；exposure_top10 模式下达到 `max_creatives_per_keyword` 即停止点击
+  - `_build_raw_payload`：按 pull_spec 填入对应的 `pull_id` / `day_span` / `order_by` / `pull_spec` 元数据；调用 `dedupe_arrow2_raw_items_by_ad_key()` 做 ad_key 去重
+  - 新增 import `_select_top_popularity_option`（用于 `_do_setup` 的 popularity_option_text 参数）
+  - `PULL_SPEC_EXPOSURE_TOP10` 常量：`{id: exposure_top10, day_span: 30, order_by: exposure, popularity_option_text: Top10%, max_creatives_per_keyword: 30}`
+- **`scripts/workflow_arrow2_full_pipeline.py`**：Step 1 统一调用 `test_arrow2_first_card_fields.py`，通过 `--pull-only` 传模式；移除对 `test_arrow2_competitors.py` 的调用；移除 `--all-pull-specs` / `--skip-products` / `--debug-dom-probe` / `--debug-dom-probe-only` 参数；`--wipe-db` 改为 pipeline 内直接调 `wipe_arrow2_sqlite_all_rows()`
+- **`scripts/daily_arrow2_workflow.sh`**：所有分支统一走 `test_arrow2_first_card_fields.py`，crawl-only / crawl-pause 的 exposure_top10 分支不再调 `test_arrow2_competitors.py`
+- **`scripts/arrow2_exposure_workflow.sh`**：注释更新，爬取脚本由 `test_arrow2_competitors` 改为 `test_arrow2_first_card_fields`
+
+---
+
 ## 2026-04-15
 
 ### Arrow2：`first_seen` 早于目标日则提前停滚、停 DOM 点卡
@@ -11,6 +31,11 @@
 - **`run_search_workflow.py`**：新增 `_oldest_first_seen_ymd_among_creatives`；**`_search_one_keyword`** 可选 `stop_scroll_if_oldest_first_seen_before_ymd`——napi 已合并行中最早 `first_seen`（北京日）**严格早于**该 ISO 日（与「仅该日 `first_seen`」目标一致）时不再向下滚。**`_click_cards_for_details`** 可选 `stop_after_detail_first_seen_before_ymd`：某次详情里 `first_seen` 早于该日则关弹层后不再点后续卡（新→旧）。**`run_arrow2_batch` → `_collect_keyword_crawl_result_arrow2_latest_dom`**：在 `filter_yesterday_only` 的 latest+DOM 路径上传入 `first_seen_ymd`。环境变量 **`ARROW2_FIRST_SEEN_EARLY_STOP=0`** 关闭上述早停（默认开）。
 - **`run_search_workflow.py`**：`_merge_prefer_dom_detail` 改为按 **展示估值工作流入库口径** 合并：latest+DOM 时，**`impression` / `all_exposure_value` / `heat` / `days_count` / `new_week_exposure_value` 固定优先取同 `ad_key` 的 napi 行**（与 exposure_top10 直接用列表 creative 入库一致）；detail 继续用于补正文、素材链接、首末次时间等详情字段。`preview_img_url`、`platform`、`advertiser_name`、`resource_urls` 等基础字段若 detail 缺失仍会回填，避免性能指标被 detail 覆盖或丢失。
 - **`test_arrow2_competitors.py`**：补传 `keyword_product` 到 `run_arrow2_batch`。此前终端 `print_arrow2_matched_creatives` 使用的 `all_creatives` 在 latest_yesterday 调试场景里只过了日期筛选、**未走 keyword→广告主匹配**，会短暂打印出 `Arrow Maze` / `Arrows Out` 等相邻广告主；而 raw 落盘前又在脚本里二次 `advertiser_matches_product`，导致“终端条数”和“raw 条数”不一致。现已统一为：**终端打印 / run 返回 / raw 落盘**都使用同一广告主过滤口径。
+- **`config/arrow2_competitor.json` + `run_search_workflow.py`**：`latest_yesterday` 去掉 `max_creatives_per_keyword: 30`，改为**默认不按每词 30 条截断**；同时 `_collect_keyword_crawl_result_arrow2_latest_dom` 在未显式设置环境变量 **`ARROW2_DOM_CLICK_MAX_CARDS`** 时，默认把**当前 DOM 已加载的卡片全部点击**（而不是固定 100 张内或更小 cap）。若后续想限条，显式设该环境变量为正整数即可。
+- **`run_search_workflow.py`**：按最新确认口径调整 latest+DOM 点卡停止条件。`_collect_keyword_crawl_result_arrow2_latest_dom` 不再把 napi 中“已出现早于目标日”作为**点卡阶段**的提前停止信号；改为：**先从页首逐张点击当前已加载卡片**，只有 `_click_cards_for_details` 在真正点开的某张详情里发现 `first_seen < target_date` 时，才停止后续点卡。并为单张 click 增加 **1 次重试**，降低“页面上有卡但本次没点开/没拦到 detail”导致的漏点。
+- **`test_arrow2_competitors.py`**：新增 **`--pause-per-product`**，主测试脚本现已统一支持：单产品（`--products ...`）、全产品（`--all-products`）、逐词暂停（`--debug-step-products`）、逐产品暂停（`--pause-per-product`）。开启 `--pause-per-product` 时自动等同 `--debug`，并默认关闭流程末尾额外暂停。
+- **`test_arrow2_yesterday_all_products_headed.py`**：不再维护独立实现，改为**兼容包装器**，内部直接转调：`test_arrow2_competitors.py --all-products --pull-only latest_yesterday --debug --pause-per-product`。后续单/全产品测试请优先使用主脚本。
+- **`run_search_workflow.py`（再调整）**：根据用户最新要求，`latest_yesterday` 已重新切回**卡片点击主路径**：`run_arrow2_batch` 对 `latest_yesterday` 调 `_collect_keyword_crawl_result_arrow2_latest_dom`，搜索/滚动后对**当前页面 DOM 卡片逐张点击**拿 detail；最终 `all_creatives` 以 **DOM 基础卡片 + detail 覆盖结果** 为主，不再把 `napi creative_list` 作为 latest_yesterday 的最终主结果源。`napi` 仍用于列表加载/滚动与兜底回退。调试输出新增：广告主匹配后全部卡、按 `first_seen=target_date` 筛后卡，以及逐张点击日志（含 `UTC+8` 时间）。
 
 ---
 

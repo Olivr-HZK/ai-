@@ -42,8 +42,8 @@
       "appid": "com.red.arrows.android"
     },
     {
-      "keyword": "Arrow Flow",
-      "match": "Arrow Flow",
+      "keyword": "Arrow Fever: Tap Out Puzzle",
+      "match": "Arrow Fever: Tap Out Puzzle",
       "appid": "com.hg.arrow"
     }
   ],
@@ -62,8 +62,7 @@
       "order_by": "latest",
       "filter_yesterday_only": true,
       "scroll_until_past_target_date": true,
-      "max_creatives_per_keyword": 30,
-      "comment": "7天+最新创意；持续滚动直到底层出现 first_seen/创建日早于目标昨日；再只保留 first_seen=昨日(UTC+8)。可设 scroll_until_past_target_date 为 false 恢复旧式停法"
+      "comment": "7天+最新创意；持续滚动直到底层出现 first_seen/创建日早于目标昨日；再只保留 first_seen=昨日(UTC+8)。默认不截断条数；可设 scroll_until_past_target_date 为 false 恢复旧式停法"
     }
   ],
   "filters": {
