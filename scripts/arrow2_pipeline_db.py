@@ -82,6 +82,10 @@ def arrow2_creative_ad_key(creative: Dict[str, Any]) -> str:
 def dedupe_arrow2_raw_items_by_ad_key(
     raw_items: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    按 ad_key 去重：后出现的覆盖先出现的（新数据替换旧数据）。
+    同时保留 seen_in_runs 合并信息，追踪该 ad_key 在哪些产品/搜索词/pull_id 下出现过。
+    """
     rows_in = len(raw_items)
     buckets: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
@@ -127,8 +131,19 @@ def dedupe_arrow2_raw_items_by_ad_key(
             order.append(key)
             continue
 
+        # 已存在：用新数据覆盖旧的 creative 和基础字段，合并 seen_in_runs
         b = buckets[key]
         b["_merge_count"] = int(b.get("_merge_count") or 1) + 1
+        # 新数据覆盖旧数据
+        b["creative"] = c
+        b["product"] = product
+        b["keyword"] = keyword
+        b["appid"] = str(row.get("appid") or "")
+        b["pull_id"] = pid
+        b["pull_spec"] = row.get("pull_spec")
+        b["day_span"] = row.get("day_span")
+        b["order_by"] = str(row.get("order_by") or "")
+        # 合并 seen_in_runs
         sigs: Any = b.setdefault("_run_sigs", set())
         if isinstance(sigs, set) and run_sig not in sigs:
             sigs.add(run_sig)

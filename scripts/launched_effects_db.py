@@ -36,7 +36,7 @@ CACHE_TTL_SEC = 24 * 3600
 
 
 def _enabled() -> bool:
-    v = (os.getenv("LAUNCHED_EFFECTS_ENABLED") or "1").strip().lower()
+    v = (os.getenv("LAUNCHED_EFFECTS_ENABLED") or "0").strip().lower()
     return v not in ("0", "false", "no", "off", "")
 
 

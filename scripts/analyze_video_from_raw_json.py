@@ -295,60 +295,67 @@ def _arrow2_fixed_footer() -> str:
     )
 
 
-def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str]:
-    """从分析正文移除末段固定行；解析素材类型、一句话说明；旧版【游戏素材标签】仍兼容为 llm_tags。"""
+def _ve_fixed_footer() -> str:
+    """VE（视频增强）流程的 footer：特效玩法 + 一句话说明。"""
+    return (
+        "\n7) 在全文最后**必须**追加两行（固定格式，便于系统解析，每行独立一行）：\n"
+        "【特效玩法】用一句中文（约10~20字）概括这条素材的核心特效/玩法/创意卖点；"
+        "参考风格：「圣诞华服换脸」「AI肌肉编辑」「老照片修复转动态」「黑白线稿漫画」「巨型猫咪特效」"
+        "等——先写中文玩法名，必要时加英文原名；禁止写投放建议，只描述素材本身做了什么。\n"
+        "【一句话说明】用约**10个汉字**一句话概括广告在播什么；无换行。"
+    )
+
+
+def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str]:
+    """从分析正文移除末段固定行；解析素材类型、一句话说明、特效玩法；旧版【游戏素材标签】仍兼容为 llm_tags。
+
+    返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner)。
+    """
     raw = (text or "").strip()
     if not raw:
-        return "", [], "", ""
+        return "", [], "", "", ""
     lines = raw.splitlines()
     n = len(lines)
     legacy_tags: list[str] = []
     category_raw = ""
     one_liner = ""
+    effect_one_liner = ""
     remove_idx: set[int] = set()
+
+    def _read_block(start: int, prefix: str) -> tuple[str, int]:
+        """从 start 行开始读取 prefix 行的内容（含同行或下一行续行），返回 (rest_text, next_i)。"""
+        s = lines[start].strip()
+        rest = s.replace(prefix, "", 1).strip()
+        remove_idx.add(start)
+        if not rest:
+            j = start + 1
+            buf: list[str] = []
+            while j < n:
+                nx = lines[j].strip()
+                if nx.startswith("【"):
+                    break
+                remove_idx.add(j)
+                if nx:
+                    buf.append(nx)
+                j += 1
+            rest = " ".join(buf).strip()
+            return rest, j
+        return rest, start + 1
 
     i = 0
     while i < n:
         s = lines[i].strip()
         if s.startswith("【素材类型】"):
-            rest = s.replace("【素材类型】", "", 1).strip()
-            remove_idx.add(i)
-            if not rest:
-                j = i + 1
-                buf: list[str] = []
-                while j < n:
-                    nx = lines[j].strip()
-                    if nx.startswith("【"):
-                        break
-                    remove_idx.add(j)
-                    if nx:
-                        buf.append(nx)
-                    j += 1
-                rest = " ".join(buf).strip()
-                i = j
-            else:
-                i += 1
+            rest, i = _read_block(i, "【素材类型】")
             category_raw = rest
             continue
         if s.startswith("【一句话说明】"):
-            rest = s.replace("【一句话说明】", "", 1).strip()[:40]
-            remove_idx.add(i)
-            if not rest:
-                j = i + 1
-                buf = []
-                while j < n:
-                    nx = lines[j].strip()
-                    if nx.startswith("【"):
-                        break
-                    remove_idx.add(j)
-                    if nx:
-                        buf.append(nx)
-                    j += 1
-                rest = " ".join(buf).strip()[:40]
-                i = j
-            else:
-                i += 1
-            one_liner = rest
+            rest, i = _read_block(i, "【一句话说明】")
+            one_liner = rest[:40]
+            continue
+        if s.startswith("【特效玩法】"):
+            rest, i = _read_block(i, "【特效玩法】")
+            effect_one_liner = rest[:60]
             continue
         if s.startswith("【游戏素材标签】"):
             rest = s.replace("【游戏素材标签】", "", 1).strip()
@@ -381,7 +388,7 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str]:
             cat = llm_tags[0]
 
     out_lines = [lines[k] for k in range(n) if k not in remove_idx]
-    return "\n".join(out_lines).strip(), llm_tags, cat, one_liner.strip()
+    return "\n".join(out_lines).strip(), llm_tags, cat, one_liner.strip(), effect_one_liner.strip()
 
 
 def _merge_material_tags_arrow2(creative: Dict[str, Any], llm_tags: list[str]) -> list[str]:
@@ -509,7 +516,7 @@ def _build_video_prompt(
     *,
     arrow2: bool = False,
 ) -> str:
-    foot = _arrow2_fixed_footer() if arrow2 else ""
+    foot = _arrow2_fixed_footer() if arrow2 else _ve_fixed_footer()
     return f"""
 以下是一条竞品 UA 视频素材：
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
@@ -543,7 +550,7 @@ def _build_image_prompt(
     *,
     arrow2: bool = False,
 ) -> str:
-    foot = _arrow2_fixed_footer() if arrow2 else ""
+    foot = _arrow2_fixed_footer() if arrow2 else _ve_fixed_footer()
     return f"""
 以下是一条竞品 UA 图片素材：
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
@@ -619,7 +626,7 @@ def _build_text_only_inspiration_prompt(
     *,
     arrow2: bool = False,
 ) -> str:
-    foot = _arrow2_fixed_footer() if arrow2 else ""
+    foot = _arrow2_fixed_footer() if arrow2 else _ve_fixed_footer()
     if creative_type == "video":
         return f"""
 多模态接口未返回可解析的有效分析。请**仅根据**以下元数据作合理推断（首句须点明：因未见到画面，以下为基于文案/数据的推测）；
@@ -855,6 +862,7 @@ def _analyze_one_item(
     material_tags: List[str] = []
     arrow2_material_category = ""
     ad_one_liner = ""
+    effect_one_liner = ""
     inspiration_enrich: str = "none"
     json_repair_applied = False
     work: str = str(raw_out or "")
@@ -917,10 +925,14 @@ def _analyze_one_item(
                 )
         analysis = _parse_inspiration_response(work)
         if arrow2:
-            analysis, llm_tags, arrow2_material_category, ad_one_liner = _strip_arrow2_footer_lines(
+            analysis, llm_tags, arrow2_material_category, ad_one_liner, _effect = _strip_arrow2_footer_lines(
                 analysis
             )
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
+        else:
+            analysis, _, _, ad_one_liner, effect_one_liner = _strip_arrow2_footer_lines(
+                analysis
+            )
         analysis, inspiration_enrich = _apply_empty_multimodal_enrichment(
             analysis,
             work,
@@ -949,10 +961,14 @@ def _analyze_one_item(
         ):
             inspiration_enrich = "json_repair"
         if inspiration_enrich != "none" and arrow2:
-            analysis, llm_tags, arrow2_material_category, ad_one_liner = _strip_arrow2_footer_lines(
+            analysis, llm_tags, arrow2_material_category, ad_one_liner, _effect = _strip_arrow2_footer_lines(
                 analysis
             )
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
+        if inspiration_enrich != "none" and not arrow2:
+            analysis, _, _, ad_one_liner, effect_one_liner = _strip_arrow2_footer_lines(
+                analysis
+            )
     else:
         analysis = work
 
@@ -999,6 +1015,7 @@ def _analyze_one_item(
         "material_tags": material_tags,
         "arrow2_material_category": arrow2_material_category,
         "ad_one_liner": ad_one_liner,
+        "effect_one_liner": effect_one_liner,
         "exclude_from_bitable": exclude_from_bitable,
         "exclude_from_cluster": exclude_from_cluster,
     }
@@ -1121,6 +1138,7 @@ def _analyze_arrow2_playable_item(
         "material_tags": material_tags,
         "arrow2_material_category": "",
         "ad_one_liner": "",
+        "effect_one_liner": "",
         "exclude_from_bitable": False,
         "exclude_from_cluster": False,
     }

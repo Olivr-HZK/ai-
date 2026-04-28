@@ -188,59 +188,68 @@ async def _select_top_popularity_option(
     log_prefix: str,
     *,
     log_quiet: bool = False,
+    max_retries: int = 3,
 ) -> bool:
     """
     展开「Top 创意 / 人气」类下拉，优先按 `popularity_option_text` 子串匹配某一项，否则用首项或放弃。
+    失败时重试最多 max_retries 次。
     """
-    ok = False
-    try:
-        selector = page.locator("div.ant-select:has(#filter_popularity_tag) .ant-select-selector").first
-        if await selector.count() > 0:
-            await selector.scroll_into_view_if_needed()
-            try:
-                await selector.click(timeout=3000)
-            except Exception:
-                await selector.click(timeout=3000, force=True)
-            await page.wait_for_timeout(400)
-            for opt_sel in [
-                "#filter_popularity_tag_list .ant-select-item",
-                "div[id='filter_popularity_tag_list'] .ant-select-item",
-                "div[role='listbox'] .ant-select-item",
-            ]:
-                cand = page.locator(opt_sel)
-                count = await cand.count()
-                if count == 0:
-                    continue
-                want = (popularity_option_text or "").strip()
-                for i in range(min(count, 30)):
-                    opt = cand.nth(i)
-                    try:
-                        txt = (await opt.inner_text() or "").strip()
-                    except Exception:
-                        continue
-                    if want and want in txt:
-                        try:
-                            await opt.click(timeout=3000)
-                        except Exception:
-                            await opt.click(timeout=3000, force=True)
-                        _p(f"{log_prefix}  已点 Top 创意 → {txt[:32]}…", log_quiet=log_quiet)
-                        ok = True
-                        break
-                    if not want and use_first_fallback and i == 0:
-                        try:
-                            await opt.click(timeout=3000)
-                        except Exception:
-                            await opt.click(timeout=3000, force=True)
-                        _p(f"{log_prefix}  已点 Top 创意首项: {txt[:32]}", log_quiet=log_quiet)
-                        ok = True
-                        break
-                if ok:
-                    break
-    except Exception:
+    for attempt in range(max_retries):
         ok = False
-    if popularity_option_text and not ok and not log_quiet:
+        try:
+            selector = page.locator("div.ant-select:has(#filter_popularity_tag) .ant-select-selector").first
+            if await selector.count() > 0:
+                await selector.scroll_into_view_if_needed()
+                try:
+                    await selector.click(timeout=3000)
+                except Exception:
+                    await selector.click(timeout=3000, force=True)
+                await page.wait_for_timeout(400)
+                for opt_sel in [
+                    "#filter_popularity_tag_list .ant-select-item",
+                    "div[id='filter_popularity_tag_list'] .ant-select-item",
+                    "div[role='listbox'] .ant-select-item",
+                ]:
+                    cand = page.locator(opt_sel)
+                    count = await cand.count()
+                    if count == 0:
+                        continue
+                    want = (popularity_option_text or "").strip()
+                    for i in range(min(count, 30)):
+                        opt = cand.nth(i)
+                        try:
+                            txt = (await opt.inner_text() or "").strip()
+                        except Exception:
+                            continue
+                        if want and want in txt:
+                            try:
+                                await opt.click(timeout=3000)
+                            except Exception:
+                                await opt.click(timeout=3000, force=True)
+                            _p(f"{log_prefix}  已点 Top 创意 → {txt[:32]}…", log_quiet=log_quiet)
+                            ok = True
+                            break
+                        if not want and use_first_fallback and i == 0:
+                            try:
+                                await opt.click(timeout=3000)
+                            except Exception:
+                                await opt.click(timeout=3000, force=True)
+                            _p(f"{log_prefix}  已点 Top 创意首项: {txt[:32]}", log_quiet=log_quiet)
+                            ok = True
+                            break
+                    if ok:
+                        break
+        except Exception:
+            ok = False
+        if ok:
+            return True
+        if attempt < max_retries - 1:
+            _p(f"{log_prefix}Top 创意下拉第 {attempt + 1} 次失败，重试…", log_quiet=log_quiet)
+            await page.wait_for_timeout(1000)
+
+    if popularity_option_text and not log_quiet:
         print(
-            f"{log_prefix}Top 创意下拉拉取 {popularity_option_text!r} 失败，请人工核对页面",
+            f"{log_prefix}Top 创意下拉拉取 {popularity_option_text!r} 失败（已重试 {max_retries} 次），请人工核对页面",
             file=sys.stderr,
         )
     return ok
@@ -301,6 +310,55 @@ def _beijing_ymd_from_first_seen(ts: object) -> str | None:
         return None
 
 
+def _beijing_dt_from_unix_sec(ts: object) -> str | None:
+    try:
+        t = int(ts)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    try:
+        tz = timezone(timedelta(hours=8))
+        return datetime.fromtimestamp(t, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _beijing_unix_sec_from_ymd(ymd: str, *, end_of_day: bool = False) -> int | None:
+    s = (ymd or "").strip()[:10]
+    if not s:
+        return None
+    try:
+        dt = datetime.strptime(s, "%Y-%m-%d")
+    except Exception:
+        return None
+    tz = timezone(timedelta(hours=8))
+    if end_of_day:
+        dt = dt.replace(hour=23, minute=59, second=59, tzinfo=tz)
+    else:
+        dt = dt.replace(hour=0, minute=0, second=0, tzinfo=tz)
+    return int(dt.timestamp())
+
+
+def _parse_dom_date_range_text(date_range_text: object) -> tuple[str | None, str | None]:
+    raw = str(date_range_text or "").strip()
+    if not raw:
+        return None, None
+    parts = re.split(r"\s*[~～]\s*", raw, maxsplit=1)
+    if len(parts) != 2:
+        return None, None
+
+    def _norm_one(s: str) -> str | None:
+        s2 = re.sub(r"[^\d\-/\.]", "", s.strip())[:10]
+        if not s2:
+            return None
+        s2 = s2.replace("/", "-").replace(".", "-")
+        try:
+            return datetime.strptime(s2, "%Y-%m-%d").date().isoformat()
+        except Exception:
+            return None
+
+    return _norm_one(parts[0]), _norm_one(parts[1])
+
+
 def _oldest_first_seen_ymd_among_creatives(creatives: list) -> str | None:
     """合并列表中每条 first_seen 的北京自然日，取最早（最旧）一日；用于「最新」列表已滚过目标日边界时提前停滚。"""
     ymds: list[str] = []
@@ -336,10 +394,8 @@ def _arrow2_apply_post_filters(
     keyword_product: dict[str, str] | None,
     first_seen_ymd: str,
 ) -> list[dict]:
-    """仅 napi 路径：拉取后按 first_seen 日、广告主、max_c 截断。"""
+    """仅 napi 路径：拉取后先按广告主，再按 first_seen 日，最后 max_c 截断。"""
     c = [x for x in all_creatives if isinstance(x, dict)]
-    if spec.get("filter_yesterday_only") and first_seen_ymd:
-        c = _filter_creatives_first_seen_day(c, first_seen_ymd)
     prod = (keyword_product or {}).get(keyword) or (keyword_product or {}).get((keyword or "").strip())
     if prod and str(prod).strip():
         from workflow_guangdada_competitor_yesterday_creatives import advertiser_matches_product  # noqa: PLC0415
@@ -350,6 +406,8 @@ def _arrow2_apply_post_filters(
             for x in c
             if advertiser_matches_product(str(x.get("advertiser_name") or x.get("page_name") or ""), p2)
         ]
+    if spec.get("filter_yesterday_only") and first_seen_ymd:
+        c = _filter_creatives_first_seen_day(c, first_seen_ymd)
     mdef = 10**6
     try:
         mc = int(spec.get("max_creatives_per_keyword") or os.getenv("ARROW2_MAX_CREATIVES_PER_KEYWORD") or 0) or 0
@@ -358,6 +416,57 @@ def _arrow2_apply_post_filters(
     if mc and mc < mdef:
         c = c[:mc]
     return c
+
+
+def _arrow2_filter_stage_views(
+    all_creatives: list[dict],
+    spec: dict[str, Any],
+    keyword: str,
+    keyword_product: dict[str, str] | None,
+    first_seen_ymd: str,
+) -> tuple[list[dict], list[dict]]:
+    """返回两段视图：先广告主匹配，再在其基础上按 first_seen 日过滤。"""
+    base = [x for x in all_creatives if isinstance(x, dict)]
+    prod = (keyword_product or {}).get(keyword) or (keyword_product or {}).get((keyword or "").strip())
+    adv_matched = list(base)
+    if prod and str(prod).strip():
+        from workflow_guangdada_competitor_yesterday_creatives import advertiser_matches_product  # noqa: PLC0415
+
+        p2 = str(prod).strip()
+        adv_matched = [
+            x
+            for x in adv_matched
+            if advertiser_matches_product(str(x.get("advertiser_name") or x.get("page_name") or ""), p2)
+        ]
+    time_filtered = list(adv_matched)
+    if spec.get("filter_yesterday_only") and first_seen_ymd:
+        time_filtered = _filter_creatives_first_seen_day(time_filtered, first_seen_ymd)
+    return adv_matched, time_filtered
+
+
+def print_arrow2_filter_stage_creatives(
+    keyword: str,
+    label: str,
+    creatives: list[dict],
+    *,
+    max_items: int = 60,
+) -> None:
+    if not isinstance(creatives, list):
+        return
+    n = len(creatives)
+    print(f"[arrow2] {label}: 词={keyword!r} 条数={n}（见下，最多列 {min(max_items, n)}/{n} 条）")
+    for i, c in enumerate(creatives[: max(0, int(max_items))], 1):
+        if not isinstance(c, dict):
+            continue
+        ak = c.get("ad_key") or ""
+        fs = c.get("first_seen")
+        fs_utc8 = _beijing_dt_from_unix_sec(fs) or "?"
+        adv = (c.get("advertiser_name") or c.get("page_name") or "")[:48]
+        t = (c.get("title") or c.get("body") or "")[:48]
+        print(
+            f"  {i:>2}. ad_key={str(ak)[:24]} first_seen={fs} utc+8={fs_utc8!r} "
+            f"广告主={adv!r} 标题={t!r}"
+        )
 
 
 def _env_truthy(name: str, default: bool) -> bool:
@@ -377,6 +486,210 @@ def _p(
     if log_quiet:
         return
     print(msg, file=file, end=end or "\n")
+
+
+def _arrow2_enrich_detail_verbose() -> bool:
+    return _env_truthy("ARROW2_ENRICH_DETAIL_VERBOSE", default=False)
+
+
+def _arrow2_geo_still_empty(creative: dict[str, Any]) -> bool:
+    if not isinstance(creative, dict):
+        return True
+    for key in ("countries", "country", "country_code", "country_codes", "areas", "area"):
+        v = creative.get(key)
+        if isinstance(v, list) and v:
+            return False
+        if isinstance(v, dict) and v:
+            return False
+        if str(v or "").strip():
+            return False
+    return True
+
+
+def _detail_rows_from_body(body: object) -> list[dict]:
+    out: list[dict] = []
+    seen_obj_ids: set[int] = set()
+    if isinstance(body, dict):
+        if body.get("ad_key"):
+            out.append(body)
+            seen_obj_ids.add(id(body))
+        for key in ("data", "result", "creative", "info", "item", "detail"):
+            sub = body.get(key)
+            if isinstance(sub, dict) and sub.get("ad_key") and id(sub) not in seen_obj_ids:
+                out.append(sub)
+                seen_obj_ids.add(id(sub))
+    for lst in _extract_creative_lists(body):
+        if not isinstance(lst, list):
+            continue
+        for item in lst:
+            if isinstance(item, dict) and item.get("ad_key") and id(item) not in seen_obj_ids:
+                out.append(item)
+                seen_obj_ids.add(id(item))
+    return out
+
+
+def _pick_best_detail_row(detail_rows: list[dict], creative: dict[str, Any]) -> dict | None:
+    if not detail_rows:
+        return None
+    ad_key = str(creative.get("ad_key") or creative.get("creative_id") or creative.get("id") or "").strip()
+    if ad_key:
+        for row in detail_rows:
+            if str(row.get("ad_key") or "").strip() == ad_key:
+                return row
+    preview = str(creative.get("preview_img_url") or "").split("?")[0]
+    if preview:
+        for row in detail_rows:
+            prev2 = str(row.get("preview_img_url") or "").split("?")[0]
+            if prev2 and prev2 == preview:
+                return row
+    return detail_rows[0]
+
+
+async def _fetch_detail_v2(page, creative: dict[str, Any], *, app_type: int) -> dict | None:
+    ad_key = str(
+        creative.get("ad_key") or creative.get("creative_id") or creative.get("id") or creative.get("creativeId") or ""
+    ).strip()
+    search_flag = creative.get("search_flag")
+    if not ad_key or search_flag in (None, ""):
+        return None
+    try:
+        sf = int(search_flag)
+    except Exception:
+        return None
+    try:
+        at = int(app_type)
+    except Exception:
+        return None
+    url = f"/napi/v1/creative/detail-v2?ad_key={ad_key}&app_type={at}&search_flag={sf}"
+    try:
+        body = await page.evaluate(
+            """
+async ({ url }) => {
+  const resp = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      'accept': 'application/json, text/plain, */*'
+    }
+  });
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    data = null;
+  }
+  return { ok: resp.ok, status: resp.status, url: resp.url, body: data };
+}
+""",
+            {"url": url},
+        )
+    except Exception:
+        return None
+    if not isinstance(body, dict):
+        return None
+    if not body.get("ok"):
+        return None
+    return body
+
+
+async def _fetch_detail_v2_best_attempt(page, creative: dict[str, Any]) -> dict | None:
+    if not isinstance(creative, dict):
+        return None
+    candidates: list[int] = []
+    raw_app_type = creative.get("app_type")
+    try:
+        if raw_app_type not in (None, ""):
+            candidates.append(int(raw_app_type))
+    except Exception:
+        pass
+    for v in (1, 2):
+        if v not in candidates:
+            candidates.append(v)
+    for app_type in candidates:
+        body = await _fetch_detail_v2(page, creative, app_type=app_type)
+        if isinstance(body, dict):
+            return body
+    return None
+
+
+def _merge_detail_v2_geo_into_creative(creative: dict[str, Any], body: dict[str, Any]) -> bool:
+    if not isinstance(creative, dict) or not isinstance(body, dict):
+        return False
+    row = _pick_best_detail_row(_detail_rows_from_body(body.get("body") if "body" in body else body), creative)
+    if not isinstance(row, dict):
+        return False
+    changed = False
+    for key in ("countries", "country", "country_code", "country_codes", "areas", "area"):
+        v = row.get(key)
+        if v in (None, "", [], {}):
+            continue
+        creative[key] = v
+        changed = True
+    return changed
+
+
+def _print_dom_detail_probe(idx: int, meta: dict[str, str], detail_rows: list[dict]) -> None:
+    """调试：只点少量卡片时，打印 detail 原始字段，便于人工对齐字段语义。"""
+    print(
+        f"    [DOM探针] 第 {idx + 1} 张卡片"
+        f" 广告主={str(meta.get('advertiser') or '')[:50]!r}"
+        f" 标题={str(meta.get('title') or '')[:80]!r}",
+        flush=True,
+    )
+    if not detail_rows:
+        print("    [DOM探针] 本张未拿到 detail JSON", flush=True)
+        return
+
+    preferred_time_keys = [
+        "first_seen",
+        "created_at",
+        "last_seen",
+        "start_time",
+        "end_time",
+        "create_time",
+        "update_time",
+        "launch_time",
+        "online_time",
+        "online_at",
+    ]
+    for j, row in enumerate(detail_rows[:3], 1):
+        if not isinstance(row, dict):
+            continue
+        keys = sorted(str(k) for k in row.keys())
+        time_fields: dict[str, object] = {}
+        for k in preferred_time_keys:
+            if k in row:
+                time_fields[k] = row.get(k)
+        print(
+            f"    [DOM探针] detail#{j} ad_key={str(row.get('ad_key') or '')[:32]!r} "
+            f"keys={keys[:80]}{' ...' if len(keys) > 80 else ''}",
+            flush=True,
+        )
+        print(
+            f"    [DOM探针] detail#{j} time_fields={json.dumps(time_fields, ensure_ascii=False)}",
+            flush=True,
+        )
+        sample = {
+            "ad_key": row.get("ad_key"),
+            "advertiser_name": row.get("advertiser_name"),
+            "page_name": row.get("page_name"),
+            "title": row.get("title"),
+            "body": row.get("body"),
+            "first_seen": row.get("first_seen"),
+            "created_at": row.get("created_at"),
+            "last_seen": row.get("last_seen"),
+            "days_count": row.get("days_count"),
+            "heat": row.get("heat"),
+            "all_exposure_value": row.get("all_exposure_value"),
+            "impression": row.get("impression"),
+            "platform": row.get("platform"),
+            "preview_img_url": row.get("preview_img_url"),
+            "resource_urls": row.get("resource_urls"),
+        }
+        print(
+            f"    [DOM探针] detail#{j} sample={json.dumps(sample, ensure_ascii=False, default=str)}",
+            flush=True,
+        )
 
 
 async def _await_post_login_shell(page) -> None:
@@ -409,13 +722,18 @@ def print_arrow2_matched_creatives(keyword: str, filtered: list, max_items: int 
         ak = c.get("ad_key") or ""
         src = c.get("_source", "")
         fs = c.get("first_seen")
+        fs_utc8 = _beijing_dt_from_unix_sec(fs) or "?"
         adv = (c.get("advertiser_name") or c.get("page_name") or "")[:48]
         t = (c.get("title") or c.get("body") or "")[:48]
         imp = c.get("impression", "?")
         exp = c.get("all_exposure_value", "?")
         heat = c.get("heat", "?")
+        days = c.get("days_count", "?")
+        platform = c.get("platform", "?")
+        duration = c.get("video_duration", "?")
         print(
-            f"  {i:>2}. ad_key={str(ak)[:24]} first_seen={fs} src={src!r} "
+            f"  {i:>2}. ad_key={str(ak)[:24]} first_seen={fs} utc+8={fs_utc8!r} src={src!r} "
+            f"平台={platform!r} 天数={days!r} 时长={duration!r} "
             f"人气={exp!r} 估值={imp!r} 热度={heat!r} 广告主={adv!r} 标题={t!r}"
         )
 
@@ -432,9 +750,10 @@ def _print_debug_step_cards(keyword: str, all_c: list, max_n: int) -> None:
         aev = c.get("all_exposure_value")
         heat = c.get("heat")
         fs = c.get("first_seen")
+        fs_utc8 = _beijing_dt_from_unix_sec(fs) or "?"
         print(
             f"  {i}. ad_key={ak} 人气={aev!r} 估值={im!r} 热度={heat!r} "
-            f"first_seen={fs!r} 标题={title!r}"
+            f"first_seen={fs!r} utc+8={fs_utc8!r} 标题={title!r}"
         )
 
 
@@ -448,8 +767,9 @@ def _print_pause_yesterday_summary(all_c: list) -> None:
         imp = c.get("impression", "?")
         heat = c.get("heat", "?")
         fs = c.get("first_seen", "?")
+        fs_utc8 = _beijing_dt_from_unix_sec(fs) or "?"
         print(
-            f"  {i} ad_key={c.get('ad_key')!r} first_seen={fs!r} "
+            f"  {i} ad_key={c.get('ad_key')!r} first_seen={fs!r} utc+8={fs_utc8!r} "
             f"人气={exp} 估值={imp} 热度={heat}"
         )
 
@@ -1397,14 +1717,20 @@ async def _search_one_keyword(
 
 async def _extract_dom_cards(page, log_quiet: bool = False) -> list[dict]:
     """
-    从页面 DOM 中提取所有可见创意卡片的基础信息，作为 napi 捕获的补充。
-    对于 napi 未返回的卡片（如 YouTube 0s 外链素材），生成一个 _source="dom" 的 partial 对象。
-    用 preview_img_url 去重；napi 已有的优先，DOM 只补充缺失的。
+    从页面 DOM 中提取所有可见创意卡片的基础信息。
+    这些字段尽量与 Arrow2 当前入库口径对齐：`preview_img_url / advertiser_name /
+    page_name / platform / video_duration / first_seen / created_at / last_seen /
+    days_count / heat / all_exposure_value / impression / title / body / resource_urls`。
+    若列表卡片只有日期区间标签，则先按北京自然日推导首末次时间；点开详情后再由 detail 精确覆盖。
     """
     try:
         cards = await page.evaluate(r"""
 () => {
   const results = [];
+  const toInt = (txt) => {
+    const n = String(txt || '').replace(/[^0-9]/g, '');
+    return n ? parseInt(n, 10) : 0;
+  };
   const cardEls = document.querySelectorAll('.shadow-common-light.bg-white');
   cardEls.forEach((card, cardIdx) => {
     try {
@@ -1442,12 +1768,19 @@ async def _extract_dom_cards(page, log_quiet: bool = False) -> list[dict]:
       // 标签
       const tagEls = Array.from(card.querySelectorAll('.ant-tag'));
       const tags = tagEls.map(t => t.textContent.trim());
-      const dateRange = tags.find(t => t.includes('~')) || '';
+      const dateRange = tags.find(t => t.includes('~') || t.includes('～')) || '';
       const isRelaunch = tags.some(t => t === '重投');
 
-      // 指标值（人气值/投放天数/最后看见）
+      // 标题/文案：列表层只取可见文本，详情再覆盖
+      const titleLike =
+        (card.querySelector('.line-clamp-2')?.textContent || '').trim()
+        || (card.querySelector('.line-clamp-1')?.textContent || '').trim()
+        || '';
+
+      // 指标值（列表通常为 估值/投放天数/最后看见）
       const metricBolds = Array.from(card.querySelectorAll('.font-semibold')).map(el => el.textContent.trim());
-      const impression = metricBolds[0] ? parseInt(metricBolds[0].replace(/[^0-9]/g, '')) || 0 : 0;
+      const impression = metricBolds[0] ? toInt(metricBolds[0]) : 0;
+      const daysCount = metricBolds[1] ? toInt(metricBolds[1]) : 0;
 
       // 展示估值/热度标签
       const smallTags = Array.from(card.querySelectorAll('.rounded-full')).map(el => el.textContent.trim());
@@ -1479,7 +1812,10 @@ async def _extract_dom_cards(page, log_quiet: bool = False) -> list[dict]:
         advertiser_name: advertiserName || bottomAdv,
         page_name: bottomAdv,
         platform: platform,
+        title: titleLike,
+        body: '',
         video_duration: videoDuration,
+        days_count: daysCount,
         heat: heat,
         all_exposure_value: allExposure,
         impression: impression,
@@ -1492,7 +1828,32 @@ async def _extract_dom_cards(page, log_quiet: bool = False) -> list[dict]:
   return results;
 }
 """)
-        return cards if isinstance(cards, list) else []
+        if not isinstance(cards, list):
+            return []
+        out: list[dict] = []
+        for raw in cards:
+            if not isinstance(raw, dict):
+                continue
+            item = dict(raw)
+            start_ymd, end_ymd = _parse_dom_date_range_text(item.get("date_range_text"))
+            fs = item.get("first_seen")
+            cr = item.get("created_at")
+            ls = item.get("last_seen")
+            if fs is None and start_ymd:
+                item["first_seen"] = _beijing_unix_sec_from_ymd(start_ymd)
+                item["_dom_first_seen_derived"] = True
+            if cr is None and start_ymd:
+                item["created_at"] = _beijing_unix_sec_from_ymd(start_ymd)
+            if ls is None and end_ymd:
+                item["last_seen"] = _beijing_unix_sec_from_ymd(end_ymd, end_of_day=True)
+                item["_dom_last_seen_derived"] = True
+            item.setdefault("resource_urls", [])
+            item.setdefault("title", "")
+            item.setdefault("body", "")
+            item.setdefault("video_duration", 0)
+            item.setdefault("days_count", 0)
+            out.append(item)
+        return out
     except Exception as e:
         if not log_quiet:
             print(f"    [DOM补充] 提取失败: {e}", file=sys.stderr)
@@ -1504,6 +1865,7 @@ async def _click_cards_for_details(
     known_ad_keys: set,
     max_cards: int = 80,
     target_previews: set | None = None,
+    napi_rows_by_preview: dict[str, list[dict]] | None = None,
     *,
     log_quiet: bool = False,
     stop_after_detail_first_seen_before_ymd: str | None = None,
@@ -1512,10 +1874,46 @@ async def _click_cards_for_details(
     逐一点击页面上的创意卡片，拦截详情响应，提取完整的 creative 数据。
     target_previews: 若指定，只点击 preview_img_url 匹配的卡片；否则点击所有。
     stop_after_detail_first_seen_before_ymd: 当详情 JSON 中 first_seen 的北京日**严格早于**该 ISO
-    日时（与「仅 target 日」一致），在关闭弹层后**不再**点击后续卡片（列表自新到旧，后面更旧）。
+    日时（与「仅 target 日」一致），在关闭弹层后**不再**点击后续卡片（从页首向下逐张点，命中更旧即停）。
     """
     enriched: list[dict] = []
     detail_holder: list[dict] = []
+    try:
+        probe_first = int((os.environ.get("ARROW2_DEBUG_DOM_PROBE_FIRST") or "").strip() or "0")
+    except Exception:
+        probe_first = 0
+    probe_only = _env_truthy("ARROW2_DEBUG_DOM_PROBE_ONLY", default=False)
+    probe_mode = probe_first > 0
+    log_each_click = (
+        probe_mode
+        or _env_truthy("ARROW2_LOG_EACH_CLICK", default=False)
+        or _env_truthy("DEBUG", default=False)
+    )
+
+    async def _card_debug_meta(idx: int) -> dict[str, str]:
+        try:
+            meta = await page.evaluate(f"""
+() => {{
+  const cards = document.querySelectorAll('.shadow-common-light.bg-white');
+  const card = cards[{idx}];
+  if (!card) return {{}};
+  const txt = (sel) => {{
+    const el = card.querySelector(sel);
+    return el ? (el.textContent || '').trim() : '';
+  }};
+  const imgs = Array.from(card.querySelectorAll('img'));
+  const preview = imgs.find(img => img.src && img.src.includes('sp_opera'));
+  const titleLike = txt('.line-clamp-2') || txt('.line-clamp-1') || txt('.font-semibold') || '';
+  return {{
+    advertiser: txt('.leading-\\\\[18px\\\\] span span') || txt('.text-xs .whitespace-nowrap span span'),
+    title: titleLike,
+    preview: preview ? preview.src.split('?')[0] : '',
+  }};
+}}
+""")
+            return meta if isinstance(meta, dict) else {}
+        except Exception:
+            return {}
 
     async def _on_detail_response(response):
         url = response.url or ""
@@ -1543,6 +1941,8 @@ async def _click_cards_for_details(
             "() => document.querySelectorAll('.shadow-common-light.bg-white').length"
         )
         card_count = min(int(card_count or 0), max_cards)
+        if probe_first > 0:
+            card_count = min(card_count, probe_first)
         _p(
             f"    [点击详情] 页面卡片总数={card_count}，最多点击 {card_count} 张",
             log_quiet=log_quiet,
@@ -1551,6 +1951,7 @@ async def _click_cards_for_details(
         for idx in range(card_count):
             detail_holder.clear()
             try:
+                meta = await _card_debug_meta(idx) if log_each_click else {}
                 # 若指定了 target_previews，先检查该卡片的 preview 是否在目标集内
                 if target_previews:
                     card_preview = await page.evaluate(f"""
@@ -1565,9 +1966,59 @@ async def _click_cards_for_details(
 """)
                     if not card_preview or card_preview not in target_previews:
                         continue
+                else:
+                    card_preview = str(meta.get("preview") or "")
 
-                # 重新查询防止 DOM 变动导致 stale
-                clicked = await page.evaluate(f"""
+                # 优先走主动 detail-v2：若当前卡片可用 preview 对到列表 napi 的 ad_key/search_flag，
+                # 直接请求 detail-v2，不再依赖 card.click() 是否恰好触发详情接口。
+                active_detail_rows: list[dict] = []
+                if napi_rows_by_preview and card_preview:
+                    cand_rows = napi_rows_by_preview.get(card_preview) or []
+                    if cand_rows:
+                        for cand in cand_rows[:3]:
+                            body = await _fetch_detail_v2_best_attempt(page, cand)
+                            if not isinstance(body, dict):
+                                continue
+                            got = _detail_rows_from_body(body.get("body") if "body" in body else body)
+                            best = _pick_best_detail_row(got, cand)
+                            if isinstance(best, dict):
+                                active_detail_rows.append(best)
+                        if active_detail_rows:
+                            detail_holder[:] = active_detail_rows
+                            if log_each_click:
+                                rows = []
+                                for c0 in active_detail_rows:
+                                    ak0 = str(c0.get("ad_key") or "")[:16]
+                                    d0 = _beijing_ymd_from_first_seen(c0.get("first_seen")) or "?"
+                                    dt0 = _beijing_dt_from_unix_sec(c0.get("first_seen")) or "?"
+                                    adv0 = str(c0.get("advertiser_name") or c0.get("page_name") or "")[:40]
+                                    rows.append(f"{ak0}@{d0} {dt0}:{adv0}")
+                                print(
+                                    f"    [detail-v2] 第 {idx + 1}/{card_count} 张主动拉取成功: {rows if rows else '[空]'}",
+                                    flush=True,
+                                )
+                            if probe_first > 0:
+                                _print_dom_detail_probe(
+                                    idx,
+                                    meta,
+                                    [x for x in active_detail_rows if isinstance(x, dict)],
+                                )
+
+                # 重新查询防止 DOM 变动导致 stale；单张最多重试 2 次，避免“页面上有但本次没点开”。
+                clicked = False
+                for click_attempt in range(1, 3):
+                    if detail_holder:
+                        break
+                    detail_holder.clear()
+                    if log_each_click:
+                        adv = str(meta.get("advertiser") or "")[:50]
+                        title = str(meta.get("title") or "")[:60]
+                        print(
+                            f"    [点击详情] 第 {idx + 1}/{card_count} 张，第 {click_attempt} 次 "
+                            f"广告主={adv!r} 标题={title!r}",
+                            flush=True,
+                        )
+                    clicked = await page.evaluate(f"""
 () => {{
   const cards = document.querySelectorAll('.shadow-common-light.bg-white');
   const card = cards[{idx}];
@@ -1576,14 +2027,51 @@ async def _click_cards_for_details(
   return true;
 }}
 """)
-                if not clicked:
-                    continue
-
-                # 等待详情响应（最多 4s）
-                for _ in range(16):
-                    if detail_holder:
+                    if not clicked:
                         break
-                    await page.wait_for_timeout(250)
+
+                    # 等待详情响应（最多 4s）
+                    for _ in range(16):
+                        if detail_holder:
+                            break
+                        await page.wait_for_timeout(250)
+                    if detail_holder:
+                        if log_each_click:
+                            rows = []
+                            for c0 in detail_holder:
+                                if not isinstance(c0, dict):
+                                    continue
+                                ak0 = str(c0.get("ad_key") or "")[:16]
+                                d0 = _beijing_ymd_from_first_seen(c0.get("first_seen")) or "?"
+                                dt0 = _beijing_dt_from_unix_sec(c0.get("first_seen")) or "?"
+                                adv0 = str(c0.get("advertiser_name") or c0.get("page_name") or "")[:40]
+                                rows.append(f"{ak0}@{d0} {dt0}:{adv0}")
+                            print(
+                                f"    [点击详情] 第 {idx + 1}/{card_count} 张拿到 detail: {rows if rows else '[空]'}",
+                                flush=True,
+                            )
+                        if probe_first > 0:
+                            _print_dom_detail_probe(idx, meta, [x for x in detail_holder if isinstance(x, dict)])
+                        break
+                    if click_attempt < 2:
+                        _p(
+                            f"    [点击详情] 第 {idx + 1} 张首击未拿到 detail，重试一次…",
+                            log_quiet=log_quiet,
+                        )
+                        await page.wait_for_timeout(300)
+                if detail_holder:
+                    clicked = True
+                if not clicked:
+                    if log_each_click:
+                        print(f"    [点击详情] 第 {idx + 1}/{card_count} 张 click 失败，跳过", flush=True)
+                    if probe_mode:
+                        _print_dom_detail_probe(idx, meta, [])
+                    continue
+                if clicked and not detail_holder:
+                    if log_each_click:
+                        print(f"    [点击详情] 第 {idx + 1}/{card_count} 张两次都没拿到 detail", flush=True)
+                    if probe_mode:
+                        _print_dom_detail_probe(idx, meta, [])
 
                 # 把新的 creative 收集起来
                 for c in detail_holder:
@@ -1618,11 +2106,18 @@ async def _click_cards_for_details(
                                     log_quiet=log_quiet,
                                 )
                                 return enriched
+                if probe_only and probe_first > 0:
+                    print("    [DOM探针] probe_only=1，本次只点设定的探针卡片后返回", flush=True)
+                    return enriched
 
             except Exception as e:
                 # 单张失败不中断整体
                 await page.keyboard.press("Escape")
                 await page.wait_for_timeout(300)
+                if log_each_click:
+                    print(f"    [点击详情] 第 {idx + 1}/{card_count} 张异常跳过: {e}", flush=True)
+                if probe_mode:
+                    _print_dom_detail_probe(idx, meta if 'meta' in locals() else {}, [])
                 continue
 
     finally:
@@ -1972,6 +2467,64 @@ def _merge_prefer_dom_detail(
     return list(by_ak.values()) if by_ak else [x for x in napi_creatives if isinstance(x, dict)]
 
 
+def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]) -> list[dict]:
+    """以当前页面 DOM 卡片为底，按 preview_img_url 尽量用 detail 行覆盖；不以 napi 作为主结果源。"""
+    detail_by_preview: dict[str, dict] = {}
+    extra_details: list[dict] = []
+    for d in detail_rows:
+        if not isinstance(d, dict):
+            continue
+        prev = str(d.get("preview_img_url") or "").split("?")[0]
+        if prev:
+            detail_by_preview[prev] = d
+        else:
+            extra_details.append(d)
+
+    merged: list[dict] = []
+    seen_keys: set[str] = set()
+    for card in dom_cards:
+        if not isinstance(card, dict):
+            continue
+        prev = str(card.get("preview_img_url") or "").split("?")[0]
+        key = prev or f"_dom_idx_{card.get('_dom_idx', id(card))}"
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        detail = detail_by_preview.get(prev) if prev else None
+        if detail:
+            item = dict(card)
+            item.update(detail)
+            item["_source"] = "dom_detail"
+            merged.append(item)
+        else:
+            item = dict(card)
+            item.setdefault("_source", "dom")
+            merged.append(item)
+
+    seen_ad_keys = {
+        str(x.get("ad_key") or "")
+        for x in merged
+        if isinstance(x, dict) and x.get("ad_key")
+    }
+    for d in detail_rows:
+        if not isinstance(d, dict):
+            continue
+        ak = str(d.get("ad_key") or "")
+        if ak and ak in seen_ad_keys:
+            continue
+        prev = str(d.get("preview_img_url") or "").split("?")[0]
+        if prev and prev in seen_keys:
+            continue
+        d2 = dict(d)
+        d2.setdefault("_source", "dom_detail")
+        merged.append(d2)
+        if ak:
+            seen_ad_keys.add(ak)
+        if prev:
+            seen_keys.add(prev)
+    return merged
+
+
 async def _collect_keyword_crawl_result_arrow2_latest_dom(
     page,
     keyword: str,
@@ -1985,9 +2538,9 @@ async def _collect_keyword_crawl_result_arrow2_latest_dom(
 ) -> dict:
     """
     Arrow2 每日「最新」主路径：输入 appid → 点「最新创意」→ 滚动 napi 加载 →
-    在页面上能看到的卡片上逐张点击，以 detail 接口全量补全，再与 napi 按 ad_key 合并（detail 优先）。
-    若点卡 0 条，回退为纯 napi 列表。
-    first_seen_target_ymd: 与后处理「仅该日 first_seen」一致时，可据此提前停滚/停点卡（设 ARROW2_FIRST_SEEN_EARLY_STOP=0 可关闭）。
+    在页面上能看到的卡片上逐张点击，以 detail 接口全量补全；最终结果以 DOM 卡片/详情为主，
+    不以 napi creative_list 作为主结果源。若点卡 0 条，则回退为纯 napi 列表。
+    first_seen_target_ymd: 用于点卡阶段判断“本张是否早于目标日”；命中后停止继续点后续卡片。
     """
     ymd_for_stop: str | None = None
     if first_seen_target_ymd and _env_truthy("ARROW2_FIRST_SEEN_EARLY_STOP", default=True):
@@ -2006,23 +2559,39 @@ async def _collect_keyword_crawl_result_arrow2_latest_dom(
                 log_prefix=log_prefix,
                 max_scroll_rounds=max_scroll_rounds,
                 log_quiet=log_quiet,
-                stop_scroll_if_oldest_first_seen_before_ymd=ymd_for_stop,
+                stop_scroll_if_oldest_first_seen_before_ymd=None,
             )
             napi_creatives = [x for x in _all_creatives_from_batches(batches_ref) if isinstance(x, dict)]
+            dom_cards = await _extract_dom_cards(page, log_quiet=log_quiet)
+            napi_rows_by_preview: dict[str, list[dict]] = {}
+            for row in napi_creatives:
+                if not isinstance(row, dict):
+                    continue
+                prev = str(row.get("preview_img_url") or "").split("?")[0]
+                if not prev:
+                    continue
+                napi_rows_by_preview.setdefault(prev, []).append(row)
             try:
-                max_dc = int((os.environ.get("ARROW2_DOM_CLICK_MAX_CARDS") or "100").strip() or 100)
+                raw_max_dc = (os.environ.get("ARROW2_DOM_CLICK_MAX_CARDS") or "").strip()
+                max_dc = int(raw_max_dc) if raw_max_dc else 0
             except Exception:
-                max_dc = 100
+                max_dc = 0
             known: set = set()
             details = await _click_cards_for_details(
                 page,
                 known,
-                max_cards=max(1, max_dc),
+                # 未显式设 cap 时，默认把当前 DOM 中已加载的卡片都点完；
+                # 需要限条时再通过 ARROW2_DOM_CLICK_MAX_CARDS 传正整数。
+                max_cards=(max(1, max_dc) if max_dc > 0 else 10**9),
                 target_previews=None,
+                napi_rows_by_preview=napi_rows_by_preview or None,
                 log_quiet=log_quiet,
                 stop_after_detail_first_seen_before_ymd=ymd_for_stop,
             )
-            merged = _merge_prefer_dom_detail(napi_creatives, [x for x in details if isinstance(x, dict)])
+            merged = _merge_dom_cards_with_details(
+                [x for x in dom_cards if isinstance(x, dict)],
+                [x for x in details if isinstance(x, dict)],
+            )
             if not merged and napi_creatives:
                 merged = napi_creatives
             merged = _sort_creatives_latest_first(merged) if merged else []
@@ -2034,6 +2603,7 @@ async def _collect_keyword_crawl_result_arrow2_latest_dom(
                 "top_creatives": top_creatives,
                 "all_creatives": merged,
                 "napi_creatives": napi_creatives,
+                "dom_cards": dom_cards,
                 "dom_creatives": [d for d in (details or []) if isinstance(d, dict)],
                 "total_captured": total,
             }
@@ -2062,10 +2632,7 @@ async def _collect_keyword_crawl_result_arrow2_latest_dom(
             "total_captured": 0,
         }
     if not (result_for_kw.get("all_creatives") or []) and not log_quiet:
-        print(
-            f"{log_prefix}[提醒] 本词 napi+DOM 点卡 后仍无素材。",
-            file=sys.stderr,
-        )
+        print(f"{log_prefix}[提醒] 本词 napi 抓取后仍无素材。", file=sys.stderr)
     return result_for_kw
 
 
@@ -2239,10 +2806,10 @@ async def run_arrow2_batch(  # noqa: PLR0912,PLR0915
     Arrow2 竞品拉取：按 pull_specs 设置筛选，再对每词拉取结果。
 
     - `latest_yesterday`（及「latest + 仅 first_seen 日」）走 **国家 → 7 天 → 素材 → 搜 appid → 最新创意 →
-      滚列表 → DOM 点卡取 detail**，再后处理：仅保留 `first_seen` 为指定日且广告主与产品一致。
+      滚列表 → 当前页面卡片逐张点击拿 detail**，再后处理：仅保留 `first_seen` 为指定日且广告主与产品一致。
     - 其它类（如展示估值+Top%）走 napi 滚动为主；`_do_setup` 会尝试勾选 **Facebook系 / Google系** 等渠道并点选国家。
 
-    终端输出：默认 **安静**（少打搜索/排序/DOM 请求日志），拉取结束后只打印「DOM 点卡摘要（若走 latest+点卡）」与 `print_arrow2_matched_creatives`。
+    终端输出：默认 **安静**（少打搜索/排序日志）；latest+点卡时会打印一行 DOM 点卡摘要，随后打印 `print_arrow2_matched_creatives`。
     设环境变量 **`ARROW2_VERBOSE=1`** 可恢复详细日志（与旧行为接近）。
     """
     _ = (
@@ -2384,7 +2951,7 @@ async def run_arrow2_batch(  # noqa: PLR0912,PLR0915
                             log_quiet=log_quiet,
                             first_seen_target_ymd=fs_stop,
                         )
-                        list_tag = "dom_detail+napi"
+                        list_tag = "dom_detail+dom"
                     else:
                         r = await _collect_keyword_crawl_result(
                             page,
@@ -2399,6 +2966,21 @@ async def run_arrow2_batch(  # noqa: PLR0912,PLR0915
                         )
                         list_tag = "napi"
                     raw_all: list[dict] = [x for x in (r.get("all_creatives") or []) if isinstance(x, dict)]
+                    debug_stage = _env_truthy("DEBUG", default=False) and bool(spec.get("filter_yesterday_only"))
+                    if debug_stage:
+                        adv_stage, time_stage = _arrow2_filter_stage_views(
+                            raw_all, spec, kw, keyword_product, first_seen_ymd
+                        )
+                        print_arrow2_filter_stage_creatives(
+                            kw,
+                            "广告主匹配后（未按时间筛）",
+                            adv_stage,
+                        )
+                        print_arrow2_filter_stage_creatives(
+                            kw,
+                            f"按 first_seen={first_seen_ymd} 筛后",
+                            time_stage,
+                        )
                     filtered = _arrow2_apply_post_filters(
                         raw_all, spec, kw, keyword_product, first_seen_ymd
                     )

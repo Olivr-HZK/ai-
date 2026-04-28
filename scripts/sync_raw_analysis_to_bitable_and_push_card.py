@@ -81,7 +81,8 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "视频链接", "type": 1},
     {"field_name": "封面图链接", "type": 1},
     {"field_name": "封面图", "type": 17},
-    {"field_name": "视频", "type": 17},
+    {"field_name": "视频附件", "type": 17},
+    {"field_name": "特效玩法", "type": 1},
     {"field_name": "AI分析结果", "type": 1},
     {"field_name": "UA灵感借鉴", "type": 1},
     {"field_name": "抓取日期", "type": 5},
@@ -736,6 +737,7 @@ def main() -> None:
 
     analysis_by_ad: Dict[str, str] = {}
     ua_single_by_ad: Dict[str, str] = {}
+    effect_by_ad: Dict[str, str] = {}
     meta_by_ad = build_meta_by_ad_from_analysis_payload(analysis)
     for it in analysis.get("results") or []:
         if isinstance(it, dict):
@@ -743,22 +745,25 @@ def main() -> None:
             if k:
                 analysis_by_ad[k] = str(it.get("analysis") or "")
                 ua_single_by_ad[k] = str(it.get("ua_suggestion_single") or "")
+                effect_by_ad[k] = str(it.get("effect_one_liner") or "")
 
     token = get_tenant_access_token()
     need_raw_sync = args.sync_target in ("both", "raw")
     need_cluster_sync = args.sync_target in ("both", "cluster")
     if need_raw_sync:
         ensure_fields(token, app_token, table_id)
-        res_list = analysis.get("results")
-        if isinstance(res_list, list) and res_list:
-            try:
-                from launched_effects_db import apply_launched_effects_filter
+        le_on = (os.getenv("LAUNCHED_EFFECTS_ENABLED") or "0").strip().lower() not in ("0", "false", "no", "off", "")
+        if le_on:
+            res_list = analysis.get("results")
+            if isinstance(res_list, list) and res_list:
+                try:
+                    from launched_effects_db import apply_launched_effects_filter
 
-                n_le, _ = apply_launched_effects_filter(res_list)
-                if n_le:
-                    print(f"[sync] 我方已投放（关键词/embedding）处理 {n_le} 条（排除/补标）")
-            except Exception as e:
-                print(f"[sync] launched_effects 跳过: {e}")
+                    n_le, _ = apply_launched_effects_filter(res_list)
+                    if n_le:
+                        print(f"[sync] 我方已投放（关键词/embedding）处理 {n_le} 条（排除/补标）")
+                except Exception as e:
+                    print(f"[sync] launched_effects 跳过: {e}")
 
     records: List[Dict[str, Any]] = []
     target_date = str(raw.get("target_date") or "")
@@ -829,6 +834,7 @@ def main() -> None:
                 ),
                 "AI分析结果": analysis_by_ad.get(ad_key, ""),
                 "UA灵感借鉴": ua_single_by_ad.get(ad_key, ""),
+                "特效玩法": effect_by_ad.get(ad_key, ""),
                 "视频时长": int(c.get("video_duration") or 0),
                 "接受情况": "待定",
                 "我方产品": own_product_line,
@@ -862,7 +868,7 @@ def main() -> None:
             if v_direct and int(c.get("video_duration") or 0) > 0:
                 vf = upload_video_as_attachment(v_direct, app_token, ad_key)
                 if vf:
-                    fields["视频"] = [{"file_token": vf}]
+                    fields["视频附件"] = [{"file_token": vf}]
 
             records.append({"fields": fields})
 

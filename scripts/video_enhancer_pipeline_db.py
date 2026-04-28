@@ -198,6 +198,15 @@ def init_db() -> None:
         cl_cols3 = {str(r["name"]) for r in cur.fetchall()}
         if "cover_embedding" not in cl_cols3:
             cur.execute("ALTER TABLE creative_library ADD COLUMN cover_embedding BLOB")
+        # effect_one_liner：VE 流程的特效玩法一句话
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols4 = {str(r["name"]) for r in cur.fetchall()}
+        if "effect_one_liner" not in dci_cols4:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN effect_one_liner TEXT")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols4 = {str(r["name"]) for r in cur.fetchall()}
+        if "effect_one_liner" not in cl_cols4:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN effect_one_liner TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -230,11 +239,16 @@ def _text_fingerprint(title: str, body: str) -> str:
 
 def _allow_text_only_dedup(appid: str, ahash: str, media_url: str, text_fp: str) -> bool:
     """
-    文案去重兜底规则（避免“同文案不同素材”误判）：
+    文案去重兜底规则（避免"同文案不同素材"误判）：
     - 必须有 appid（仅同 app 内比较）
     - 必须有 text_fingerprint
     - 且当前素材没有可用视觉/媒体特征（无 ahash、无媒体 URL）
+
+    环境变量 TEXT_FINGERPRINT_DEDUP_ENABLED（默认 0/关闭）可全局开关文案去重。
     """
+    env_val = (os.getenv("TEXT_FINGERPRINT_DEDUP_ENABLED") or "0").strip().lower()
+    if env_val in ("0", "false", "no", "off", ""):
+        return False
     if not str(appid or "").strip():
         return False
     if not str(text_fp or "").strip():
@@ -244,7 +258,6 @@ def _allow_text_only_dedup(appid: str, ahash: str, media_url: str, text_fp: str)
     if str(media_url or "").strip():
         return False
     return True
-
 
 def _pick_video_url_from_raw(creative: Dict[str, Any]) -> str:
     if creative.get("video_url"):
@@ -341,9 +354,11 @@ def upsert_creative_library(
             if isinstance(analysis_raw, dict):
                 analysis = str(analysis_raw.get("analysis") or "")
                 ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
+                effect_one_liner = str(analysis_raw.get("effect_one_liner") or "")
             else:
                 analysis = str(analysis_raw or "")
                 ua_single = ""
+                effect_one_liner = ""
             appid = str(item.get("appid") or "").strip()
             cs = item.get("cover_style")
             if isinstance(cs, dict):
@@ -385,12 +400,16 @@ def upsert_creative_library(
                          insight_cover_style = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE insight_cover_style END,
+                         effect_one_liner = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE effect_one_liner END,
                          updated_at_local = datetime('now','localtime')
                        WHERE ad_key = ?""",
                     (target_date, inc, new_heat, new_imp, new_exp,
                      analysis, analysis, analysis,
                      ua_single, ua_single, ua_single,
                      cover_style_str, cover_style_str,
+                     effect_one_liner, effect_one_liner,
                      ad_key),
                 )
                 upserted += 1
@@ -477,6 +496,7 @@ def upsert_creative_library(
                      best_heat, best_impression, best_all_exposure_value,
                      first_target_date, last_target_date, appearance_count,
                      insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
+                     effect_one_liner,
                      created_at_local, updated_at_local
                    ) VALUES (
                      ?, ?, ?, ?,
@@ -487,6 +507,7 @@ def upsert_creative_library(
                      ?, ?, ?,
                      ?, ?, 1,
                      ?, ?, ?, ?,
+                     ?,
                      datetime('now','localtime'), datetime('now','localtime')
                    )""",
                 (
@@ -499,6 +520,7 @@ def upsert_creative_library(
                     heat, impression, all_exp,
                     target_date, target_date,
                     analysis, ua_single, cover_style_str, dedup_reason,
+                    effect_one_liner,
                 ),
             )
             upserted += 1
@@ -579,6 +601,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           first_seen, created_at, last_seen,
           heat, all_exposure_value, impression,
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
+          effect_one_liner,
           created_at_local, updated_at_local
         ) VALUES (
           ?, ?, ?, ?, ?,
@@ -586,6 +609,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?, ?,
           ?, ?, ?,
           ?, ?, ?, ?,
+          ?,
           datetime('now','localtime'), datetime('now','localtime')
         )
         ON CONFLICT(target_date, appid, ad_key) DO UPDATE SET
@@ -616,6 +640,11 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
             WHEN COALESCE(TRIM(excluded.insight_cover_style), '') <> ''
             THEN excluded.insight_cover_style
             ELSE daily_creative_insights.insight_cover_style
+          END,
+          effect_one_liner=CASE
+            WHEN COALESCE(TRIM(excluded.effect_one_liner), '') <> ''
+            THEN excluded.effect_one_liner
+            ELSE daily_creative_insights.effect_one_liner
           END,
           updated_at_local=datetime('now','localtime');
         """
@@ -659,9 +688,11 @@ def _params_tuple_for_daily_creative_insight(
     if isinstance(analysis_raw, dict):
         insight = str(analysis_raw.get("analysis") or "")
         ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
+        effect_one_liner = str(analysis_raw.get("effect_one_liner") or "")
     else:
         insight = str(analysis_raw or "")
         ua_single = ""
+        effect_one_liner = ""
     cs = item.get("cover_style")
     if isinstance(cs, dict):
         cover_style_str = json.dumps(cs, ensure_ascii=False)
@@ -690,6 +721,7 @@ def _params_tuple_for_daily_creative_insight(
         insight,
         ua_single,
         cover_style_str,
+        effect_one_liner,
     )
 
 
@@ -1650,6 +1682,7 @@ def _row_from_item_and_patched_analysis(
         "material_tags": list(ex_meta.get("material_tags") or []),
         "arrow2_material_category": str(ex_meta.get("arrow2_material_category") or ""),
         "ad_one_liner": str(ex_meta.get("ad_one_liner") or ""),
+        "effect_one_liner": str(ex_meta.get("effect_one_liner") or ""),
         "exclude_from_bitable": bool(ex_meta.get("exclude_from_bitable", False)),
         "exclude_from_cluster": bool(ex_meta.get("exclude_from_cluster", False)),
     }
@@ -2114,5 +2147,321 @@ def load_recent_direction_cards(
             }
             for r in cur.fetchall()
         ]
+    finally:
+        conn.close()
+
+
+
+# ---------------------------------------------------------------------------
+# 特效玩法去重 & 新素材识别 & 持续发力信号
+# ---------------------------------------------------------------------------
+
+def effect_based_crossday_dedup(
+    target_date: str,
+    items: List[Dict[str, Any]],
+    lookback_days: int = 7,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    用 effect_one_liner 做跨天去重：同 appid 内，若某素材的 effect_one_liner
+    在历史 N 天内已出现过，则标记为「非新素材」（effect_seen_before=True）。
+
+    返回 (report, updated_items)。
+    report 包含：
+      - total_input: 输入素材数
+      - new_count: 新素材数（历史未出现过该特效玩法）
+      - seen_count: 非新素材数
+      - new_items: 新素材列表
+      - seen_items: 非新素材列表
+      - history_dates: 查询的历史日期范围
+    updated_items 是输入 items 的副本，每条增加了：
+      - effect_is_new: bool
+      - effect_first_seen_date: str (历史上首次出现该玩法的日期，新素材则为 target_date)
+      - effect_history_count: int (历史上出现该玩法的素材条数)
+    """
+    init_db()
+    from datetime import date, timedelta
+    try:
+        td = date.fromisoformat(target_date)
+    except ValueError:
+        return {"total_input": len(items), "new_count": 0, "seen_count": 0}, items
+
+    start_date = (td - timedelta(days=lookback_days)).isoformat()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        # 加载历史 effect_one_liner（去重后，同 appid 同 effect 只记最早日期和条数）
+        cur.execute(
+            """
+            SELECT appid, effect_one_liner,
+                   MIN(first_target_date) as earliest_date,
+                   COUNT(*) as hist_count
+            FROM creative_library
+            WHERE first_target_date >= ? AND first_target_date < ?
+              AND COALESCE(TRIM(effect_one_liner), '') != ''
+            GROUP BY appid, effect_one_liner
+            """,
+            (start_date, target_date),
+        )
+        hist_map: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
+        for r in cur.fetchall():
+            aid = str(r["appid"] or "").strip()
+            eff = str(r["effect_one_liner"] or "").strip()
+            if aid and eff:
+                hist_map[aid][eff] = {
+                    "earliest_date": str(r["earliest_date"] or ""),
+                    "count": int(r["hist_count"] or 0),
+                }
+    finally:
+        conn.close()
+
+    report: Dict[str, Any] = {
+        "total_input": len(items),
+        "new_count": 0,
+        "seen_count": 0,
+        "new_items": [],
+        "seen_items": [],
+        "history_dates": f"{start_date}~{target_date}",
+        "lookback_days": lookback_days,
+    }
+    updated: List[Dict[str, Any]] = []
+    for item in items:
+        item2 = dict(item)
+        c = item2.get("creative") or {}
+        if not isinstance(c, dict):
+            c = {}
+        appid = str(item2.get("appid") or "").strip()
+        eff = str(c.get("effect_one_liner") or item2.get("effect_one_liner") or "").strip()
+
+        # 查 analysis_by_ad 中的 effect_one_liner
+        analysis_raw = item2.get("analysis_raw")
+        if not eff and isinstance(analysis_raw, dict):
+            eff = str(analysis_raw.get("effect_one_liner") or "").strip()
+
+        is_new = True
+        first_date = target_date
+        hist_count = 0
+        if appid and eff:
+            hit = hist_map.get(appid, {}).get(eff)
+            if hit:
+                is_new = False
+                first_date = hit["earliest_date"]
+                hist_count = hit["count"]
+
+        item2["effect_is_new"] = is_new
+        item2["effect_first_seen_date"] = first_date
+        item2["effect_history_count"] = hist_count
+
+        if is_new:
+            report["new_count"] += 1
+            report["new_items"].append({
+                "ad_key": str(c.get("ad_key") or ""),
+                "product": str(item2.get("product") or ""),
+                "effect_one_liner": eff,
+            })
+        else:
+            report["seen_count"] += 1
+            report["seen_items"].append({
+                "ad_key": str(c.get("ad_key") or ""),
+                "product": str(item2.get("product") or ""),
+                "effect_one_liner": eff,
+                "first_seen_date": first_date,
+                "history_count": hist_count,
+            })
+        updated.append(item2)
+
+    return report, updated
+
+
+def compute_sustained_effort_signals(
+    target_date: str,
+    lookback_days: int = 7,
+) -> Dict[str, Any]:
+    """
+    基于去重流程中被去掉的素材，汇总持续发力信号。
+
+    三个来源：
+      1. 封面跨日指纹去掉的素材（从 cover_style 报告 JSON 读取）
+         → 同画面/URL跨天重复出现 = 素材本身在持续投
+      2. ahash 去重组跨天的素材（从 creative_library 查询）
+         → 同一画面换了 ad_key 反复投
+      3. effect_one_liner 跨天的素材（从 creative_library 查询）
+         → 同一玩法换了不同画面继续投
+
+    返回：
+      {
+        "target_date": str,
+        "lookback_days": int,
+        "cover_crossday_removed": [  # 来源1: 封面去重去掉的
+          {ad_key, matched_ad_key, matched_date, reason, product, appid}
+        ],
+        "ahash_group_crossday": [    # 来源2: ahash去重组跨天
+          {dedup_group_id, products, day_span, material_count, max_impression,
+           earliest_date, latest_date, ad_keys_sample}
+        ],
+        "effect_crossday": [         # 来源3: 特效玩法跨天
+          {effect_one_liner, product, day_span, material_count, max_impression,
+           earliest_date, latest_date}
+        ],
+        "summary": {
+          "cover_crossday_removed_count": int,
+          "ahash_group_count": int,
+          "effect_crossday_count": int,
+          "total_sustained_signals": int,
+        }
+      }
+    """
+    init_db()
+    from datetime import date, timedelta
+    try:
+        td = date.fromisoformat(target_date)
+    except ValueError:
+        return {"target_date": target_date, "lookback_days": lookback_days, "summary": {}}
+
+    start_date = (td - timedelta(days=lookback_days)).isoformat()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+
+        # --- 来源2: ahash 去重组跨天 ---
+        cur.execute(
+            """
+            SELECT dedup_group_id,
+                   COUNT(DISTINCT first_target_date) as day_span,
+                   COUNT(*) as material_count,
+                   MAX(best_impression) as max_impression,
+                   MIN(first_target_date) as earliest_date,
+                   MAX(last_target_date) as latest_date,
+                   GROUP_CONCAT(DISTINCT product) as products
+            FROM creative_library
+            WHERE first_target_date >= ? AND first_target_date <= ?
+            GROUP BY dedup_group_id
+            HAVING day_span >= 2
+            ORDER BY max_impression DESC
+            """,
+            (start_date, target_date),
+        )
+        ahash_groups: List[Dict[str, Any]] = []
+        for r in cur.fetchall():
+            gid = str(r["dedup_group_id"] or "")
+            cur2 = conn.cursor()
+            cur2.execute(
+                "SELECT ad_key, first_target_date FROM creative_library "
+                "WHERE dedup_group_id = ? ORDER BY best_impression DESC LIMIT 5",
+                (gid,),
+            )
+            samples = [
+                {"ad_key": str(row["ad_key"] or ""), "date": str(row["first_target_date"] or "")}
+                for row in cur2.fetchall()
+            ]
+            ahash_groups.append({
+                "dedup_group_id": gid,
+                "products": str(r["products"] or ""),
+                "day_span": int(r["day_span"] or 0),
+                "material_count": int(r["material_count"] or 0),
+                "max_impression": int(r["max_impression"] or 0),
+                "earliest_date": str(r["earliest_date"] or ""),
+                "latest_date": str(r["latest_date"] or ""),
+                "ad_keys_sample": samples,
+            })
+
+        # --- 来源3: effect_one_liner 跨天 ---
+        cur.execute(
+            """
+            SELECT appid, effect_one_liner,
+                   COUNT(DISTINCT first_target_date) as day_span,
+                   COUNT(*) as material_count,
+                   MAX(best_impression) as max_impression,
+                   MIN(first_target_date) as earliest_date,
+                   MAX(last_target_date) as latest_date,
+                   GROUP_CONCAT(DISTINCT product) as products
+            FROM creative_library
+            WHERE first_target_date >= ? AND first_target_date <= ?
+              AND COALESCE(TRIM(effect_one_liner), '') != ''
+            GROUP BY appid, effect_one_liner
+            HAVING day_span >= 2
+            ORDER BY max_impression DESC
+            """,
+            (start_date, target_date),
+        )
+        effect_crossday: List[Dict[str, Any]] = []
+        for r in cur.fetchall():
+            effect_crossday.append({
+                "effect_one_liner": str(r["effect_one_liner"] or ""),
+                "product": str(r["products"] or ""),
+                "day_span": int(r["day_span"] or 0),
+                "material_count": int(r["material_count"] or 0),
+                "max_impression": int(r["max_impression"] or 0),
+                "earliest_date": str(r["earliest_date"] or ""),
+                "latest_date": str(r["latest_date"] or ""),
+            })
+
+    finally:
+        conn.close()
+
+    # --- 来源1: 封面跨日指纹去掉的（从 JSON 报告文件读取） ---
+    cover_crossday: List[Dict[str, Any]] = []
+    try:
+        d = td
+        for _ in range(lookback_days + 1):
+            ds = d.isoformat()
+            # 尝试 VE 和 Arrow2 两种前缀
+            for prefix in ("workflow_video_enhancer", "workflow_arrow2"):
+                for suffix in ("", "_exposure_top10", "_latest_yesterday"):
+                    fname = f"{prefix}_{ds}{suffix}_cover_style_intraday.json"
+                    fpath = os.path.join(str(DATA_DIR), fname)
+                    if os.path.exists(fpath):
+                        with open(fpath, "r", encoding="utf-8") as fh:
+                            rdata = json.load(fh)
+                        for item in rdata.get("cross_day_fingerprint_removed", []):
+                            item2 = dict(item)
+                            item2["report_date"] = ds
+                            cover_crossday.append(item2)
+            d -= timedelta(days=1)
+    except Exception:
+        pass
+
+    ahash_cnt = len(ahash_groups)
+    effect_cnt = len(effect_crossday)
+    cover_cnt = len(cover_crossday)
+
+    return {
+        "target_date": target_date,
+        "lookback_days": lookback_days,
+        "cover_crossday_removed": cover_crossday,
+        "ahash_group_crossday": ahash_groups,
+        "effect_crossday": effect_crossday,
+        "summary": {
+            "cover_crossday_removed_count": cover_cnt,
+            "ahash_group_count": ahash_cnt,
+            "effect_crossday_count": effect_cnt,
+            "total_sustained_signals": cover_cnt + ahash_cnt + effect_cnt,
+        },
+    }
+
+
+def load_new_creatives_for_date(
+    target_date: str,
+) -> List[Dict[str, Any]]:
+    """
+    返回指定日期的「新素材」—— creative_library.first_target_date = target_date 的素材，
+    即历史上首次在这一天出现。用于每日飞书推送。
+    """
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT cl.ad_key, cl.product, cl.appid, cl.platform, cl.creative_type,
+                   cl.title, cl.best_heat, cl.best_impression, cl.best_all_exposure_value,
+                   cl.effect_one_liner, cl.first_target_date, cl.dedup_group_id,
+                   cl.preview_img_url, cl.video_url
+            FROM creative_library cl
+            WHERE cl.first_target_date = ?
+            ORDER BY cl.best_impression DESC
+            """,
+            (target_date,),
+        )
+        return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()

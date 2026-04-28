@@ -70,7 +70,7 @@ PULL_SPEC_EXPOSURE_TOP10 = {
     "day_span": "30",
     "order_by": "exposure",
     "popularity_option_text": "Top10%",
-    "max_creatives_per_keyword": 30,
+    "max_creatives_per_keyword": 20,
 }
 
 PULL_SPECS = {
@@ -249,8 +249,32 @@ async def _run_one_product(
         )
         print(f"  [1/3] 搜索完成，页面卡片数: {card_count}")
 
+        # 卡片为 0 时重试搜索（最多 2 次）
+        for search_retry in range(2):
+            if card_count > 0:
+                break
+            print(f"  [1/3] 无卡片，第 {search_retry + 1} 次重试搜索…")
+            batches_ref.clear()
+            capture_state["enabled"] = False
+            await _search_one_keyword(
+                page,
+                search_query,
+                batches_ref,
+                capture_state,
+                order_by=order_by,
+                log_prefix="    ",
+                max_scroll_rounds=48,
+                log_quiet=False,
+                stop_scroll_if_oldest_first_seen_before_ymd=stop_ymd,
+            )
+            await page.wait_for_timeout(3000)
+            card_count = await page.evaluate(
+                "() => document.querySelectorAll('.shadow-common-light.bg-white').length"
+            )
+            print(f"  [1/3] 重试后页面卡片数: {card_count}")
+
         if card_count == 0:
-            print("  [终止] 页面上无卡片")
+            print("  [终止] 页面上无卡片（已重试 2 次）")
             return {
                 "product": match_name,
                 "keyword": keyword,
@@ -267,66 +291,72 @@ async def _run_one_product(
             }
 
         # ─── 逐张点击卡片，拦截 detail-v2 ───
+        # exposure_top10：按 appid 精确匹配计数，满 max_creatives 即停
+        # latest_yesterday：按 max_creatives / early_stop 控制
+        use_appid_filter = bool(appid) and max_creatives > 0 and not filter_yesterday
         if filter_yesterday:
             print(f"  [2/3] 逐张点击卡片，拦截 detail-v2（目标日={target_date}）…")
+        elif use_appid_filter:
+            print(f"  [2/3] 逐张点击卡片，appid={appid} 匹配满 {max_creatives} 条即停…")
         else:
             print(f"  [2/3] 逐张点击卡片，拦截 detail-v2…")
 
         all_details: list[dict] = []
         early_stop = False
         seen_ad_keys: set[str] = set()
+        appid_matched_count = 0  # exposure_top10 用：appid 精确匹配的计数
 
         for idx in range(card_count):
             if early_stop:
                 break
 
-            # exposure_top10：达到 max_creatives 就停
-            if max_creatives > 0 and len(all_details) >= max_creatives:
+            # exposure_top10：appid 匹配满 max_creatives 就停
+            if use_appid_filter and appid_matched_count >= max_creatives:
+                print(f"    [{idx + 1}] appid={appid} 已匹配 {appid_matched_count} 条，停止点击")
+                break
+
+            # latest_yesterday：达到 max_creatives 就停
+            if not use_appid_filter and max_creatives > 0 and len(all_details) >= max_creatives:
                 print(f"    [{idx + 1}] 已达每词上限 {max_creatives} 条，停止点击")
                 break
 
             detail_holder.clear()
 
-            # 点击第 idx 张卡片
-            clicked = await page.evaluate(f"""
-            () => {{
-              const cards = document.querySelectorAll('.shadow-common-light.bg-white');
-              const card = cards[{idx}];
-              if (!card) return false;
-              card.click();
-              return true;
-            }}
-            """)
-            if not clicked:
-                continue
-
-            # 等待 detail-v2 响应（最多 6s）
-            for _ in range(24):
-                if detail_holder:
-                    break
-                await page.wait_for_timeout(250)
-
-            if not detail_holder:
-                # 尝试重试一次
-                detail_holder.clear()
-                await page.evaluate(f"""
+            # 点击第 idx 张卡片，获取 detail-v2（最多重试 3 次）
+            detail = None
+            for retry in range(3):
+                # 点击
+                clicked = await page.evaluate(f"""
                 () => {{
                   const cards = document.querySelectorAll('.shadow-common-light.bg-white');
                   const card = cards[{idx}];
-                  if (!card) return;
+                  if (!card) return false;
                   card.click();
+                  return true;
                 }}
                 """)
-                for _ in range(16):
+                if not clicked:
+                    break
+
+                # 等待 detail-v2 响应（首次 6s，后续 4s）
+                wait_rounds = 24 if retry == 0 else 16
+                for _ in range(wait_rounds):
                     if detail_holder:
                         break
                     await page.wait_for_timeout(250)
 
-            if not detail_holder:
+                if detail_holder:
+                    detail = detail_holder[0]
+                    break
+
+                # 未拿到 detail，关闭弹窗后重试
+                await _close_modal(page)
+                await page.wait_for_timeout(500)
+                detail_holder.clear()
+
+            if not detail:
                 await _close_modal(page)
                 continue
-
-            detail = detail_holder[0]
             ad_key = str(detail.get("ad_key") or "")
             first_seen = detail.get("first_seen")
             fs_ymd = _beijing_ymd_from_unix(first_seen) or "?"
@@ -349,9 +379,21 @@ async def _run_one_product(
                     await _close_modal(page)
                     break
 
+            # 广告主筛选：appid 精确匹配（有 appid 时）
+            adv_id = str(detail.get("advertiser_id") or "").strip()
+            adv = str(detail.get("advertiser_name") or detail.get("page_name") or "")[:30]
+            if appid and adv_id and adv_id != appid:
+                print(f"    [{idx + 1}] ad_key={ad_key[:20]}… appid={adv_id}≠{appid} 跳过")
+                await _close_modal(page)
+                await page.wait_for_timeout(300)
+                continue
+
+            # exposure_top10：appid 匹配计数
+            if use_appid_filter:
+                appid_matched_count += 1
+
             # 收集
             all_details.append(detail)
-            adv = str(detail.get("advertiser_name") or detail.get("page_name") or "")[:30]
             print(f"    [{idx + 1}] ad_key={ad_key[:20]}… first_seen={fs_ymd} 广告主={adv!r}")
 
             # 关闭弹窗
@@ -361,6 +403,7 @@ async def _run_one_product(
         print(f"  [2/3] 点击完成，共获取 {len(all_details)} 条 detail-v2 素材")
 
         # ─── 筛选 ───
+        # appid 精确匹配已在点击阶段完成，此处仅对 latest_yesterday 做 first_seen 筛选
         matched: list[dict] = []
         fs_filtered_out = 0
         adv_filtered_out = 0
@@ -372,12 +415,6 @@ async def _run_one_product(
                 if fs_ymd != target_date:
                     fs_filtered_out += 1
                     continue
-
-            # 广告主筛选
-            adv_name = str(c.get("advertiser_name") or c.get("page_name") or "")
-            if not advertiser_matches_product(adv_name, match_name):
-                adv_filtered_out += 1
-                continue
 
             if filter_yesterday:
                 c["_first_seen_ymd"] = _beijing_ymd_from_unix(c.get("first_seen")) or "(无)"

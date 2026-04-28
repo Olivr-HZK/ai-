@@ -12,15 +12,43 @@
 - **`scripts/test_arrow2_first_card_fields.py`**：
   - 支持 **两种 pull_spec 模式**：
     - `latest_yesterday`（默认）：7天+最新创意+滚动到 first_seen < target_date 停止+仅保留 first_seen=昨日+不限条数
-    - `exposure_top10`：30天+展示估值排序+Top10%人气标签+不限 first_seen+每词最多 30 条
-  - 新增 `--pull-only` 参数（默认 `latest_yesterday`），根据模式调整 `_do_setup` 参数（day_span / order_by / popularity_option_text）和 `_run_one_product` 的筛选逻辑
-  - `_run_one_product`：按 pull_spec 决定是否做 first_seen 筛选和早停；exposure_top10 模式下达到 `max_creatives_per_keyword` 即停止点击
+    - `exposure_top10`：30天+展示估值排序+Top10%人气标签+不限 first_seen+每词最多 20 条
+  - **广告主筛选**：点击时按 `advertiser_id == appid` 精确匹配，不匹配的卡片直接跳过（不再用名字模糊匹配）
+  - **exposure_top10 点击流程**：点击卡片 → appid 不匹配则跳过 → 匹配计数满 20 即停
+  - **latest_yesterday 点击流程**：点击卡片 → appid 不匹配则跳过 → first_seen < target_date 时早停
+  - **重试机制**：卡片 detail-v2 获取重试 3 次；搜索无卡片重试搜索 2 次；Top 创意下拉框定位重试 3 次
   - `_build_raw_payload`：按 pull_spec 填入对应的 `pull_id` / `day_span` / `order_by` / `pull_spec` 元数据；调用 `dedupe_arrow2_raw_items_by_ad_key()` 做 ad_key 去重
-  - 新增 import `_select_top_popularity_option`（用于 `_do_setup` 的 popularity_option_text 参数）
-  - `PULL_SPEC_EXPOSURE_TOP10` 常量：`{id: exposure_top10, day_span: 30, order_by: exposure, popularity_option_text: Top10%, max_creatives_per_keyword: 30}`
-- **`scripts/workflow_arrow2_full_pipeline.py`**：Step 1 统一调用 `test_arrow2_first_card_fields.py`，通过 `--pull-only` 传模式；移除对 `test_arrow2_competitors.py` 的调用；移除 `--all-pull-specs` / `--skip-products` / `--debug-dom-probe` / `--debug-dom-probe-only` 参数；`--wipe-db` 改为 pipeline 内直接调 `wipe_arrow2_sqlite_all_rows()`
-- **`scripts/daily_arrow2_workflow.sh`**：所有分支统一走 `test_arrow2_first_card_fields.py`，crawl-only / crawl-pause 的 exposure_top10 分支不再调 `test_arrow2_competitors.py`
-- **`scripts/arrow2_exposure_workflow.sh`**：注释更新，爬取脚本由 `test_arrow2_competitors` 改为 `test_arrow2_first_card_fields`
+  - `PULL_SPEC_EXPOSURE_TOP10` 常量：`max_creatives_per_keyword: 20`
+- **`scripts/arrow2_pipeline_db.py`**：`dedupe_arrow2_raw_items_by_ad_key` 改为**后出现覆盖先出现**（新数据替换旧数据），同时合并 `seen_in_runs`
+- **`scripts/run_search_workflow.py`**：`_select_top_popularity_option` 增加 `max_retries=3` 参数，失败时重试
+- **`scripts/workflow_arrow2_full_pipeline.py`**：Step 1 统一调用 `test_arrow2_first_card_fields.py`，通过 `--pull-only` 传模式
+- **`scripts/daily_arrow2_workflow.sh` / `scripts/arrow2_exposure_workflow.sh`**：统一走新爬虫
+- **`scripts/guangdada_detail_url.py`**：补全 `try_build_url_spa` + `resolve_ad_key_for_napi`
+- **`scripts/sync_arrow2_to_bitable.py`**：修复 import 错误，补 lark_oapi 依赖，封面图+视频附件上传正常
+- **`config/arrow2_competitor.json`**：`exposure_top10` 的 `max_creatives_per_keyword` 改为 20
+
+### Arrow2 两条工作流与定时策略
+
+| 工作流 | pull_id | 排序 | 天数 | 广告主筛选 | 每产品条数 | 建议频率 |
+|--------|---------|------|------|-----------|-----------|---------|
+| **每日最新** | `latest_yesterday` | 最新创意 | 7 | appid 精确 | 不限（first_seen=昨日） | **每天** |
+| **展示估值** | `exposure_top10` | 展示估值 | 30 | appid 精确 | 最多 20 条 | **每周 2-3 次** |
+
+**Cron 设计方案**：
+
+```crontab
+# Arrow2 每日最新 —— 每天北京时间 08:00 跑（UTC 00:00）
+0 0 * * * cd /Users/oliver/guru/ua素材 && PYTHONPATH=scripts PYTHONUNBUFFERED=1 .venv/bin/python3 scripts/workflow_arrow2_full_pipeline.py --pull-only latest_yesterday >> logs/arrow2_latest_yesterday_$(date +\%Y-\%m-\%d).log 2>&1
+
+# Arrow2 展示估值 —— 每周二、四、六北京时间 08:00 跑（UTC 00:00）
+0 0 * * 2,4,6 cd /Users/oliver/guru/ua素材 && PYTHONPATH=scripts PYTHONUNBUFFERED=1 .venv/bin/python3 scripts/workflow_arrow2_full_pipeline.py --pull-only exposure_top10 >> logs/arrow2_exposure_top10_$(date +\%Y-\%m-\%d).log 2>&1
+```
+
+说明：
+- 两条工作流错开日期，不会同日同时跑（展示估值跑周二四六，每日最新跑其余天）
+- 如果同日同时跑，可给展示估值延迟 30 分钟（`0 0 * * 2,4,6` → `30 0 * * 2,4,6`）
+- `TARGET_DATE` 默认为昨日（UTC+8），无需额外设置
+- 日志写入 `logs/` 目录，按日期命名
 
 ---
 

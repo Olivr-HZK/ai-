@@ -156,15 +156,113 @@ def _reduce_creative(creative: dict) -> dict:
 
     tags = creative.get("pipeline_tags")
     tag_list = list(tags) if isinstance(tags, list) else []
+    fs = creative.get("first_seen")
+    ls = creative.get("last_seen")
+    tz = timezone(timedelta(hours=8))
+
+    def _fmt_ts(ts: object) -> str:
+        try:
+            return datetime.fromtimestamp(int(ts), tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return ""
+
     return {
         "展示估值": creative.get("impression") or 0,
         "人气值": creative.get("all_exposure_value") or 0,
         "热度": creative.get("heat") or 0,
+        "投放天数": creative.get("days_count") or 0,
+        "平台": str(creative.get("platform") or ""),
         "视频长度": creative.get("video_duration") or 0,
+        "first_seen": fs,
+        "first_seen_utc8": _fmt_ts(fs),
+        "last_seen": ls,
+        "last_seen_utc8": _fmt_ts(ls),
+        "标题": str(creative.get("title") or creative.get("body") or ""),
+        "封面图": str(creative.get("preview_img_url") or ""),
         "素材链接": _pick_media_link(creative),
         "标签": tag_list,
         "广告主": str(creative.get("advertiser_name") or creative.get("page_name") or ""),
     }
+
+
+def _beijing_ymd_from_first_seen(ts: object) -> str | None:
+    try:
+        v = int(ts)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    tz = timezone(timedelta(hours=8))
+    try:
+        return datetime.fromtimestamp(v, tz=tz).date().isoformat()
+    except Exception:
+        return None
+
+
+def _beijing_dt_from_first_seen(ts: object) -> str:
+    try:
+        v = int(ts)  # type: ignore[arg-type]
+    except Exception:
+        return ""
+    tz = timezone(timedelta(hours=8))
+    try:
+        return datetime.fromtimestamp(v, tz=tz).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ""
+
+
+def _row_seen_in_latest_yesterday(row: dict) -> bool:
+    seen = row.get("seen_in_runs")
+    if isinstance(seen, list):
+        for s in seen:
+            if not isinstance(s, dict):
+                continue
+            if str(s.get("pull_id") or "").strip() == "latest_yesterday":
+                return True
+    return str(row.get("pull_id") or "").strip() == "latest_yesterday"
+
+
+def _print_targetdate_console_summary(
+    items_deduped: list[dict[str, Any]],
+    *,
+    target_date: str,
+) -> None:
+    rows: list[dict[str, Any]] = []
+    for row in items_deduped:
+        if not isinstance(row, dict) or not _row_seen_in_latest_yesterday(row):
+            continue
+        creative = row.get("creative")
+        if not isinstance(creative, dict):
+            continue
+        if _beijing_ymd_from_first_seen(creative.get("first_seen")) != target_date:
+            continue
+        rows.append(row)
+
+    if not rows:
+        print(f"[3b] latest_yesterday 最终去重后无 first_seen={target_date} 的素材。")
+        return
+
+    rows.sort(
+        key=lambda r: (
+            -int((r.get("creative") or {}).get("all_exposure_value") or 0),
+            -int((r.get("creative") or {}).get("impression") or 0),
+            str(r.get("product") or ""),
+        )
+    )
+    print(f"[3b] latest_yesterday 最终去重后 first_seen={target_date} 共 {len(rows)} 条：")
+    for i, row in enumerate(rows, 1):
+        creative = row.get("creative") or {}
+        if not isinstance(creative, dict):
+            continue
+        ak = str(row.get("ad_key") or "").strip() or arrow2_creative_ad_key(creative)
+        fs = creative.get("first_seen")
+        fs_text = _beijing_dt_from_first_seen(fs) or "?"
+        print(
+            f"  {i:>2}. 产品={str(row.get('product') or '')!r} ad_key={ak[:24]} "
+            f"src={str(creative.get('_source') or '')!r} first_seen={fs!r} utc+8={fs_text!r} "
+            f"平台={str(creative.get('platform') or '')!r} 天数={creative.get('days_count', '?')!r} "
+            f"人气={creative.get('all_exposure_value', '?')!r} 估值={creative.get('impression', '?')!r} "
+            f"广告主={str(creative.get('advertiser_name') or creative.get('page_name') or '')[:36]!r} "
+            f"标题={str(creative.get('title') or creative.get('body') or '')[:48]!r}"
+        )
 
 
 async def main() -> None:
@@ -211,6 +309,12 @@ async def main() -> None:
         help="逐步核对：每个搜索词在截断（默认 10 条，见 ARROW2_DEBUG_STEP_CARDS）与地区补全后，"
         "终端打印本批素材摘要，有头浏览器保持当前结果页，按 Enter 进入下一搜索词；"
         "自动等同开启 --debug；与 workflow 共用 run_arrow2_batch（建议 --pull-only exposure_top10 与日常一致）",
+    )
+    parser.add_argument(
+        "--pause-per-product",
+        action="store_true",
+        help="每个产品（搜索词）跑完后，终端打印本批 yesterday 摘要并按 Enter 再下一产品；"
+        "自动等同开启 --debug，适合 latest_yesterday 的人工核对。",
     )
     parser.add_argument(
         "--debug-dom-probe",
@@ -378,10 +482,14 @@ async def main() -> None:
     if cfg.get("max_creatives_per_keyword") is not None:
         pull_spec_defaults["max_creatives_per_keyword"] = cfg.get("max_creatives_per_keyword")
 
-    debug_run = bool(args.debug or os.environ.get("DEBUG") or args.debug_step_products)
-    if args.debug_step_products:
+    debug_run = bool(
+        args.debug or os.environ.get("DEBUG") or args.debug_step_products or args.pause_per_product
+    )
+    if args.debug_step_products or args.pause_per_product:
         os.environ.setdefault("ARROW2_DEBUG_PAUSE", "0")
         os.environ.setdefault("ARROW2_DEBUG_PAUSE_AFTER_GEO", "0")
+    if args.pause_per_product:
+        os.environ.setdefault("ARROW2_DEBUG_PAUSE_AT_END", "0")
     if debug_run:
         print(
             "[debug] 有头浏览器 + napi 地区线索；地区补全前默认不暂停（ARROW2_DEBUG_PAUSE=1 才停）；"
@@ -394,10 +502,16 @@ async def main() -> None:
                 "[debug-step] 每搜索词完成后打印本批素材摘要并按 Enter 进入下一词；"
                 "条数=min(配置上限, ARROW2_DEBUG_STEP_CARDS，默认 10)；全流程结束时不额外「关浏览器前」暂停。"
             )
+        if args.pause_per_product:
+            print(
+                "[debug-pause] 每个产品跑完后打印本批摘要并按 Enter 进入下一产品；"
+                "建议与 --pull-only latest_yesterday 或其它单类 pull 配合。"
+            )
 
     keyword_appid = {_arrow2_search_query(e): (e.appid or "").strip() for e in entries}
     keyword_product = {_arrow2_search_query(e): (e.product or "").strip() for e in entries}
 
+    target_date = _target_date_from_env()
     results = await run_arrow2_batch(
         keywords=keywords,
         debug=debug_run,
@@ -413,7 +527,9 @@ async def main() -> None:
         search_tab=tab,
         keyword_appid=keyword_appid,
         keyword_product=keyword_product,
+        target_date_first_seen=target_date,
         debug_step_per_product=args.debug_step_products,
+        debug_pause_per_product=args.pause_per_product,
     )
 
     raw_items: list[dict[str, Any]] = []
@@ -432,9 +548,12 @@ async def main() -> None:
             c
             for c in all_creatives
             if isinstance(c, dict)
-            and advertiser_matches_product(
-                str(c.get("advertiser_name") or c.get("page_name") or ""),
-                ent.product,
+            and (
+                (ent.appid and str(c.get("advertiser_id") or "").strip() == ent.appid)
+                or (not ent.appid and advertiser_matches_product(
+                    str(c.get("advertiser_name") or c.get("page_name") or ""),
+                    ent.product,
+                ))
             )
         ]
         for c in filtered:
@@ -452,6 +571,7 @@ async def main() -> None:
             raw_items.append(row)
 
     items_deduped, dedupe_stats = dedupe_arrow2_raw_items_by_ad_key(raw_items)
+    _print_targetdate_console_summary(items_deduped, target_date=target_date)
 
     by_product_reduce: dict[str, list[dict]] = {}
     for row in items_deduped:

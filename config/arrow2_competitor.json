@@ -54,7 +54,7 @@
       "day_span": "30",
       "order_by": "exposure",
       "popularity_option_text": "Top10%",
-      "max_creatives_per_keyword": 30
+      "max_creatives_per_keyword": 20
     },
     {
       "id": "latest_yesterday",

@@ -629,20 +629,26 @@ def main() -> None:
         print(f"[semantic-dedup] 标记 {n_sem} 条语义重复素材（exclude_from_cluster）")
 
     # 2.9) vs 我方已投放特效库：命中则排除出方向卡片 + 主表不同步 + 打标
+    # 当前默认关闭（LAUNCHED_EFFECTS_ENABLED=0），仅做记录不打 exclude
     launched_details: list[dict] = []
-    try:
-        from launched_effects_db import apply_launched_effects_filter
+    n_le = 0
+    le_enabled = (os.getenv("LAUNCHED_EFFECTS_ENABLED") or "0").strip().lower() not in ("0", "false", "no", "off", "")
+    if le_enabled:
+        try:
+            from launched_effects_db import apply_launched_effects_filter
 
-        n_le, launched_details = apply_launched_effects_filter(combined_results)
-        if n_le:
-            print(
-                f"[launched-effects] 标记 {n_le} 条与我方已投放特效匹配的素材"
-                "（主表不同步；仍写入本地 analysis JSON 备查）"
-            )
-    except Exception as e:
-        print(f"[launched-effects] skipped: {e}")
-        n_le = 0
-        launched_details = []
+            n_le, launched_details = apply_launched_effects_filter(combined_results)
+            if n_le:
+                print(
+                    f"[launched-effects] 标记 {n_le} 条与我方已投放特效匹配的素材"
+                    "（主表不同步；仍写入本地 analysis JSON 备查）"
+                )
+        except Exception as e:
+            print(f"[launched-effects] skipped: {e}")
+            n_le = 0
+            launched_details = []
+    else:
+        print("[launched-effects] 已关闭（LAUNCHED_EFFECTS_ENABLED=0），跳过我方已投筛选。")
 
     lf_path = write_launched_filter_step_json(
         DATA_DIR, output_prefix, target_date, launched_details, marked_count=n_le
@@ -718,6 +724,43 @@ def main() -> None:
             str(sugg_md_path),
         ]
     )
+
+    # 检查聚类结果：若 skipped_llm=True 或无方向卡片，视为聚类失败，阻止后续推送/同步
+    cluster_ok = True
+    if sugg_json_path.exists():
+        try:
+            _sugg_check = json.loads(sugg_json_path.read_text(encoding="utf-8"))
+        except Exception:
+            _sugg_check = {}
+        if _sugg_check.get("skipped_llm"):
+            cluster_ok = False
+            print(
+                "[workflow] 方向卡片生成失败（skipped_llm=True），"
+                "跳过后续多维表同步/飞书卡片/企微推送。"
+            )
+        else:
+            _cards = ((_sugg_check.get("suggestion") or {}).get("方向卡片") or [])
+            if not isinstance(_cards, list) or not any(
+                isinstance(c, dict) and c for c in _cards
+            ):
+                cluster_ok = False
+                print(
+                    "[workflow] 方向卡片为空（无有效方向），"
+                    "跳过后续多维表同步/飞书卡片/企微推送。"
+                )
+    else:
+        cluster_ok = False
+        print("[workflow] 方向卡片 JSON 不存在，跳过后续推送。")
+
+    if not cluster_ok:
+        try:
+            from workflow_video_enhancer_acceptance import run_acceptance_after_workflow
+            run_acceptance_after_workflow(target_date, partial=True)
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[acceptance] {e}")
+        return
 
     # 4) 同步多维表（与飞书卡片推送解耦）
     if not args.no_bitable_sync:

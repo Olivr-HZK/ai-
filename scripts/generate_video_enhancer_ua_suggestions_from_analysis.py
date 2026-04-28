@@ -83,6 +83,13 @@ def _ignore_exclude_from_cluster_flag(args: argparse.Namespace) -> bool:
     return v in ("1", "true", "yes", "on")
 
 
+def _env_int(key: str, default: str) -> int:
+    try:
+        return int((os.getenv(key) or default).strip())
+    except ValueError:
+        return int(default)
+
+
 def _call_llm(system: str, user_content: str) -> str:
     return llm_client.call_text(system, user_content, models=llm_client.resolve_cluster_models())
 
@@ -486,45 +493,68 @@ def main() -> None:
     try:
         out = _call_llm(system, prompt)
     except Exception as e:
-        payload = {
-            "input_file": str(in_path),
-            "source_count": len(results),
-            "cluster_excluded_count": cluster_excluded,
-            "ignore_exclude_from_cluster": ignore_ex,
-            "exclude_from_cluster_flags_in_input": n_flagged,
-            "products_context_count": len(products),
-            "suggestion": empty_suggestion,
-            "llm_error": str(e),
-            "skipped_llm": True,
-        }
-        out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        out_md.write_text(_to_markdown(empty_suggestion), encoding="utf-8")
-        print(f"警告：LLM 调用失败，已写空结果。error={e}")
-        print(f"完成：已输出\n- {out_json}\n- {out_md}")
-        return
+        # 重试最多 3 次（LLM 调用异常）
+        max_retries = _env_int("UA_CLUSTER_LLM_RETRIES", "3")
+        for attempt in range(1, max_retries + 1):
+            print(f"[cluster] LLM 调用失败，第 {attempt}/{max_retries} 次重试… error={e}")
+            try:
+                out = _call_llm(system, prompt)
+                break
+            except Exception as e2:
+                e = e2
+                if attempt == max_retries:
+                    payload = {
+                        "input_file": str(in_path),
+                        "source_count": len(results),
+                        "cluster_excluded_count": cluster_excluded,
+                        "ignore_exclude_from_cluster": ignore_ex,
+                        "exclude_from_cluster_flags_in_input": n_flagged,
+                        "products_context_count": len(products),
+                        "suggestion": empty_suggestion,
+                        "llm_error": str(e),
+                        "llm_retries": max_retries,
+                        "skipped_llm": True,
+                    }
+                    out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                    out_md.write_text(_to_markdown(empty_suggestion), encoding="utf-8")
+                    print(f"警告：LLM 调用 {max_retries} 次重试后仍失败。error={e}")
+                    print(f"完成：已输出\n- {out_json}\n- {out_md}")
+                    return
 
     try:
         suggestion = _parse_json_with_repair(out)
     except Exception as e:
+        # JSON 解析失败也重试（重新调 LLM）
         _flush_generate_usage(in_path)
-        payload = {
-            "input_file": str(in_path),
-            "source_count": len(results),
-            "cluster_excluded_count": cluster_excluded,
-            "ignore_exclude_from_cluster": ignore_ex,
-            "exclude_from_cluster_flags_in_input": n_flagged,
-            "products_context_count": len(products),
-            "suggestion": empty_suggestion,
-            "llm_error": "invalid_json_output",
-            "llm_error_detail": str(e),
-            "raw_output": out,
-            "skipped_llm": True,
-        }
-        out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        out_md.write_text(_to_markdown(empty_suggestion), encoding="utf-8")
-        print("警告：LLM 返回非 JSON，已写空结果。")
-        print(f"完成：已输出\n- {out_json}\n- {out_md}")
-        return
+        max_retries = _env_int("UA_CLUSTER_LLM_RETRIES", "3")
+        for attempt in range(1, max_retries + 1):
+            print(f"[cluster] JSON 解析失败，第 {attempt}/{max_retries} 次重调 LLM… error={e}")
+            try:
+                out = _call_llm(system, prompt)
+                suggestion = _parse_json_with_repair(out)
+                break
+            except Exception as e2:
+                e = e2
+                if attempt == max_retries:
+                    payload = {
+                        "input_file": str(in_path),
+                        "source_count": len(results),
+                        "cluster_excluded_count": cluster_excluded,
+                        "ignore_exclude_from_cluster": ignore_ex,
+                        "exclude_from_cluster_flags_in_input": n_flagged,
+                        "products_context_count": len(products),
+                        "suggestion": empty_suggestion,
+                        "llm_error": "invalid_json_output",
+                        "llm_error_detail": str(e),
+                        "llm_retries": max_retries,
+                        "raw_output": out[:8000] if out else "",
+                        "skipped_llm": True,
+                    }
+                    out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                    out_md.write_text(_to_markdown(empty_suggestion), encoding="utf-8")
+                    print(f"警告：LLM 返回非 JSON，{max_retries} 次重试后仍失败。error={e}")
+                    print(f"完成：已输出\n- {out_json}\n- {out_md}")
+                    return
 
     # 后处理：强制限制方向数与每方向参考链接数量，避免模型超出字段/格式限制
     if isinstance(suggestion, dict):
