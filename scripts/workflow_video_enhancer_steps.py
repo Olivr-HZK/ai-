@@ -524,29 +524,16 @@ def step_push_sync(args: argparse.Namespace) -> None:
 
     # 飞书卡片推送与多维表同步解耦：无论是否同步多维表，都可独立推飞书卡片
     if not args.no_card:
-        push_bitable_url = cluster_url or bitable_url
         feishu_cmd = [
             py,
             "scripts/push_video_enhancer_feishu_card_only.py",
             "--date",
             target_date,
-            "--raw",
-            str(p["raw"]),
-            "--analysis",
-            str(p["analysis"]),
-            "--suggestion-md",
-            str(p["suggestion_md"]),
-            "--suggestion-json",
-            str(p["suggestion_json"]),
-            "--bitable-url",
-            push_bitable_url,
         ]
         _run(feishu_cmd)
     else:
         print("[push_sync] 已按参数跳过飞书卡片推送（--no-card）。")
 
-    # 推送消息里展示的多维表链接优先使用聚类表
-    push_bitable_url = cluster_url or bitable_url
     multi_cmd = [
         py,
         "scripts/push_video_enhancer_multichannel.py",
@@ -558,8 +545,6 @@ def step_push_sync(args: argparse.Namespace) -> None:
         str(p["suggestion_md"]),
         "--suggestion-json",
         str(p["suggestion_json"]),
-        "--bitable-url",
-        push_bitable_url,
     ]
     if args.no_wecom:
         multi_cmd.append("--sheet-only")

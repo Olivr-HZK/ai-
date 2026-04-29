@@ -2363,6 +2363,38 @@ def compute_sustained_effort_signals(
                 "latest_date": str(r["latest_date"] or ""),
                 "ad_keys_sample": samples,
             })
+            # 追溯：查组内代表素材的 effect_one_liner + 媒体链接
+            _cur3 = conn.cursor()
+            _cur3.execute(
+                "SELECT ad_key, effect_one_liner, product, video_url, preview_img_url, "
+                "video_duration, best_impression FROM creative_library "
+                "WHERE dedup_group_id = ? AND is_canonical = 1 LIMIT 1",
+                (gid,),
+            )
+            canonical = _cur3.fetchone()
+            if canonical:
+                ahash_groups[-1]["canonical_effect_one_liner"] = str(canonical["effect_one_liner"] or "")
+                ahash_groups[-1]["canonical_product"] = str(canonical["product"] or "")
+                ahash_groups[-1]["canonical_video_url"] = str(canonical["video_url"] or "")
+                ahash_groups[-1]["canonical_preview_img_url"] = str(canonical["preview_img_url"] or "")
+                ahash_groups[-1]["canonical_video_duration"] = int(canonical["video_duration"] or 0)
+                ahash_groups[-1]["canonical_best_impression"] = int(canonical["best_impression"] or 0)
+            else:
+                # 无 canonical 时用组内第一条 sample 的信息
+                if samples:
+                    sk = samples[0]["ad_key"]
+                    _cur3.execute(
+                        "SELECT effect_one_liner, product, video_url, preview_img_url, "
+                        "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
+                        (sk,),
+                    )
+                    srow = _cur3.fetchone()
+                    if srow:
+                        ahash_groups[-1]["canonical_effect_one_liner"] = str(srow["effect_one_liner"] or "")
+                        ahash_groups[-1]["canonical_product"] = str(srow["product"] or "")
+                        ahash_groups[-1]["canonical_video_url"] = str(srow["video_url"] or "")
+                        ahash_groups[-1]["canonical_preview_img_url"] = str(srow["preview_img_url"] or "")
+                        ahash_groups[-1]["canonical_video_duration"] = int(srow["video_duration"] or 0)
 
         # --- 来源3: effect_one_liner 跨天 ---
         cur.execute(
@@ -2385,26 +2417,46 @@ def compute_sustained_effort_signals(
         )
         effect_crossday: List[Dict[str, Any]] = []
         for r in cur.fetchall():
-            effect_crossday.append({
-                "effect_one_liner": str(r["effect_one_liner"] or ""),
+            eff = str(r["effect_one_liner"] or "")
+            appid = str(r["appid"] or "")
+            entry = {
+                "effect_one_liner": eff,
                 "product": str(r["products"] or ""),
+                "appid": appid,
                 "day_span": int(r["day_span"] or 0),
                 "material_count": int(r["material_count"] or 0),
                 "max_impression": int(r["max_impression"] or 0),
                 "earliest_date": str(r["earliest_date"] or ""),
                 "latest_date": str(r["latest_date"] or ""),
-            })
+            }
+            # 追溯：查该玩法下展示量最高的一条素材的媒体链接
+            _cur4 = conn.cursor()
+            _cur4.execute(
+                "SELECT ad_key, product, video_url, preview_img_url, video_duration "
+                "FROM creative_library WHERE effect_one_liner = ? AND appid = ? "
+                "ORDER BY best_impression DESC LIMIT 1",
+                (eff, appid),
+            )
+            top_row = _cur4.fetchone()
+            if top_row:
+                entry["top_ad_key"] = str(top_row["ad_key"] or "")
+                entry["top_product"] = str(top_row["product"] or "")
+                entry["top_video_url"] = str(top_row["video_url"] or "")
+                entry["top_preview_img_url"] = str(top_row["preview_img_url"] or "")
+                entry["top_video_duration"] = int(top_row["video_duration"] or 0)
+            effect_crossday.append(entry)
 
     finally:
         conn.close()
 
-    # --- 来源1: 封面跨日指纹去掉的（从 JSON 报告文件读取） ---
+    # --- 来源1: 封面跨日指纹去掉的 + CLIP向量去重中去掉的（从 JSON 报告文件读取） ---
     cover_crossday: List[Dict[str, Any]] = []
+    _conn2 = _get_conn()
+    _cur2 = _conn2.cursor()
     try:
         d = td
         for _ in range(lookback_days + 1):
             ds = d.isoformat()
-            # 尝试 VE 和 Arrow2 两种前缀
             for prefix in ("workflow_video_enhancer", "workflow_arrow2"):
                 for suffix in ("", "_exposure_top10", "_latest_yesterday"):
                     fname = f"{prefix}_{ds}{suffix}_cover_style_intraday.json"
@@ -2412,13 +2464,71 @@ def compute_sustained_effort_signals(
                     if os.path.exists(fpath):
                         with open(fpath, "r", encoding="utf-8") as fh:
                             rdata = json.load(fh)
+                        # 1a: cross_day_fingerprint_removed（指纹去重）
                         for item in rdata.get("cross_day_fingerprint_removed", []):
                             item2 = dict(item)
                             item2["report_date"] = ds
+                            item2["source"] = "fingerprint"
+                            matched_key = item2.get("matched_ad_key", "")
+                            if matched_key:
+                                _cur2.execute(
+                                    "SELECT effect_one_liner, product, video_url, preview_img_url, "
+                                    "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
+                                    (matched_key,),
+                                )
+                                mrow = _cur2.fetchone()
+                                if mrow:
+                                    eff = str(mrow["effect_one_liner"] or "")
+                                    if eff == "None":
+                                        eff = ""
+                                    item2["matched_effect_one_liner"] = eff
+                                    item2["matched_product"] = str(mrow["product"] or "")
+                                    item2["matched_video_url"] = str(mrow["video_url"] or "")
+                                    item2["matched_preview_img_url"] = str(mrow["preview_img_url"] or "")
+                                    item2["matched_video_duration"] = int(mrow["video_duration"] or 0)
                             cover_crossday.append(item2)
+                        # 1b: CLIP 向量去重中去掉的（per_appid[].removed）
+                        for pa in rdata.get("per_appid", []):
+                            pa_product = pa.get("product", "")
+                            for rem in pa.get("removed", []):
+                                reason = rem.get("reason", "")
+                                kept_key = rem.get("kept_ad_key", "")
+                                rem_ad_key = rem.get("ad_key", "")
+                                if not kept_key or reason not in (
+                                    "cover_style_cluster_vs_yesterday",
+                                    "cover_style_cluster",
+                                ):
+                                    continue
+                                entry = {
+                                    "ad_key": rem_ad_key,
+                                    "reason": reason,
+                                    "kept_ad_key": kept_key,
+                                    "report_date": ds,
+                                    "source": "clip_cluster",
+                                    "product": pa_product,
+                                }
+                                # 追溯：查被保留素材的 effect_one_liner + 媒体链接
+                                _cur2.execute(
+                                    "SELECT effect_one_liner, product, video_url, preview_img_url, "
+                                    "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
+                                    (kept_key,),
+                                )
+                                krow = _cur2.fetchone()
+                                if krow:
+                                    eff = str(krow["effect_one_liner"] or "")
+                                    if eff == "None":
+                                        eff = ""
+                                    entry["matched_effect_one_liner"] = eff
+                                    entry["matched_product"] = str(krow["product"] or pa_product)
+                                    entry["matched_video_url"] = str(krow["video_url"] or "")
+                                    entry["matched_preview_img_url"] = str(krow["preview_img_url"] or "")
+                                    entry["matched_video_duration"] = int(krow["video_duration"] or 0)
+                                cover_crossday.append(entry)
             d -= timedelta(days=1)
     except Exception:
         pass
+    finally:
+        _conn2.close()
 
     ahash_cnt = len(ahash_groups)
     effect_cnt = len(effect_crossday)

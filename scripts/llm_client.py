@@ -286,23 +286,62 @@ def call_embedding(
     *,
     model: str | None = None,
 ) -> List[float]:
-    """生成文本嵌入向量。默认走 OpenRouter text-embedding-3-small。"""
-    key = _or_key()
-    if not key:
-        oa = _oa_key()
-        if not oa:
-            raise RuntimeError("OPENROUTER_API_KEY or OPENAI_API_KEY required for embeddings")
-        em = model or "text-embedding-3-small"
-        client = OpenAI(api_key=oa, base_url=os.getenv("OPENAI_API_BASE") or None)
-        r = client.embeddings.create(model=em, input=[text])
-        _accumulate("openai", em, getattr(r, "usage", None))
-        return r.data[0].embedding
+    """生成文本嵌入向量。
 
-    em = model or os.getenv("EMBEDDING_MODEL", "openai/text-embedding-3-small").strip()
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=key)
-    r = client.embeddings.create(model=em, input=[text])
-    _accumulate("openrouter", em, getattr(r, "usage", None))
-    return r.data[0].embedding
+    优先级：
+    1. 本地 sentence-transformers（bge-small-zh-v1.5，512维，零API成本）
+    2. OpenRouter / OpenAI API（降级）
+
+    环境变量 EMBEDDING_PROVIDER=api 可强制走 API。
+    """
+    provider = (os.getenv("EMBEDDING_PROVIDER") or "").strip().lower()
+    if provider != "api":
+        vec = _call_local_embedding(text)
+        if vec is not None:
+            return vec
+    # API 降级
+    key = _or_key()
+    if key:
+        em = model or os.getenv("EMBEDDING_MODEL", "openai/text-embedding-3-small").strip()
+        try:
+            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=key)
+            r = client.embeddings.create(model=em, input=[text])
+            _accumulate("openrouter", em, getattr(r, "usage", None))
+            return r.data[0].embedding
+        except Exception:
+            pass  # API 失败，继续尝试本地
+    oa = _oa_key()
+    if oa:
+        em = model or "text-embedding-3-small"
+        try:
+            client = OpenAI(api_key=oa, base_url=os.getenv("OPENAI_API_BASE") or None)
+            r = client.embeddings.create(model=em, input=[text])
+            _accumulate("openai", em, getattr(r, "usage", None))
+            return r.data[0].embedding
+        except Exception:
+            pass
+    # 最后尝试本地
+    vec = _call_local_embedding(text)
+    if vec is not None:
+        return vec
+    raise RuntimeError("所有 embedding 方式均失败（本地模型不可用 + API 403/不可用）")
+
+
+_local_embedding_model = None
+
+
+def _call_local_embedding(text: str) -> List[float] | None:
+    """本地 sentence-transformers embedding（进程内单例）。"""
+    global _local_embedding_model
+    model_name = os.getenv("LOCAL_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5").strip()
+    try:
+        if _local_embedding_model is None:
+            from sentence_transformers import SentenceTransformer
+            _local_embedding_model = SentenceTransformer(model_name)
+        vec = _local_embedding_model.encode([text])[0]
+        return list(vec)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------

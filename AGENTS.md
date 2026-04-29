@@ -4,51 +4,26 @@
 
 ---
 
+## 2026-04-29
+
+### Arrow2 周趋势推送 + 数据补齐
+
+- **`scripts/arrow2_weekly_trend.py`**（新增）：从 `arrow2_daily_insights` 汇总指定日期范围内素材的一句话描述，让 LLM 生成趋势分析报告，分两条飞书卡片推送（新素材趋势 / 展示估值趋势）。支持 `--workflow` 指定只推某一条、`--dry-run` 只打印不推送。
+- 补入库 2026-04-27 最新创意 41 条（此前中断后未入库），重新同步飞书多维表（122 条）。
+- 运行 2026-04-28 每日最新全流程（38 条入库 + 同步飞书）。
+
+---
+
 ## 2026-04-28
 
-### Arrow2 爬虫统一替换为 `test_arrow2_first_card_fields.py`（detail-v2 逐张点击 + ad_key 去重入库）
+### Arrow2 爬虫统一替换 + 工作流对齐
 
-- **动机**：原 `test_arrow2_competitors.py` 走 napi + DOM 混合路径，数据源和口径较重。新爬虫 `test_arrow2_first_card_fields.py` 仅用 detail-v2 一种数据源，逐张点击卡片拦截详情，逻辑更简单可靠；入库时按 ad_key 全局去重。
-- **`scripts/test_arrow2_first_card_fields.py`**：
-  - 支持 **两种 pull_spec 模式**：
-    - `latest_yesterday`（默认）：7天+最新创意+滚动到 first_seen < target_date 停止+仅保留 first_seen=昨日+不限条数
-    - `exposure_top10`：30天+展示估值排序+Top10%人气标签+不限 first_seen+每词最多 20 条
-  - **广告主筛选**：点击时按 `advertiser_id == appid` 精确匹配，不匹配的卡片直接跳过（不再用名字模糊匹配）
-  - **exposure_top10 点击流程**：点击卡片 → appid 不匹配则跳过 → 匹配计数满 20 即停
-  - **latest_yesterday 点击流程**：点击卡片 → appid 不匹配则跳过 → first_seen < target_date 时早停
-  - **重试机制**：卡片 detail-v2 获取重试 3 次；搜索无卡片重试搜索 2 次；Top 创意下拉框定位重试 3 次
-  - `_build_raw_payload`：按 pull_spec 填入对应的 `pull_id` / `day_span` / `order_by` / `pull_spec` 元数据；调用 `dedupe_arrow2_raw_items_by_ad_key()` 做 ad_key 去重
-  - `PULL_SPEC_EXPOSURE_TOP10` 常量：`max_creatives_per_keyword: 20`
-- **`scripts/arrow2_pipeline_db.py`**：`dedupe_arrow2_raw_items_by_ad_key` 改为**后出现覆盖先出现**（新数据替换旧数据），同时合并 `seen_in_runs`
-- **`scripts/run_search_workflow.py`**：`_select_top_popularity_option` 增加 `max_retries=3` 参数，失败时重试
-- **`scripts/workflow_arrow2_full_pipeline.py`**：Step 1 统一调用 `test_arrow2_first_card_fields.py`，通过 `--pull-only` 传模式
-- **`scripts/daily_arrow2_workflow.sh` / `scripts/arrow2_exposure_workflow.sh`**：统一走新爬虫
-- **`scripts/guangdada_detail_url.py`**：补全 `try_build_url_spa` + `resolve_ad_key_for_napi`
-- **`scripts/sync_arrow2_to_bitable.py`**：修复 import 错误，补 lark_oapi 依赖，封面图+视频附件上传正常
-- **`config/arrow2_competitor.json`**：`exposure_top10` 的 `max_creatives_per_keyword` 改为 20
-
-### Arrow2 两条工作流与定时策略
-
-| 工作流 | pull_id | 排序 | 天数 | 广告主筛选 | 每产品条数 | 建议频率 |
-|--------|---------|------|------|-----------|-----------|---------|
-| **每日最新** | `latest_yesterday` | 最新创意 | 7 | appid 精确 | 不限（first_seen=昨日） | **每天** |
-| **展示估值** | `exposure_top10` | 展示估值 | 30 | appid 精确 | 最多 20 条 | **每周 2-3 次** |
-
-**Cron 设计方案**：
-
-```crontab
-# Arrow2 每日最新 —— 每天北京时间 08:00 跑（UTC 00:00）
-0 0 * * * cd /Users/oliver/guru/ua素材 && PYTHONPATH=scripts PYTHONUNBUFFERED=1 .venv/bin/python3 scripts/workflow_arrow2_full_pipeline.py --pull-only latest_yesterday >> logs/arrow2_latest_yesterday_$(date +\%Y-\%m-\%d).log 2>&1
-
-# Arrow2 展示估值 —— 每周二、四、六北京时间 08:00 跑（UTC 00:00）
-0 0 * * 2,4,6 cd /Users/oliver/guru/ua素材 && PYTHONPATH=scripts PYTHONUNBUFFERED=1 .venv/bin/python3 scripts/workflow_arrow2_full_pipeline.py --pull-only exposure_top10 >> logs/arrow2_exposure_top10_$(date +\%Y-\%m-\%d).log 2>&1
-```
-
-说明：
-- 两条工作流错开日期，不会同日同时跑（展示估值跑周二四六，每日最新跑其余天）
-- 如果同日同时跑，可给展示估值延迟 30 分钟（`0 0 * * 2,4,6` → `30 0 * * 2,4,6`）
-- `TARGET_DATE` 默认为昨日（UTC+8），无需额外设置
-- 日志写入 `logs/` 目录，按日期命名
+详见「当前 Arrow2 工作流」章节。本次变更要点：
+- 爬虫统一为 `test_arrow2_first_card_fields.py`（detail-v2 逐张点击 + appid 精确匹配 + 多重重试）
+- ad_key 去重改为新数据覆盖旧数据
+- 展示估值每产品限 20 条
+- 修复 `sync_arrow2_to_bitable.py` 的 import 和附件上传
+- 新增 `guangdada_detail_url.py`（SPA 链接构建）
 
 ---
 
@@ -75,6 +50,9 @@
 |------|------------|----------------|
 | **灵感「套路」筛选** | 同一次多模态输出 `flower_background` / `bw_blockbuster` 等，或 `config/style_filters.json` 配置化 | **已移除**。`analyze_video_from_raw_json.py` 仅输出纯文本灵感（或解析 JSON 中的 `analysis`）。`style_filter_match_summary` 等字段可仍为列占位，恒为空。**「我方已投」**由 `launched_effects_db.apply_launched_effects_filter`（主流程 Step 2.9）及 `sync_raw_analysis_to_bitable_and_push_card.py` 补标处理。 |
 | **一键主流程 Step 2c 多维去重进分析** | `get_deduped_items_for_analysis` → `*_dedup_report.json`，仅去重后子集进分析 | **`workflow_video_enhancer_full_pipeline.py` 未调用**该函数。入库仍用全量 `items`；分析队列为 **准入 + 未命中历史成功缓存** 的 `pending_items`（见 `[step:analysis-queue]`）。`get_deduped_items_for_analysis` 仍保留在 `video_enhancer_pipeline_db.py`（供封面指纹等复用逻辑），**不等同于当前一键分析入队口径**。 |
+| **文案去重** | `text_fingerprint` SHA1 相同归组 | **已关闭**。`TEXT_FINGERPRINT_DEDUP_ENABLED` 默认 `0`；当前只保留封面图去重 + effect_one_liner 去重。 |
+| **UA 建议** | `_build_single_ua_suggestion` → `ua_suggestion_single` + `ad_one_liner` | **已移除**（2026-04-29）。VE 流程不再生成单条 UA 建议；DB 列 `insight_ua_suggestion` 保留但不再写入。 |
+| **推送格式** | 方向卡片（`_render_card_markdown`） | **已替换为新日报格式**（2026-04-29）。标题「AI工具竞品日报 + 日期」；按产品分组；每条新素材用 effect_one_liner 做可点击链接。 |
 | **定时任务** | 每天 10:30 crontab | **`daily_video_enhancer_workflow.sh` / `daily_ua_job.sh` 注释为手动执行**；若本机仍挂 crontab 为旧配置，以实际 shell 为准。 |
 | **OpenRouter 用量** | 仅 shell 内 `curl` | **主流程**在 `workflow_video_enhancer_full_pipeline.py` 内调用 `llm_client.print_openrouter_key_meter`（工作流开始/结束）；与 `.env` 中 `OPENROUTER_METER` 等一致。 |
 | **特效库语义阈值** | 文档某处写默认 0.80 | **`launched_effects_db.py` 中默认 `LAUNCHED_EFFECTS_MATCH_THRESHOLD` 为 0.65**（以代码与环境变量为准）。 |
@@ -578,54 +556,270 @@ print(f"[DB] creative_library 分析结果已同步。")
 
 ---
 
+## 当前 Arrow2 工作流
+
+### 两条工作流概览
+
+| | 每日最新 (`latest_yesterday`) | 展示估值 (`exposure_top10`) |
+|---|---|---|
+| **目的** | 跟踪竞品每日新素材 | 跟踪竞品高曝光素材 |
+| **排序** | 最新创意 | 展示估值 |
+| **搜索天数** | 7 | 30 |
+| **广告主筛选** | appid 精确匹配 | appid 精确匹配 |
+| **每产品条数** | 不限（first_seen=昨日） | 最多 20 条 |
+| **建议频率** | 每天 | 每周 2-3 次 |
+
+### 全流程（两条工作流共用）
+
+```
+workflow_arrow2_full_pipeline.py --pull-only <pull_id> [--analyze]
+ │
+ ├─ Step 1  爬取
+ │     test_arrow2_first_card_fields.py --pull-only <pull_id> --all-products
+ │       │  统一爬虫：detail-v2 逐张点击 + ad_key 去重
+ │       │  广告主筛选：advertiser_id == appid 精确匹配
+ │       │  重试：detail-v2 获取重试 3 次 / 搜索无卡片重试 2 次 / Top 创意下拉框重试 3 次
+ │       │
+ │       ├─ latest_yesterday：滚动到 first_seen < target_date 早停 + 仅保留 first_seen=昨日
+ │       └─ exposure_top10：appid 匹配计数满 20 即停
+ │
+ ├─ Step 2  入库
+ │     upsert_arrow2_creative_library_batch → arrow2_creative_library（跨日去重主库）
+ │     dedupe_arrow2_raw_items_by_ad_key → ad_key 去重（新数据覆盖旧数据）
+ │
+ ├─ Step 3  封面 CLIP 去重
+ │     apply_arrow2_cover_style_dedupe
+ │       ├─ 跨日指纹过滤：ad_key / URL / preview_img_url / ahash 汉明 ≤ 8
+ │       └─ CLIP 向量聚类：cosine ≥ 0.8，7 日历史窗口，保留 exposure 最高者
+ │
+ ├─ Step 4  灵感分析（需 --analyze，默认跳过）
+ │     analyze_video_from_raw_json.py --arrow2
+ │       └─ 逐条入库 arrow2_daily_insights（含 ad_one_liner / material_tags 等）
+ │
+ └─ Step 5  飞书多维表同步
+       sync_arrow2_to_bitable.py（raw + analysis → 飞书记录 + 附件上传）
+```
+
+### 数据库表
+
+| 表 | 用途 | 唯一键 |
+|---|---|---|
+| `arrow2_creative_library` | 跨日去重主库（ahash/text 归组 + 封面向量 + 分析结果） | `ad_key` |
+| `arrow2_daily_insights` | 日快照（含灵感分析 + ad_one_liner + crawl_workflow 标签） | `(target_date, ad_key)` |
+
+### 周趋势推送
+
+`scripts/arrow2_weekly_trend.py`：从 `arrow2_daily_insights` 汇总指定日期范围内素材的一句话描述，让 LLM 生成趋势分析报告，分两条飞书卡片推送（新素材趋势 / 展示估值趋势）。
+
+```bash
+# 两个都推
+python scripts/arrow2_weekly_trend.py --start 2026-04-27 --end 2026-04-28
+
+# 只推新素材 / 展示估值
+python scripts/arrow2_weekly_trend.py --workflow 最新创意
+python scripts/arrow2_weekly_trend.py --workflow 展示估值
+```
+
+### Cron 设计方案
+
+```crontab
+# Arrow2 每日最新 —— 每天北京时间 08:00（UTC 00:00）
+0 0 * * * cd /Users/oliver/guru/ua素材 && PYTHONPATH=scripts PYTHONUNBUFFERED=1 .venv/bin/python3 scripts/workflow_arrow2_full_pipeline.py --pull-only latest_yesterday --analyze >> logs/arrow2_latest_yesterday_$(date +\%Y-\%m-\%d).log 2>&1
+
+# Arrow2 展示估值 —— 每周二、四、六北京时间 08:00（UTC 00:00）
+0 0 * * 2,4,6 cd /Users/oliver/guru/ua素材 && PYTHONPATH=scripts PYTHONUNBUFFERED=1 .venv/bin/python3 scripts/workflow_arrow2_full_pipeline.py --pull-only exposure_top10 --analyze >> logs/arrow2_exposure_top10_$(date +\%Y-\%m-\%d).log 2>&1
+
+# Arrow2 周趋势 —— 每周五北京时间 18:00（UTC 10:00）
+0 10 * * 5 cd /Users/oliver/guru/ua素材 && PYTHONPATH=scripts PYTHONUNBUFFERED=1 .venv/bin/python3 scripts/arrow2_weekly_trend.py >> logs/arrow2_weekly_trend_$(date +\%Y-\%m-\%d).log 2>&1
+```
+
+### 关键脚本
+
+| 脚本 | 用途 |
+|------|------|
+| `workflow_arrow2_full_pipeline.py` | 一键全流程（爬取→入库→封面去重→分析→同步） |
+| `test_arrow2_first_card_fields.py` | 统一爬虫（detail-v2 逐张点击） |
+| `arrow2_pipeline_db.py` | SQLite 表管理 + 去重 + 入库 |
+| `arrow2_cover_style_intraday.py` | 封面 CLIP 去重 |
+| `sync_arrow2_to_bitable.py` | 飞书多维表同步 + 附件上传 |
+| `arrow2_weekly_trend.py` | 周趋势 LLM 总结 + 飞书卡片推送 |
+| `daily_arrow2_workflow.sh` | 每日最新 shell 入口 |
+| `arrow2_exposure_workflow.sh` | 展示估值 shell 入口 |
+
+---
+
+## 2026-04-29（VE 工作流重构）
+
+### 特效玩法 `effect_one_liner` + 新素材 / 持续发力 + 日报推送
+
+**背景**：VE 工作流增加「特效玩法」一句话描述，用于去重和推送；取消 UA 建议和 `ad_one_liner`；推送格式从旧的方向卡片改为新日报格式。
+
+#### 1) 特效玩法 `effect_one_liner`
+
+- **`analyze_video_from_raw_json.py`**：VE prompt footer 新增 `【特效玩法】` 行（约 10~20 字概括核心特效/玩法/创意卖点，如「圣诞华服换脸」「AI 肌肉编辑」）。
+- `_strip_arrow2_footer_lines` 返回值新增第 5 项 `effect_one_liner`；VE 路径解析该行并写入输出。
+- **`video_enhancer_pipeline_db.py`**：`daily_creative_insights` 和 `creative_library` 均新增 `effect_one_liner TEXT` 列；`upsert` 时写入。
+- **`sync_raw_analysis_to_bitable_and_push_card.py`**：`FIELD_DEFS` 新增「特效玩法」字段（type=1）；同步时从 analysis 取 `effect_one_liner` 写入。
+
+#### 2) 去重逻辑精简
+
+- **文案去重已关闭**：`TEXT_FINGERPRINT_DEDUP_ENABLED` 默认 `0`（关闭）；`_allow_text_only_dedup` 不再参与 `upsert_creative_library` 归组。
+- **当前只保留两个去重维度**：
+  - **封面图去重**：CLIP 向量 + 7 日历史窗口（`cover_style_intraday.py`）+ 跨日指纹（`crossday_filter_items_against_creative_library`）
+  - **一句话玩法去重**：`effect_one_liner` 精确匹配 + 跨 7 天历史（`effect_based_crossday_dedup`）
+
+#### 3) 新素材与持续发力
+
+- **新素材**：`creative_library.first_target_date = target_date`（首次出现于目标日期）
+- **持续发力**：基于去重流程中被去掉的素材，汇总三个来源的持续发力信号（`compute_sustained_effort_signals`）：
+  - **来源 1：封面跨日去掉**（`cover_style_intraday.json` 的 `cross_day_fingerprint_removed` + CLIP `vs_yesterday`）→ 同画面/URL 跨天重复
+  - **来源 2：ahash 去重组跨天**（`creative_library` 查询）→ 同一画面换了 ad_key
+  - **来源 3：effect_one_liner 跨天**（`creative_library` 查询）→ 同一玩法换了不同画面
+- **追溯机制**：每个持续发力信号追溯到被匹配的历史素材的 `effect_one_liner`、产品名、媒体链接（视频/图片 URL），提供具体描述而非仅 `ad_key`。
+
+#### 4) 日报推送格式（替代旧方向卡片）
+
+**标题**：`AI工具竞品日报 {日期}`
+
+**格式**：按竞品分组，每条新素材用 `effect_one_liner` 做可点击链接跳转到视频/图片：
+
+```
+**2026-04-28** | 新素材 **29** 条
+
+**Remini**  ·  AI照片增强/修复/滤镜
+🎬 [AI 照片接吻特效 (AI Kiss Effect)](视频链接)
+🎬 [AI 静态照片生成拥抱视频特效](视频链接)
+...
+
+**Glam AI**  ·  AI美颜/换装/照片编辑
+🎬 [自拍生成 AI 雨夜时尚大片](视频链接)
+🖼 [xxx特效](图片链接)
+...
+```
+
+- 🎬 = 视频素材，🖼 = 图片素材
+- 链接指向视频 URL 或图片 URL
+- 持续发力部分暂不展示（数据已就绪，可随时开启）
+
+**推送通道统一**：
+- **飞书卡片**：`push_video_enhancer_feishu_card_only.py`（交互式卡片）
+- **企业微信**：`push_video_enhancer_multichannel.py`（markdown 分段推送，与飞书内容一致）
+- **Google Sheet**：`push_video_enhancer_multichannel.py`（数据行 + 方向卡片 JSON 同步，格式不变）
+
+#### 5) 移除 UA 建议
+
+- **`analyze_video_from_raw_json.py`**：删除 `_build_single_ua_suggestion` 函数及调用；移除 `ua_suggestion_single` 和 `ad_one_liner` 从 VE 输出。
+- **`workflow_video_enhancer_full_pipeline.py`**：移除 `ua_suggestion_single` 和 `ad_one_liner` 在 `analysis_by_ad` 字典中的传递。
+- **`video_enhancer_pipeline_db.py`**：移除 `ad_one_liner` 在 `upsert_daily_creative_insight` 中的读取和写入（DB 列保留）。
+
+#### 6) 分析重试机制
+
+- **单条重试**：`_analyze_one_item` 中 LLM 调用失败（403/超时/空分析/格式错误）时最多重试 3 次（`_vision_call_retry_max`，2 秒间隔）。
+- **二轮重试**：初始分析全部完成后，对仍失败/为空的条目再做一轮统一重试。
+- **成功率阈值**：若分析成功率 < 90%（`ANALYSIS_FAILURE_TOLERANCE`），工作流停止；≥ 90% 则继续后续步骤（卡片、推送等）。
+- **Embedding 修复**：`_store_analysis_embeddings` 中 `break` 改为 `continue`，单条 embedding 失败不中断整个嵌入过程。
+
+#### 7) Embedding 本地模型
+
+- **`llm_client.call_embedding()`** 改为**本地模型优先**：先尝试 `sentence-transformers` + `BAAI/bge-small-zh-v1.5`（中英双语、512 维、零 API 成本），不可用时降级到 OpenRouter/OpenAI API。
+- 环境变量 `EMBEDDING_PROVIDER=api` 可强制走 API；`LOCAL_EMBEDDING_MODEL` 可切换本地模型。
+
+---
+
 ## 当前主工作流（Video Enhancer 日流程）
 
 **触发方式**：`scripts/daily_video_enhancer_workflow.sh` 与 `daily_ua_job.sh` 注释均为 **手动执行**（默认 `TARGET_DATE` = 昨天；使用项目根 `.venv/bin/python3`）。若本机仍配置 crontab，以实际为准。
 
 ```
 daily_ua_job.sh（可选）
-  └→ daily_video_enhancer_workflow.sh   # PYTHONUNBUFFERED=1；COVER_STYLE_INTRADAY_ENABLED 等
-       └→ workflow_video_enhancer_full_pipeline.py --date <TARGET_DATE>
-            │
-            ├─ Step 1  爬取
-            │     test_video_enhancer_two_competitors_318.py → workflow_video_enhancer_{日期}_raw.json
-            │
-            ├─ Step 2  可选封面日内 CLIP 去重（COVER_STYLE_INTRADAY_ENABLED；--skip-cover-dedupe 跳过）
-            │     apply_intraday_cover_style_dedupe → 写回 raw + *_cover_style_intraday.json
-            │
-            ├─ Step 2.0  可选 DOM 详情补全（--skip-dom-enrich 跳过）
-            ├─ 灵感准入统计（merge_inspiration_filter_stats，raw 不删条）
-            │
-            ├─ Step 2a  原始落库：upsert_daily_creative_insights（仅 raw，无 analysis）
-            ├─ Step 2b  素材主库：upsert_creative_library（全量归组）
-            │
-            ├─ Step 2c  分析入队（非 get_deduped_items_for_analysis）
-            │     全量 items → 复用历史成功分析跳过 → 准入 + 待分析 → *_raw_pending_analysis.json
-            │
-            ├─ Step 3  灵感分析子进程：analyze_video_from_raw_json.py → 合并写入 analysis JSON
-            │
-            ├─ Step 2.8  语义去重：_apply_semantic_dedup → exclude_from_cluster（可回写 analysis JSON）
-            ├─ Step 2.9  已投放特效库：apply_launched_effects_filter → exclude_* / material_tags / launched_effect_match
-            │
-            ├─ Step 2.5  回写 DB：upsert_daily_creative_insights（带 analysis）+ upsert_daily_video_enhancer_filter_log
-            ├─ Step 2.6  creative_library 同步 analysis
-            ├─ Step 2.7  语义嵌入：call_embedding → upsert_analysis_embedding（analysis_embedding）
-            │
-            ├─ （若本次存在分析失败）提前 return；可跑验收（partial）
-            │
-            ├─ Step 4  方向卡片：generate_video_enhancer_ua_suggestions_from_analysis.py
-            ├─ Step 5  飞书多维表同步：sync_raw_analysis_to_bitable_and_push_card.py（--no-card）
-            ├─ Step 6  飞书聊天卡片：push_video_enhancer_feishu_card_only.py
-            ├─ Step 7  推送表：upsert_daily_push_content（daily_ua_push_content）
-            ├─ Step 8  企业微信 + Google Sheet：push_video_enhancer_multichannel.py
-            │
-            ├─ OpenRouter 用量：print_openrouter_key_meter（工作流结束，若启用）
-            └─ 验收：run_acceptance_after_workflow（workflow_video_enhancer_acceptance.py）
+ └→ daily_video_enhancer_workflow.sh   # PYTHONUNBUFFERED=1；COVER_STYLE_INTRADAY_ENABLED 等
+      └→ workflow_video_enhancer_full_pipeline.py --date <TARGET_DATE>
+           │
+           ├─ Step 1  爬取
+           │     test_video_enhancer_two_competitors_318.py → workflow_video_enhancer_{日期}_raw.json
+           │
+           ├─ Step 2  可选封面日内 CLIP 去重（COVER_STYLE_INTRADAY_ENABLED；--skip-cover-dedupe 跳过）
+           │     apply_intraday_cover_style_dedupe → 写回 raw + *_cover_style_intraday.json
+           │
+           ├─ Step 2.0  可选 DOM 详情补全（--skip-dom-enrich 跳过）
+           ├─ 灵感准入统计（merge_inspiration_filter_stats，raw 不删条）
+           │
+           ├─ Step 2a  原始落库：upsert_daily_creative_insights（仅 raw，无 analysis）
+           ├─ Step 2b  素材主库：upsert_creative_library（全量归组）
+           │
+           ├─ Step 2c  分析入队
+           │     全量 items → 复用历史成功分析跳过 → 准入 + 待分析 → *_raw_pending_analysis.json
+           │
+           ├─ Step 3  灵感分析子进程：analyze_video_from_raw_json.py
+           │     ├─ VE prompt 含【特效玩法】+【一句话说明】
+           │     ├─ 单条重试 3 次（403/超时/空/格式错误）
+           │     ├─ 二轮统一重试（仍有失败条目时）
+           │     └─ 合并写入 analysis JSON（含 effect_one_liner）
+           │
+           ├─ Step 2.8  语义去重：_apply_semantic_dedup → exclude_from_cluster
+           ├─ Step 2.9  已投放特效库：apply_launched_effects_filter → exclude_* / material_tags
+           │
+           ├─ Step 2.5  回写 DB：upsert_daily_creative_insights（含 analysis + effect_one_liner）
+           ├─ Step 2.6  creative_library 同步 analysis + effect_one_liner
+           ├─ Step 2.7  语义嵌入：call_embedding（本地 BAAI/bge-small-zh-v1.5 优先）
+           │
+           ├─ （若分析成功率 < 90%）提前 return；可跑验收（partial）
+           │
+           ├─ Step 4  方向卡片：generate_video_enhancer_ua_suggestions_from_analysis.py
+           ├─ Step 5  飞书多维表同步：sync_raw_analysis_to_bitable_and_push_card.py（--no-card）
+           │     └─ 新增「特效玩法」字段；移除「新素材」字段
+           ├─ Step 6  飞书日报卡片：push_video_enhancer_feishu_card_only.py
+           │     └─ 新格式：AI工具竞品日报 + 按产品分组 + effect_one_liner 可点击链接
+           ├─ Step 7  推送表：upsert_daily_push_content（daily_ua_push_content）
+           ├─ Step 8  企业微信 + Google Sheet：push_video_enhancer_multichannel.py
+           │     └─ 企业微信推送与飞书卡片使用同一日报格式
+           │
+           ├─ OpenRouter 用量：print_openrouter_key_meter（工作流结束，若启用）
+           └─ 验收：run_acceptance_after_workflow（workflow_video_enhancer_acceptance.py）
 ```
 
 **分步等价**：`workflow_video_enhancer_steps.py`：`crawl_store` → `cover_store`（可选与爬取拆分）→ `analyze_store` → `cluster_store` → `push_sync`。
 
-**代码量**：请以实际 `wc -l` 为准；工作流核心文件见 `workflow_video_enhancer_full_pipeline.py`、`video_enhancer_pipeline_db.py`、`llm_client.py`。
+### 去重体系（当前）
+
+| 维度 | 实现 | 用途 |
+|------|------|------|
+| **封面图去重** | CLIP 向量 + 7 日历史窗口 + 跨日指纹 | 同画面/同视觉创意 |
+| **一句话玩法去重** | `effect_one_liner` 精确匹配 + 7 日历史 | 同一特效玩法换了不同画面 |
+| ~~文案去重~~ | `TEXT_FINGERPRINT_DEDUP_ENABLED=0`（已关闭） | ~~文案完全一致~~ |
+
+### 持续发力信号
+
+基于去重流程中被去掉的素材，`compute_sustained_effort_signals` 汇总三个来源，每个信号追溯历史素材的 `effect_one_liner` + 产品名 + 媒体链接：
+
+| 来源 | 含义 | 追溯内容 |
+|------|------|---------|
+| 封面跨日去掉 | 同画面/URL 跨天重复出现 | matched 素材的 effect_one_liner + 视频/图片链接 |
+| ahash 组跨天 | 同一画面换了 ad_key | canonical 素材的 effect_one_liner + 视频/图片链接 |
+| effect_one_liner 跨天 | 同一玩法换了不同画面 | 最高展示量素材的视频/图片链接 |
+
+### 新素材判定
+
+`creative_library.first_target_date = target_date`（该 ad_key 在素材主库的首次出现日期为目标日期）。
+
+### 飞书多维表字段（当前）
+
+| 字段名 | 类型 | 说明 |
+|--------|------|------|
+| 标题 | 文本 | 素材标题 |
+| 产品 | 文本 | 竞品产品名 |
+| 平台 | 文本 | 投放平台 |
+| 视频链接 | 文本 | 视频直链 |
+| 封面图链接 | 文本 | 封面图 URL |
+| 封面图 | 附件 | 封面图文件 |
+| 视频附件 | 附件 | 视频文件 |
+| 特效玩法 | 文本 | effect_one_liner（一句话概括核心特效/玩法） |
+| AI分析结果 | 文本 | 灵感分析全文 |
+| UA灵感借鉴 | 文本 | （历史兼容列，新流程不再写入） |
+| 抓取日期 | 日期 | target_date |
+| 素材标签 | 文本 | pipeline_tags / material_tags |
+
+**代码量**：请以实际 `wc -l` 为准；工作流核心文件见 `workflow_video_enhancer_full_pipeline.py`、`video_enhancer_pipeline_db.py`、`llm_client.py`、`push_video_enhancer_feishu_card_only.py`。
 
 ## 数据结构备忘
 
@@ -637,14 +831,19 @@ daily_ua_job.sh（可选）
 | `preview_img_url` | 视频封面缩略图 | 图片本体 URL |
 | `video2pic` | 0 | 1 |
 
-### 分析结果 JSON 新增字段（2026-03-24 起）
+### 分析结果 JSON 新增字段（2026-03-24 起，2026-04-29 更新）
 - `creative_type`: `"video"` 或 `"image"`
 - `image_url`: 图片素材的图片 URL（视频素材为空字符串）
 - `title`: 素材标题
 - `body`: 素材文案
+- `effect_one_liner`: 特效玩法一句话（如「AI 照片接吻特效」「自拍生成 AI 雨夜时尚大片」），从【特效玩法】行提取
 - `video_analyzed`: 视频分析数量
 - `image_analyzed`: 图片分析数量
 - `skipped`: 跳过数量（无视频也无图片）
 - `style_filter_match_summary`: 可为空串（套路筛选已移除后的列兼容）
+
+**已移除字段**（2026-04-29）：
+- `ua_suggestion_single`: 单条 UA 建议（已移除，不再生成第二次 LLM 调用）
+- `ad_one_liner`: 一句话说明（已从 VE 输出移除，Arrow2 路径保留）
 
 主流程合并后的 `analysis` JSON 还可能含：`pipeline_items`、`exclude_from_cluster`（2.8）、`launched_effect_match`（2.9）、`semantic_dedup_*` 等，以当日产物为准。

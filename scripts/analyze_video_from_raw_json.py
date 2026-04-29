@@ -129,6 +129,16 @@ def _multimodal_format_retry_max() -> int:
     return max(0, min(8, n))
 
 
+def _vision_call_retry_max() -> int:
+    """多模态调用失败（403/超时/空结果）时的重试次数，每次间隔2秒。"""
+    raw = (os.getenv("VIDEO_ANALYSIS_CALL_RETRIES") or "3").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 3
+    return max(0, min(5, n))
+
+
 def _vision_parallel_shards() -> int:
     raw = (os.getenv("VIDEO_ANALYSIS_PARALLEL_SHARDS") or "1").strip()
     try:
@@ -759,25 +769,6 @@ def _apply_empty_multimodal_enrichment(
     return _minimal_inspiration_stub(item, creative), "minimal_stub"
 
 
-def _build_single_ua_suggestion(analysis_text: str, creative_type: str) -> str:
-    """
-    基于单条素材分析结果，按方向卡片格式输出单条 UA 可执行建议（用于爬取表展示）。
-    各字段内容比聚类分析更精简。
-    """
-    if not analysis_text or analysis_text.startswith("[ERROR]"):
-        return ""
-    prompt = (
-        "你是一名 UA 创意优化顾问。请基于下面这条素材分析，按方向卡片格式输出单条 UA 建议。\n"
-        f"素材类型：{creative_type}\n"
-        "格式要求（严格按以下结构输出，不要 JSON，直接输出可读文本）：\n"
-        "背景：（一句话概括素材背景，20~40 字）\n"
-        "UA建议：（聚焦可执行动作，素材改法/文案/首屏/节奏/审核规避，60~120 字）\n"
-        "风险提示：（是否有露肤/擦边/性暗示/低俗等合规隐患；若无或低风险写「常规注意各平台素材政策」，不超过 40 字）\n"
-        "语言：仅使用中文与必要英文术语，遇多语言素材意译为中文，禁止输出阿拉伯文等非中英字符。\n\n"
-        f"素材分析如下：\n{analysis_text}"
-    )
-    return _call_llm_text("你是资深UA增长专家，擅长把分析提炼为精简可执行的卡片格式。", prompt)
-
 
 def _analyze_one_item(
     idx: int,
@@ -849,6 +840,41 @@ def _analyze_one_item(
             flush=True,
         )
         raw_out = f"[ERROR] {e}"
+
+    # ── 多模态调用失败/空结果重试（最多3次，每次间隔2秒） ──
+    _call_retry_max = _vision_call_retry_max()
+    _call_retry_used = 0
+    while (
+        _call_retry_max > 0
+        and _call_retry_used < _call_retry_max
+        and (not raw_out or str(raw_out).startswith("[ERROR]"))
+        and (vision_url or image_url)
+    ):
+        _call_retry_used += 1
+        print(
+            f"[{idx}/{total}] [call_retry] 多模态调用失败，重试 {_call_retry_used}/{_call_retry_max} "
+            f"ad_key={ad_key[:12]}…",
+            flush=True,
+        )
+        time.sleep(2)
+        try:
+            if vision_url:
+                raw_out = _call_llm_video(_build_vp() if vision_url else "", vision_url)
+            elif image_url:
+                raw_out = _call_llm_image(_build_ip(), image_url)
+        except Exception as e2:
+            print(
+                f"[{idx}/{total}] [call_retry] 重试异常 ad_key={ad_key[:12]} reason={e2}",
+                flush=True,
+            )
+            raw_out = f"[ERROR] {e2}"
+        if raw_out and not str(raw_out).startswith("[ERROR]"):
+            print(
+                f"[{idx}/{total}] [call_retry] 重试成功 ad_key={ad_key[:12]}…",
+                flush=True,
+            )
+            break
+
     inspiration_sec = time.perf_counter() - t_inspiration
     print(
         f"[{idx}/{total}] 灵感多模态耗时 {inspiration_sec:.1f}s · [{creative_type}] ad_key={ad_key[:12]}…",
@@ -972,21 +998,6 @@ def _analyze_one_item(
     else:
         analysis = work
 
-    ua_suggestion_single = ""
-    if analysis and not str(analysis).startswith("[ERROR]"):
-        try:
-            print(
-                f"[{idx}/{total}] 单条 UA 建议（第二次 LLM）ad_key={ad_key[:12]}…",
-                flush=True,
-            )
-            ua_suggestion_single = _build_single_ua_suggestion(analysis, creative_type)
-        except Exception as e:
-            print(
-                f"[WARN] 单条UA建议生成失败 ad_key={ad_key[:12]} reason={e}",
-                flush=True,
-            )
-            ua_suggestion_single = ""
-
     row = {
         "category": item.get("category"),
         "product": item.get("product"),
@@ -1010,22 +1021,19 @@ def _analyze_one_item(
         else [],
         "analysis": analysis,
         "inspiration_enrichment": inspiration_enrich,
-        "ua_suggestion_single": ua_suggestion_single,
         "style_filter_match_summary": style_filter_match_summary,
         "material_tags": material_tags,
         "arrow2_material_category": arrow2_material_category,
-        "ad_one_liner": ad_one_liner,
         "effect_one_liner": effect_one_liner,
         "exclude_from_bitable": exclude_from_bitable,
         "exclude_from_cluster": exclude_from_cluster,
+        "_orig_idx": idx,
     }
     err = str(analysis).startswith("[ERROR]")
-    ua_ok = bool(ua_suggestion_single) and not err
     print(
         f"[{idx}/{total}] 完成 [{creative_type}] ad_key={ad_key[:12]}"
         + (f" product={prod}" if prod else "")
-        + (" | 分析失败" if err else "")
-        + (" | UA建议已生成" if ua_ok else (" | 无UA建议" if not err else "")),
+        + (" | 分析失败" if err else ""),
         flush=True,
     )
 
@@ -1038,7 +1046,6 @@ def _analyze_one_item(
                     item,
                     {
                         "analysis": analysis,
-                        "ua_suggestion_single": ua_suggestion_single,
                         "material_tags": material_tags,
                         "exclude_from_bitable": exclude_from_bitable,
                         "exclude_from_cluster": exclude_from_cluster,
@@ -1315,6 +1322,60 @@ def main() -> None:
                         flush=True,
                     )
     results = [by_idx[i] for i in sorted(by_idx)]
+
+    # ── 二轮重试：对一轮中分析失败/为空的条目再跑一次 ──
+    failed_indices = [
+        i for i, r in enumerate(results)
+        if not r.get("analysis") or str(r.get("analysis", "")).startswith("[ERROR]")
+    ]
+    if failed_indices:
+        n_fail = len(failed_indices)
+        print(f"\n[retry-round2] 一轮分析完成，{n_fail} 条失败/为空，5秒后统一重试...", flush=True)
+        time.sleep(5)
+        retry_ok = 0
+        retry_still_fail = 0
+        for ri in failed_indices:
+            orig_idx = results[ri].get("_orig_idx", ri)
+            # 从原始 items 找回 item
+            item = None
+            for _idx, _item in work:
+                if _idx == orig_idx:
+                    item = _item
+                    break
+            if item is None:
+                retry_still_fail += 1
+                continue
+            try:
+                new_row = _analyze_one_item(
+                    orig_idx,
+                    total,
+                    item,
+                    target_date=target_date,
+                    crawl_date=crawl_date,
+                    incremental_db=incremental_db,
+                    arrow2=arrow2,
+                    incremental_arrow2=incremental_arrow2,
+                )
+                new_analysis = new_row.get("analysis", "")
+                if new_analysis and not str(new_analysis).startswith("[ERROR]"):
+                    results[ri] = new_row
+                    retry_ok += 1
+                    print(
+                        f"[retry-round2] 重试成功 ad_key={new_row.get('ad_key','')[:12]}…",
+                        flush=True,
+                    )
+                else:
+                    retry_still_fail += 1
+            except Exception as e3:
+                retry_still_fail += 1
+                print(
+                    f"[retry-round2] 重试异常 ad_key={results[ri].get('ad_key','')[:12]} reason={e3}",
+                    flush=True,
+                )
+        print(
+            f"[retry-round2] 二轮重试完成：成功 {retry_ok}，仍失败 {retry_still_fail}",
+            flush=True,
+        )
 
     if args.output:
         out_path = Path(args.output)

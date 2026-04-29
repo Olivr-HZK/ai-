@@ -84,6 +84,7 @@ def _store_analysis_embeddings(analysis_by_ad: dict[str, dict]) -> None:
     except ImportError:
         return
     stored = 0
+    failed = 0
     for ad_key, info in analysis_by_ad.items():
         text = str(info.get("analysis") or "") if isinstance(info, dict) else str(info or "")
         if not text or text.startswith("[ERROR]") or len(text) < 20:
@@ -94,10 +95,12 @@ def _store_analysis_embeddings(analysis_by_ad: dict[str, dict]) -> None:
             upsert_analysis_embedding(ad_key, blob)
             stored += 1
         except Exception as e:
+            failed += 1
             print(f"[embedding] failed ad_key={ad_key[:12]}: {e}")
-            break
     if stored:
         print(f"[embedding] 已为 {stored} 条素材写入分析嵌入向量。")
+    if failed:
+        print(f"[embedding] {failed} 条 embedding 失败（不影响主流程）。")
 
 
 def _apply_semantic_dedup(target_date: str, combined_results: list[dict]) -> int:
@@ -678,6 +681,8 @@ def main() -> None:
                     "exclude_from_cluster": bool(it.get("exclude_from_cluster")),
                     "style_filter_match_summary": str(it.get("style_filter_match_summary") or ""),
                     "launched_effect_match": it.get("launched_effect_match"),
+                    "effect_one_liner": str(it.get("effect_one_liner") or ""),
+                    "ad_one_liner": str(it.get("ad_one_liner") or ""),
                 }
     n_insights = upsert_daily_creative_insights(target_date, raw_payload, analysis_by_ad)
     n_filter_logs = upsert_daily_video_enhancer_filter_log(
@@ -695,21 +700,29 @@ def main() -> None:
     # 2.7) 语义嵌入：对有分析文本的素材计算 embedding 并存入 creative_library
     _store_analysis_embeddings(analysis_by_ad)
 
-    # 有失败时：不生成 UA 建议，不入库 push_content，不做后续推送
+    # 有失败时：成功率 ≥ 90% 则继续推送，否则停止后续 UA 建议/推送入库
+    total_analyzed = len(new_success_by_ad) + len(failed_analysis)
+    success_rate = (len(new_success_by_ad) / total_analyzed * 100) if total_analyzed > 0 else 100.0
     if failed_analysis:
         print(
-            "[workflow] 检测到视频分析失败，已按要求停止后续 UA 建议/推送入库。"
-            f"失败明细见：{failed_path}"
+            f"[workflow] 视频分析：成功 {len(new_success_by_ad)}/{total_analyzed}"
+            f"（成功率 {success_rate:.0f}%），失败明细见：{failed_path}"
         )
-        try:
-            from workflow_video_enhancer_acceptance import run_acceptance_after_workflow
+        if success_rate < 90:
+            print(
+                "[workflow] 成功率低于 90%，停止后续 UA 建议/推送入库。"
+            )
+            try:
+                from workflow_video_enhancer_acceptance import run_acceptance_after_workflow
 
-            run_acceptance_after_workflow(target_date, partial=True)
-        except SystemExit:
-            raise
-        except Exception as e:
-            print(f"[acceptance] {e}")
-        return
+                run_acceptance_after_workflow(target_date, partial=True)
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"[acceptance] {e}")
+            return
+        else:
+            print("[workflow] 成功率 ≥ 90%，继续执行后续步骤。")
 
     # 3) 统一 UA 建议（方向卡片）
     _run(
@@ -789,23 +802,12 @@ def main() -> None:
 
     # 5) 飞书卡片推送（独立于多维表同步）
     if not args.no_card:
-        push_bitable_url = cluster_bitable_url or bitable_url
         _run(
             [
                 py,
                 "scripts/push_video_enhancer_feishu_card_only.py",
                 "--date",
                 target_date,
-                "--raw",
-                str(raw_path),
-                "--analysis",
-                str(analysis_path),
-                "--suggestion-md",
-                str(sugg_md_path),
-                "--suggestion-json",
-                str(sugg_json_path),
-                "--bitable-url",
-                push_bitable_url,
             ]
         )
     else:
@@ -841,8 +843,6 @@ def main() -> None:
     )
 
     # 7) 企业微信推送 + Google Sheet 同步
-    # 推送消息里展示的多维表链接优先使用聚类表
-    push_bitable_url = cluster_bitable_url or bitable_url
     multi_cmd = [
         py,
         "scripts/push_video_enhancer_multichannel.py",
@@ -854,8 +854,6 @@ def main() -> None:
         str(sugg_md_path),
         "--suggestion-json",
         str(sugg_json_path),
-        "--bitable-url",
-        push_bitable_url,
     ]
     if args.no_wecom:
         multi_cmd.append("--sheet-only")
