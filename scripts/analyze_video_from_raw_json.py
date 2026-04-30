@@ -294,6 +294,23 @@ def _normalize_arrow2_category(raw: str) -> str:
     return ""
 
 
+def _arrow2_one_liner_prompt(item: Dict[str, Any], creative: Dict[str, Any]) -> str:
+    """Arrow2 精简 prompt：仅要求一句话说明 + 素材类型，大幅降低 token 消耗。"""
+    return f"""
+以下是一条竞品 UA 素材：
+- 产品: {item.get('product', '')}
+- 广告主: {creative.get('advertiser_name', '')}
+- 平台: {creative.get('platform', '')}
+- 标题: {creative.get('title', '') or '无'}
+- 文案: {creative.get('body', '') or '无'}
+
+请**仅**输出以下两行（固定格式，每行独立一行，不要输出其他任何内容）：
+
+【一句话说明】用约10个汉字一句话概括广告在播什么
+【素材类型】只选一类：录屏素材、解救类素材、创意玩法素材
+""".strip()
+
+
 def _arrow2_fixed_footer() -> str:
     return (
         "\n7) 在全文最后**必须**追加三行（固定格式，便于系统解析，每行独立一行）：\n"
@@ -306,13 +323,13 @@ def _arrow2_fixed_footer() -> str:
 
 
 def _ve_fixed_footer() -> str:
-    """VE（视频增强）流程的 footer：特效玩法 + 一句话说明。"""
+    """VE（视频增强）流程的 footer：核心卖点。"""
     return (
-        "\n7) 在全文最后**必须**追加两行（固定格式，便于系统解析，每行独立一行）：\n"
-        "【特效玩法】用一句中文（约10~20字）概括这条素材的核心特效/玩法/创意卖点；"
-        "参考风格：「圣诞华服换脸」「AI肌肉编辑」「老照片修复转动态」「黑白线稿漫画」「巨型猫咪特效」"
-        "等——先写中文玩法名，必要时加英文原名；禁止写投放建议，只描述素材本身做了什么。\n"
-        "【一句话说明】用约**10个汉字**一句话概括广告在播什么；无换行。"
+        "\n7) 在全文最后**必须**追加一行（固定格式，便于系统解析）：\n"
+        "【核心卖点】用一句中文（约10~20字）概括这条素材的核心卖点——用了什么特效、什么展现形式；"
+        "参考风格：「真人照片一键变身奇幻恶魔特效」「AI多手化妆瞬间变身」「老照片修复转动态视频」"
+        "「黑白线稿漫画滤镜」「巨型猫咪AR特效」「静态照片生成跳舞动画」"
+        "等——先写具体特效/玩法，必要时加展现形式；禁止写投放建议，只描述素材本身做了什么。"
     )
 
 
@@ -361,10 +378,19 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
             continue
         if s.startswith("【一句话说明】"):
             rest, i = _read_block(i, "【一句话说明】")
-            one_liner = rest[:40]
+            one_liner = rest[:50]
+            continue
+        if s.startswith("【Hook描述】") or s.startswith("【Hook 描述】"):
+            prefix = "【Hook描述】" if s.startswith("【Hook描述】") else "【Hook 描述】"
+            rest, i = _read_block(i, prefix)
+            one_liner = rest[:50]
             continue
         if s.startswith("【特效玩法】"):
             rest, i = _read_block(i, "【特效玩法】")
+            effect_one_liner = rest[:60]
+            continue
+        if s.startswith("【核心卖点】"):
+            rest, i = _read_block(i, "【核心卖点】")
             effect_one_liner = rest[:60]
             continue
         if s.startswith("【游戏素材标签】"):
@@ -526,7 +552,9 @@ def _build_video_prompt(
     *,
     arrow2: bool = False,
 ) -> str:
-    foot = _arrow2_fixed_footer() if arrow2 else _ve_fixed_footer()
+    if arrow2:
+        return _arrow2_one_liner_prompt(item, creative)
+    foot = _ve_fixed_footer()
     return f"""
 以下是一条竞品 UA 视频素材：
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
@@ -560,7 +588,9 @@ def _build_image_prompt(
     *,
     arrow2: bool = False,
 ) -> str:
-    foot = _arrow2_fixed_footer() if arrow2 else _ve_fixed_footer()
+    if arrow2:
+        return _arrow2_one_liner_prompt(item, creative)
+    foot = _ve_fixed_footer()
     return f"""
 以下是一条竞品 UA 图片素材：
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
@@ -888,6 +918,7 @@ def _analyze_one_item(
     material_tags: List[str] = []
     arrow2_material_category = ""
     ad_one_liner = ""
+    ua_suggestion_single = ""
     effect_one_liner = ""
     inspiration_enrich: str = "none"
     json_repair_applied = False
@@ -951,10 +982,15 @@ def _analyze_one_item(
                 )
         analysis = _parse_inspiration_response(work)
         if arrow2:
+            # Arrow2 精简模式：prompt 只要求两行，直接从原始输出提取
+            raw_text = (work or "").strip()
             analysis, llm_tags, arrow2_material_category, ad_one_liner, _effect = _strip_arrow2_footer_lines(
-                analysis
+                raw_text
             )
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
+            # Arrow2 精简模式下 analysis 正文可能为空（只有 footer），用原始输出作为入库文本
+            if not analysis.strip():
+                analysis = raw_text
         else:
             analysis, _, _, ad_one_liner, effect_one_liner = _strip_arrow2_footer_lines(
                 analysis
@@ -1050,6 +1086,7 @@ def _analyze_one_item(
                         "exclude_from_bitable": exclude_from_bitable,
                         "exclude_from_cluster": exclude_from_cluster,
                         "style_filter_match_summary": style_filter_match_summary,
+                        "effect_one_liner": effect_one_liner,
                     },
                 )
             if ok:

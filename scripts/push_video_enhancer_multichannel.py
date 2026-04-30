@@ -127,7 +127,7 @@ def _build_daily_card_from_db(target_date: str) -> str:
         effect = ""
         if row and row["effect_one_liner"] and row["effect_one_liner"] != "None":
             effect = row["effect_one_liner"]
-        item["_effect_one_liner"] = effect
+        item["effect_one_liner"] = effect or item.get("effect_one_liner", "")
 
     conn.close()
     return _render_daily_card_markdown(target_date, new_items, {})

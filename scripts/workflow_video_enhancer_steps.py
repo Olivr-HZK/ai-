@@ -530,6 +530,9 @@ def step_push_sync(args: argparse.Namespace) -> None:
             "--date",
             target_date,
         ]
+        test_webhook = os.getenv("FEISHU_TEST_WEBHOOK", "").strip()
+        if test_webhook:
+            feishu_cmd.extend(["--feishu-webhook", test_webhook])
         _run(feishu_cmd)
     else:
         print("[push_sync] 已按参数跳过飞书卡片推送（--no-card）。")

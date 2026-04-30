@@ -150,7 +150,7 @@ def _apply_semantic_dedup(target_date: str, combined_results: list[dict]) -> int
         if best_sim >= SEMANTIC_DEDUP_THRESHOLD:
             r["exclude_from_cluster"] = True
             r["semantic_dedup_matched"] = best_ak
-            r["semantic_dedup_similarity"] = round(best_sim, 3)
+            r["semantic_dedup_similarity"] = round(float(best_sim), 3)
             ad_key = str(r.get("ad_key") or "")[:12]
             print(f"[semantic-dedup] {ad_key} ≈ {best_ak[:12]} (sim={best_sim:.3f}) → exclude_from_cluster")
             marked += 1
@@ -675,14 +675,12 @@ def main() -> None:
                     mtags = []
                 analysis_by_ad[k] = {
                     "analysis": v,
-                    "ua_suggestion_single": str(it.get("ua_suggestion_single") or ""),
                     "material_tags": mtags,
                     "exclude_from_bitable": bool(it.get("exclude_from_bitable")),
                     "exclude_from_cluster": bool(it.get("exclude_from_cluster")),
                     "style_filter_match_summary": str(it.get("style_filter_match_summary") or ""),
                     "launched_effect_match": it.get("launched_effect_match"),
                     "effect_one_liner": str(it.get("effect_one_liner") or ""),
-                    "ad_one_liner": str(it.get("ad_one_liner") or ""),
                 }
     n_insights = upsert_daily_creative_insights(target_date, raw_payload, analysis_by_ad)
     n_filter_logs = upsert_daily_video_enhancer_filter_log(
@@ -802,14 +800,16 @@ def main() -> None:
 
     # 5) 飞书卡片推送（独立于多维表同步）
     if not args.no_card:
-        _run(
-            [
-                py,
-                "scripts/push_video_enhancer_feishu_card_only.py",
-                "--date",
-                target_date,
-            ]
-        )
+        card_cmd = [
+            py,
+            "scripts/push_video_enhancer_feishu_card_only.py",
+            "--date",
+            target_date,
+        ]
+        test_webhook = os.getenv("FEISHU_TEST_WEBHOOK", "").strip()
+        if test_webhook:
+            card_cmd.extend(["--feishu-webhook", test_webhook])
+        _run(card_cmd)
     else:
         print("[card] 已按参数跳过飞书卡片推送（--no-card）。")
 

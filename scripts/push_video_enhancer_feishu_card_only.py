@@ -165,9 +165,9 @@ def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]
 
         for item in items:
             is_video = int(item.get("video_duration") or 0) > 0
-            effect = item.get("_effect_one_liner", "")
+            effect = str(item.get("effect_one_liner") or "")
             if not effect:
-                effect = item.get("_one_liner", "")
+                effect = str(item.get("_one_liner") or "")
             if not effect:
                 imp = item.get("best_impression", 0)
                 effect = f"展示{imp:,}"
@@ -248,7 +248,7 @@ def main() -> None:
         effect = ""
         if row and row["effect_one_liner"] and row["effect_one_liner"] != "None":
             effect = row["effect_one_liner"]
-        item["_effect_one_liner"] = effect
+        item["effect_one_liner"] = effect or item.get("effect_one_liner", "")
     conn.close()
 
     # ── 持续发力 ──

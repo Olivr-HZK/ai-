@@ -754,38 +754,35 @@ daily_ua_job.sh（可选）
            ├─ Step 2  可选封面日内 CLIP 去重（COVER_STYLE_INTRADAY_ENABLED；--skip-cover-dedupe 跳过）
            │     apply_intraday_cover_style_dedupe → 写回 raw + *_cover_style_intraday.json
            │
-           ├─ Step 2.0  可选 DOM 详情补全（--skip-dom-enrich 跳过）
-           ├─ 灵感准入统计（merge_inspiration_filter_stats，raw 不删条）
+           ├─ Step 3  可选 DOM 详情补全（--skip-dom-enrich 跳过）+ 灵感准入统计
            │
-           ├─ Step 2a  原始落库：upsert_daily_creative_insights（仅 raw，无 analysis）
-           ├─ Step 2b  素材主库：upsert_creative_library（全量归组）
+           ├─ Step 4  原始落库
+           │     upsert_daily_creative_insights（仅 raw，无 analysis）
+           │     upsert_creative_library（全量归组）
            │
-           ├─ Step 2c  分析入队
+           ├─ Step 5  分析入队
            │     全量 items → 复用历史成功分析跳过 → 准入 + 待分析 → *_raw_pending_analysis.json
            │
-           ├─ Step 3  灵感分析子进程：analyze_video_from_raw_json.py
-           │     ├─ VE prompt 含【特效玩法】+【一句话说明】
+           ├─ Step 6  灵感分析：analyze_video_from_raw_json.py
+           │     ├─ VE prompt 含【特效玩法】行 → 从 LLM 输出解析 effect_one_liner
            │     ├─ 单条重试 3 次（403/超时/空/格式错误）
-           │     ├─ 二轮统一重试（仍有失败条目时）
-           │     └─ 合并写入 analysis JSON（含 effect_one_liner）
+           │     └─ 二轮统一重试（仍有失败条目时）
            │
-           ├─ Step 2.8  语义去重：_apply_semantic_dedup → exclude_from_cluster
-           ├─ Step 2.9  已投放特效库：apply_launched_effects_filter → exclude_* / material_tags
-           │
-           ├─ Step 2.5  回写 DB：upsert_daily_creative_insights + upsert_creative_library
-           │     （将 Step 3 产出的 effect_one_liner 持久化到 DB）
-           ├─ Step 2.6  creative_library 同步 analysis + effect_one_liner
-           ├─ Step 2.7  语义嵌入：call_embedding（本地 BAAI/bge-small-zh-v1.5 优先）
+           ├─ Step 7  后处理 + 回写 DB
+           │     ├─ 语义去重：_apply_semantic_dedup → exclude_from_cluster
+           │     ├─ 已投放特效库：apply_launched_effects_filter → exclude_* / material_tags
+           │     ├─ 回写 daily_creative_insights + creative_library（含 analysis + effect_one_liner）
+           │     └─ 语义嵌入：call_embedding（本地 BAAI/bge-small-zh-v1.5 优先）→ analysis_embedding
            │
            ├─ （若分析成功率 < 90%）提前 return；可跑验收（partial）
            │
-           ├─ Step 4  方向卡片：generate_video_enhancer_ua_suggestions_from_analysis.py
-           ├─ Step 5  飞书多维表同步：sync_raw_analysis_to_bitable_and_push_card.py（--no-card）
-           │     └─ 新增「特效玩法」字段；移除「新素材」字段
-           ├─ Step 6  飞书日报卡片：push_video_enhancer_feishu_card_only.py
-           │     └─ 新格式：AI工具竞品日报 + 按产品分组 + effect_one_liner 可点击链接
-           ├─ Step 7  推送表：upsert_daily_push_content（daily_ua_push_content）
-           ├─ Step 8  企业微信 + Google Sheet：push_video_enhancer_multichannel.py
+           ├─ Step 8  方向卡片：generate_video_enhancer_ua_suggestions_from_analysis.py
+           ├─ Step 9  飞书多维表同步：sync_raw_analysis_to_bitable_and_push_card.py（--no-card）
+           │     └─ 含「特效玩法」字段
+           ├─ Step 10  飞书日报卡片：push_video_enhancer_feishu_card_only.py
+           │     └─ AI工具竞品日报 + 按产品分组 + effect_one_liner 可点击链接
+           ├─ Step 11  推送表：upsert_daily_push_content（daily_ua_push_content）
+           ├─ Step 12  企业微信 + Google Sheet：push_video_enhancer_multichannel.py
            │     └─ 企业微信推送与飞书卡片使用同一日报格式
            │
            ├─ OpenRouter 用量：print_openrouter_key_meter（工作流结束，若启用）

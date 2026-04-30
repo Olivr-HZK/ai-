@@ -82,9 +82,8 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "封面图链接", "type": 1},
     {"field_name": "封面图", "type": 17},
     {"field_name": "视频附件", "type": 17},
-    {"field_name": "特效玩法", "type": 1},
+    {"field_name": "核心卖点", "type": 1},
     {"field_name": "AI分析结果", "type": 1},
-    {"field_name": "UA灵感借鉴", "type": 1},
     {"field_name": "抓取日期", "type": 5},
     {"field_name": "创建时间", "type": 5},
     {"field_name": "更新时间", "type": 5},
@@ -736,7 +735,6 @@ def main() -> None:
     suggestion_md = Path(args.suggestion_md).read_text(encoding="utf-8") if Path(args.suggestion_md).exists() else ""
 
     analysis_by_ad: Dict[str, str] = {}
-    ua_single_by_ad: Dict[str, str] = {}
     effect_by_ad: Dict[str, str] = {}
     meta_by_ad = build_meta_by_ad_from_analysis_payload(analysis)
     for it in analysis.get("results") or []:
@@ -744,7 +742,6 @@ def main() -> None:
             k = str(it.get("ad_key") or "").strip()
             if k:
                 analysis_by_ad[k] = str(it.get("analysis") or "")
-                ua_single_by_ad[k] = str(it.get("ua_suggestion_single") or "")
                 effect_by_ad[k] = str(it.get("effect_one_liner") or "")
 
     token = get_tenant_access_token()
@@ -833,8 +830,7 @@ def main() -> None:
                     str(c.get("preview_img_url") or "")
                 ),
                 "AI分析结果": analysis_by_ad.get(ad_key, ""),
-                "UA灵感借鉴": ua_single_by_ad.get(ad_key, ""),
-                "特效玩法": effect_by_ad.get(ad_key, ""),
+                "核心卖点": effect_by_ad.get(ad_key, ""),
                 "视频时长": int(c.get("video_duration") or 0),
                 "接受情况": "待定",
                 "我方产品": own_product_line,

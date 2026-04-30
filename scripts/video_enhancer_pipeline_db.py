@@ -207,6 +207,15 @@ def init_db() -> None:
         cl_cols4 = {str(r["name"]) for r in cur.fetchall()}
         if "effect_one_liner" not in cl_cols4:
             cur.execute("ALTER TABLE creative_library ADD COLUMN effect_one_liner TEXT")
+        # ad_one_liner：VE 流程的一句话说明
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols5 = {str(r["name"]) for r in cur.fetchall()}
+        if "ad_one_liner" not in dci_cols5:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN ad_one_liner TEXT")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols5 = {str(r["name"]) for r in cur.fetchall()}
+        if "ad_one_liner" not in cl_cols5:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN ad_one_liner TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -355,10 +364,12 @@ def upsert_creative_library(
                 analysis = str(analysis_raw.get("analysis") or "")
                 ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
                 effect_one_liner = str(analysis_raw.get("effect_one_liner") or "")
+                ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
             else:
                 analysis = str(analysis_raw or "")
                 ua_single = ""
                 effect_one_liner = ""
+                ad_one_liner = ""
             appid = str(item.get("appid") or "").strip()
             cs = item.get("cover_style")
             if isinstance(cs, dict):
@@ -403,6 +414,9 @@ def upsert_creative_library(
                          effect_one_liner = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE effect_one_liner END,
+                         ad_one_liner = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE ad_one_liner END,
                          updated_at_local = datetime('now','localtime')
                        WHERE ad_key = ?""",
                     (target_date, inc, new_heat, new_imp, new_exp,
@@ -410,6 +424,7 @@ def upsert_creative_library(
                      ua_single, ua_single, ua_single,
                      cover_style_str, cover_style_str,
                      effect_one_liner, effect_one_liner,
+                     ad_one_liner, ad_one_liner,
                      ad_key),
                 )
                 upserted += 1
@@ -496,7 +511,7 @@ def upsert_creative_library(
                      best_heat, best_impression, best_all_exposure_value,
                      first_target_date, last_target_date, appearance_count,
                      insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
-                     effect_one_liner,
+                     effect_one_liner, ad_one_liner,
                      created_at_local, updated_at_local
                    ) VALUES (
                      ?, ?, ?, ?,
@@ -507,7 +522,7 @@ def upsert_creative_library(
                      ?, ?, ?,
                      ?, ?, 1,
                      ?, ?, ?, ?,
-                     ?,
+                     ?, ?,
                      datetime('now','localtime'), datetime('now','localtime')
                    )""",
                 (
@@ -520,7 +535,7 @@ def upsert_creative_library(
                     heat, impression, all_exp,
                     target_date, target_date,
                     analysis, ua_single, cover_style_str, dedup_reason,
-                    effect_one_liner,
+                    effect_one_liner, ad_one_liner,
                 ),
             )
             upserted += 1
@@ -601,7 +616,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           first_seen, created_at, last_seen,
           heat, all_exposure_value, impression,
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
-          effect_one_liner,
+          effect_one_liner, ad_one_liner,
           created_at_local, updated_at_local
         ) VALUES (
           ?, ?, ?, ?, ?,
@@ -609,7 +624,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?, ?,
           ?, ?, ?,
           ?, ?, ?, ?,
-          ?,
+          ?, ?,
           datetime('now','localtime'), datetime('now','localtime')
         )
         ON CONFLICT(target_date, appid, ad_key) DO UPDATE SET
@@ -645,6 +660,11 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
             WHEN COALESCE(TRIM(excluded.effect_one_liner), '') <> ''
             THEN excluded.effect_one_liner
             ELSE daily_creative_insights.effect_one_liner
+          END,
+          ad_one_liner=CASE
+            WHEN COALESCE(TRIM(excluded.ad_one_liner), '') <> ''
+            THEN excluded.ad_one_liner
+            ELSE daily_creative_insights.ad_one_liner
           END,
           updated_at_local=datetime('now','localtime');
         """
@@ -689,10 +709,12 @@ def _params_tuple_for_daily_creative_insight(
         insight = str(analysis_raw.get("analysis") or "")
         ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
         effect_one_liner = str(analysis_raw.get("effect_one_liner") or "")
+        ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
     else:
         insight = str(analysis_raw or "")
         ua_single = ""
         effect_one_liner = ""
+        ad_one_liner = ""
     cs = item.get("cover_style")
     if isinstance(cs, dict):
         cover_style_str = json.dumps(cs, ensure_ascii=False)
@@ -722,6 +744,7 @@ def _params_tuple_for_daily_creative_insight(
         ua_single,
         cover_style_str,
         effect_one_liner,
+        ad_one_liner,
     )
 
 
@@ -1156,6 +1179,7 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
             SELECT
               category, product, appid, ad_key, platform,
               video_duration, video_url, raw_json, insight_analysis, insight_ua_suggestion,
+              effect_one_liner, ad_one_liner,
               updated_at_local, id
             FROM daily_creative_insights
             WHERE ad_key IN ({placeholders})
@@ -1208,6 +1232,8 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                     "pipeline_tags": pipeline_tags,
                     "analysis": str(row["insight_analysis"] or ""),
                     "ua_suggestion_single": str(row["insight_ua_suggestion"] or ""),
+                    "effect_one_liner": str(row["effect_one_liner"] or ""),
+                    "ad_one_liner": str(row["ad_one_liner"] or ""),
                 }
         return out
     finally:
@@ -1729,6 +1755,8 @@ def combined_analysis_results_for_pipeline(
                         "video_url": ex.get("video_url", ""),
                         "preview_img_url": ex.get("preview_img_url", ""),
                         "pipeline_tags": ex.get("pipeline_tags") or [],
+                        "effect_one_liner": ex.get("effect_one_liner", ""),
+                        "ad_one_liner": ex.get("ad_one_liner", ""),
                     },
                 )
             )
@@ -1769,6 +1797,8 @@ def combined_analysis_results_for_pipeline(
                         "video_url": ex0.get("video_url", ""),
                         "preview_img_url": ex0.get("preview_img_url", ""),
                         "pipeline_tags": ex0.get("pipeline_tags") or [],
+                        "effect_one_liner": ex0.get("effect_one_liner", ""),
+                        "ad_one_liner": ex0.get("ad_one_liner", ""),
                     },
                 )
             else:
