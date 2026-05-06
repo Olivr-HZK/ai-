@@ -1,10 +1,11 @@
 """
 多渠道推送与表格同步（基于 workflow 产物）：
-1) 企业微信机器人推送（自动按字节分段，使用新日报格式）
+1) 企业微信机器人推送（默认关闭；设 VIDEO_ENHANCER_WECOM_ENABLED=1 或仅用 --wecom-only 时推送）
 2) Google Sheet 同步（通过 Apps Script Webhook）
 
 环境变量：
-- WECOM_BOT_WEBHOOK: 企业微信机器人 webhook
+- WECOM_BOT_WEBHOOK: 企业微信机器人 webhook（仅在上项开启时用到）
+- VIDEO_ENHANCER_WECOM_ENABLED: 设为 1/true 开启企业微信推送；未设则不发
 - GOOGLE_SHEET_WEBHOOK_URL: Google Apps Script Web App URL（接收 JSON 并写入 Sheet）
 """
 
@@ -37,13 +38,18 @@ def _default_date() -> str:
     return (date.today() - timedelta(days=1)).isoformat()
 
 
+def _wecom_env_enabled() -> bool:
+    v = os.getenv("VIDEO_ENHANCER_WECOM_ENABLED", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="企业微信分段推送 + Google Sheet 同步")
+    p = argparse.ArgumentParser(description="可选企业微信推送 + Google Sheet 同步（企微默认关闭）")
     p.add_argument("--date", default=_default_date(), help="目标日期 YYYY-MM-DD（默认昨天）")
     p.add_argument("--raw", default="", help="raw 文件路径（可选）")
     p.add_argument("--suggestion-md", default="", help="UA建议 md 文件路径（可选）")
     p.add_argument("--suggestion-json", default="", help="UA建议 json 文件路径（可选）")
-    p.add_argument("--wecom-only", action="store_true", help="仅推企业微信，不同步 Google Sheet")
+    p.add_argument("--wecom-only", action="store_true", help="仅推企业微信（仍会检查 WECOM_BOT_WEBHOOK）；不同步 Google Sheet")
     p.add_argument("--sheet-only", action="store_true", help="仅同步 Google Sheet，不推企业微信")
     return p.parse_args()
 
@@ -55,7 +61,17 @@ def _resolve_paths(target_date: str, args: argparse.Namespace) -> tuple[Path, Pa
     return raw, s_md, s_json
 
 
-WECOM_MAX_TEXT_BYTES = 4096
+WECOM_MAX_TEXT_BYTES = 3800  # 企业微信单条上限 4096（UTF-8）；分段时 "[n/m]\n" 会占额外字节，留余量
+
+
+def _sanitize_gsheet_tab_name(raw: str, default: str) -> str:
+    """防止 .env 误把两行粘成一行时 tab 名含 '=' 或超长导致 gspread 400。"""
+    s = (raw or "").strip()
+    if "=" in s:
+        s = s.split("=", 1)[0].strip()
+    if not s:
+        return default
+    return s[:100]
 
 
 def _split_by_utf8_bytes(text: str, max_bytes: int = WECOM_MAX_TEXT_BYTES) -> List[str]:
@@ -140,8 +156,8 @@ def sync_to_google_sheet(webhook_url: str, target_date: str, raw_payload: Dict[s
     """
     sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
     sa_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
-    rows_sheet_name = os.getenv("GOOGLE_SHEET_ROWS_SHEETNAME", "video_enhancer_rows").strip()
-    cards_sheet_name = os.getenv("GOOGLE_SHEET_CARDS_SHEETNAME", "video_enhancer_cards").strip()
+    rows_sheet_name = _sanitize_gsheet_tab_name(os.getenv("GOOGLE_SHEET_ROWS_SHEETNAME", "").strip(), "video_enhancer_rows")
+    cards_sheet_name = _sanitize_gsheet_tab_name(os.getenv("GOOGLE_SHEET_CARDS_SHEETNAME", "").strip(), "video_enhancer_cards")
     if sheet_id and sa_file:
         try:
             import gspread  # type: ignore
@@ -456,9 +472,14 @@ def main() -> None:
     wecom_webhook = os.getenv("WECOM_BOT_WEBHOOK", "").strip()
     sheet_webhook = os.getenv("GOOGLE_SHEET_WEBHOOK_URL", "").strip()
 
-    card_md = _build_daily_card_from_db(target_date)
+    run_wecom = False
+    if args.wecom_only:
+        run_wecom = True
+    elif not args.sheet_only and _wecom_env_enabled():
+        run_wecom = True
 
-    if not args.sheet_only:
+    if run_wecom:
+        card_md = _build_daily_card_from_db(target_date)
         try:
             push_wecom_markdown(wecom_webhook, card_md)
         except Exception as e:

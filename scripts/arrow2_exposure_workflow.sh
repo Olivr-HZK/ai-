@@ -36,9 +36,18 @@ if [[ "${ARROW2_WIPE_DB:-}" == "1" ]]; then
   WFLAG+=(--wipe-db)
 fi
 
-exec "$PY" "${ROOT}/scripts/workflow_arrow2_full_pipeline.py" \
-  ${TD:+--date "$TD"} \
-  --output-prefix "$PREFIX" \
-  --pull-only exposure_top10 \
-  "${WFLAG[@]}" \
-  "$@"
+# macOS 自带 bash 3.2 + set -u：空数组 "${WFLAG[@]}" 会触发 unbound variable
+if (( ${#WFLAG[@]} > 0 )); then
+  exec "$PY" "${ROOT}/scripts/workflow_arrow2_full_pipeline.py" \
+    ${TD:+--date "$TD"} \
+    --output-prefix "$PREFIX" \
+    --pull-only exposure_top10 \
+    "${WFLAG[@]}" \
+    "$@"
+else
+  exec "$PY" "${ROOT}/scripts/workflow_arrow2_full_pipeline.py" \
+    ${TD:+--date "$TD"} \
+    --output-prefix "$PREFIX" \
+    --pull-only exposure_top10 \
+    "$@"
+fi
