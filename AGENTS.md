@@ -2,16 +2,37 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-05-06
+
+### [项目结构] 三工作流包化重构
+
+- 项目已重构为围绕三条生产工作流维护：**Video Enhancer**、**Arrow2 latest_yesterday**、**Arrow2 exposure_top10**。
+- 核心代码迁入 `ua_workflows/`：
+  - `ua_workflows/video_enhancer/`：VE 抓取、DOM 补全、分析、封面去重、同步、推送、验收。
+  - `ua_workflows/arrow2/`：Arrow2 pipeline、detail-v2 爬虫、封面去重、飞书同步。
+  - `ua_workflows/shared/`：广大大、LLM、媒体解析、SQLite、路径配置等共享基础设施。
+- `scripts/` 只保留三个整合入口：
+  - `scripts/run_video_enhancer.py`
+  - `scripts/run_arrow2_latest.py`
+  - `scripts/run_arrow2_exposure.py`
+- 另保留三个爬取冒烟测试入口，只跑一个产品、只落 raw JSON、不入库/不同步，且支持 `--headed` / `--headless`：
+  - `scripts/test_video_enhancer_crawl.py`
+  - `scripts/test_arrow2_latest_crawl.py`
+  - `scripts/test_arrow2_exposure_crawl.py`
+- 旧 UA、hot rank/new rank、playable、调试探针、一次性 backfill/preview/test 脚本已归档到 `archive/removed_scripts_2026_05_06/`。
+- 后续新增或修改功能时，优先在 `ua_workflows/` 内按工作流归属维护；`scripts/` 只放整合入口或无副作用的冒烟测试入口。
+
 ## 项目结构原则
 
-本项目围绕**两条工作流**展开，所有变更记录和汇报均按工作流分别组织：
+本项目围绕**三条生产工作流**展开，所有变更记录和汇报均按工作流分别组织：
 
 | 工作流 | 简称 | 核心脚本 | 用途 |
 |--------|------|---------|------|
-| **Video Enhancer** | VE | `workflow_video_enhancer_full_pipeline.py` | 广大大竞品素材抓取 + 灵感分析 + 日报推送 |
-| **Arrow2** | Arrow2 | `workflow_arrow2_full_pipeline.py` | 广大大 Arrow2 竞品每日最新/展示估值抓取 + 分析 + 周趋势 |
+| **Video Enhancer** | VE | `scripts/run_video_enhancer.py` | 广大大竞品素材抓取 + 灵感分析 + 日报推送 |
+| **Arrow2 最新** | Arrow2 latest | `scripts/run_arrow2_latest.py` | 广大大 Arrow2 竞品每日最新抓取 + 可选分析 + 同步 |
+| **Arrow2 展示估值** | Arrow2 exposure | `scripts/run_arrow2_exposure.py` | 广大大 Arrow2 竞品展示估值抓取 + 可选分析 + 同步 |
 
-- **变更日志按工作流分组**：每条记录标注所属工作流（VE / Arrow2）；若同时涉及两条，分别描述。
+- **变更日志按工作流分组**：每条记录标注所属工作流（VE / Arrow2 latest / Arrow2 exposure）；若同时涉及多条，分别描述。
 - **验收报告不追踪**：`reports/` 下的 `*_acceptance.md` 为工作流自动产物，不需要在变更日志中追踪或记录。
 - **共享基础设施**（如 `llm_client.py`、`video_enhancer_pipeline_db.py`、`cover_style_intraday.py`）变更时注明影响的工作流。
 
