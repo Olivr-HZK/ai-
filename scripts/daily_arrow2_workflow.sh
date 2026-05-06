@@ -58,12 +58,20 @@ case "$MODE" in
     shift
     WFLAG=()
     if [[ "${ARROW2_WIPE_DB:-}" == "1" ]]; then WFLAG+=(--wipe-db); fi
-    exec "$PY" scripts/workflow_arrow2_full_pipeline.py \
-      ${TD:+--date "$TD"} \
-      --output-prefix "${PREFIX}_exposure_top10" \
-      --pull-only exposure_top10 \
-      "${WFLAG[@]}" \
-      "$@"
+    if (( ${#WFLAG[@]} > 0 )); then
+      exec "$PY" scripts/workflow_arrow2_full_pipeline.py \
+        ${TD:+--date "$TD"} \
+        --output-prefix "${PREFIX}_exposure_top10" \
+        --pull-only exposure_top10 \
+        "${WFLAG[@]}" \
+        "$@"
+    else
+      exec "$PY" scripts/workflow_arrow2_full_pipeline.py \
+        ${TD:+--date "$TD"} \
+        --output-prefix "${PREFIX}_exposure_top10" \
+        --pull-only exposure_top10 \
+        "$@"
+    fi
     ;;
   crawl-only)
     shift
