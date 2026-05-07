@@ -8,6 +8,17 @@ UA 素材 · 三工作流版
 
 核心代码位于 `ua_workflows/`，`scripts/` 只保留三个整合入口。
 
+## 项目文档
+
+| 说明 | 路径 |
+|------|------|
+| 文档索引 | [docs/README.md](docs/README.md) |
+| **定时任务（crontab）** | [docs/cron-schedules.md](docs/cron-schedules.md) |
+| 三条工作流说明 | [docs/workflows.md](docs/workflows.md) |
+| 环境、`data/`、换机迁库 | [docs/setup-and-data.md](docs/setup-and-data.md) |
+
+Agent 变更日志见根目录 [AGENTS.md](AGENTS.md)。
+
 ## 环境准备
 
 ```bash
@@ -29,9 +40,13 @@ ua素材/
 │   ├── run_video_enhancer.py
 │   ├── run_arrow2_latest.py
 │   ├── run_arrow2_exposure.py
+│   ├── cron_ai_video_enhancer_daily.sh
+│   ├── cron_ai_arrow2_latest_daily.sh
+│   ├── cron_ai_arrow2_exposure_wed_sat.sh
 │   ├── test_video_enhancer_crawl.py
 │   ├── test_arrow2_latest_crawl.py
 │   └── test_arrow2_exposure_crawl.py
+├── docs/
 ├── config/
 ├── data/
 ├── reports/
