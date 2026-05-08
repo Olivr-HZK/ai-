@@ -2,6 +2,12 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-05-08
+
+### [Arrow2] 修复 pipeline 封面去重 import（cron Step3 崩溃）
+
+- `ua_workflows/arrow2/pipeline.py`：旧名 `arrow2_cover_style_intraday` 已改为 `from ua_workflows.arrow2.cover_dedupe import apply_arrow2_cover_style_dedupe`，避免 `run_arrow2_latest.py` 在 `arrow2_creative_library` 写入后 `ModuleNotFoundError`。
+
 ## 2026-05-07
 
 ### [运维] macOS crontab 推荐入口（避开工位上其它 7–10 点定时任务）
@@ -78,12 +84,12 @@
 
 ### [Arrow2] `first_seen` 早于目标日则提前停滚、停 DOM 点卡
 
-- `**run_search_workflow.py**`：新增 `_oldest_first_seen_ymd_among_creatives`；`**_search_one_keyword**` 可选 `stop_scroll_if_oldest_first_seen_before_ymd`——napi 已合并行中最早 `first_seen`（北京日）**严格早于**该 ISO 日（与「仅该日 `first_seen`」目标一致）时不再向下滚。`**_click_cards_for_details`** 可选 `stop_after_detail_first_seen_before_ymd`：某次详情里 `first_seen` 早于该日则关弹层后不再点后续卡（新→旧）。`**run_arrow2_batch` → `_collect_keyword_crawl_result_arrow2_latest_dom**`：在 `filter_yesterday_only` 的 latest+DOM 路径上传入 `first_seen_ymd`。环境变量 `**ARROW2_FIRST_SEEN_EARLY_STOP=0**` 关闭上述早停（默认开）。
+- `**run_search_workflow.py`**：新增 `_oldest_first_seen_ymd_among_creatives`；`**_search_one_keyword`** 可选 `stop_scroll_if_oldest_first_seen_before_ymd`——napi 已合并行中最早 `first_seen`（北京日）严格早于该 ISO 日（与「仅该日 `first_seen`」目标一致）时不再向下滚。`**_click_cards_for_details**` 可选 `stop_after_detail_first_seen_before_ymd`：某次详情里 `first_seen` 早于该日则关弹层后不再点后续卡（新→旧）。`**run_arrow2_batch` → `_collect_keyword_crawl_result_arrow2_latest_dom`**：在 `filter_yesterday_only` 的 latest+DOM 路径上传入 `first_seen_ymd`。环境变量 `**ARROW2_FIRST_SEEN_EARLY_STOP=0`** 关闭上述早停（默认开）。
 - `**run_search_workflow.py**`：`_merge_prefer_dom_detail` 改为按 **展示估值工作流入库口径** 合并：latest+DOM 时，`**impression` / `all_exposure_value` / `heat` / `days_count` / `new_week_exposure_value` 固定优先取同 `ad_key` 的 napi 行**（与 exposure_top10 直接用列表 creative 入库一致）；detail 继续用于补正文、素材链接、首末次时间等详情字段。`preview_img_url`、`platform`、`advertiser_name`、`resource_urls` 等基础字段若 detail 缺失仍会回填，避免性能指标被 detail 覆盖或丢失。
 - `**test_arrow2_competitors.py`**：补传 `keyword_product` 到 `run_arrow2_batch`。此前终端 `print_arrow2_matched_creatives` 使用的 `all_creatives` 在 latest_yesterday 调试场景里只过了日期筛选、**未走 keyword→广告主匹配**，会短暂打印出 `Arrow Maze` / `Arrows Out` 等相邻广告主；而 raw 落盘前又在脚本里二次 `advertiser_matches_product`，导致“终端条数”和“raw 条数”不一致。现已统一为：**终端打印 / run 返回 / raw 落盘**都使用同一广告主过滤口径。
 - `**config/arrow2_competitor.json` + `run_search_workflow.py`**：`latest_yesterday` 去掉 `max_creatives_per_keyword: 30`，改为**默认不按每词 30 条截断**；同时 `_collect_keyword_crawl_result_arrow2_latest_dom` 在未显式设置环境变量 `**ARROW2_DOM_CLICK_MAX_CARDS`** 时，默认把**当前 DOM 已加载的卡片全部点击**（而不是固定 100 张内或更小 cap）。若后续想限条，显式设该环境变量为正整数即可。
 - `**run_search_workflow.py`**：按最新确认口径调整 latest+DOM 点卡停止条件。`_collect_keyword_crawl_result_arrow2_latest_dom` 不再把 napi 中“已出现早于目标日”作为**点卡阶段**的提前停止信号；改为：**先从页首逐张点击当前已加载卡片**，只有 `_click_cards_for_details` 在真正点开的某张详情里发现 `first_seen < target_date` 时，才停止后续点卡。并为单张 click 增加 **1 次重试**，降低“页面上有卡但本次没点开/没拦到 detail”导致的漏点。
-- `**test_arrow2_competitors.py`**：新增 `**--pause-per-product**`，主测试脚本现已统一支持：单产品（`--products ...`）、全产品（`--all-products`）、逐词暂停（`--debug-step-products`）、逐产品暂停（`--pause-per-product`）。开启 `--pause-per-product` 时自动等同 `--debug`，并默认关闭流程末尾额外暂停。
+- `**test_arrow2_competitors.py`**：新增 `**--pause-per-product`**，主测试脚本现已统一支持：单产品（`--products ...`）、全产品（`--all-products`）、逐词暂停（`--debug-step-products`）、逐产品暂停（`--pause-per-product`）。开启 `--pause-per-product` 时自动等同 `--debug`，并默认关闭流程末尾额外暂停。
 - `**test_arrow2_yesterday_all_products_headed.py**`：不再维护独立实现，改为**兼容包装器**，内部直接转调：`test_arrow2_competitors.py --all-products --pull-only latest_yesterday --debug --pause-per-product`。后续单/全产品测试请优先使用主脚本。
 - `**run_search_workflow.py`（再调整）**：根据用户最新要求，`latest_yesterday` 已重新切回**卡片点击主路径**：`run_arrow2_batch` 对 `latest_yesterday` 调 `_collect_keyword_crawl_result_arrow2_latest_dom`，搜索/滚动后对**当前页面 DOM 卡片逐张点击**拿 detail；最终 `all_creatives` 以 **DOM 基础卡片 + detail 覆盖结果** 为主，不再把 `napi creative_list` 作为 latest_yesterday 的最终主结果源。`napi` 仍用于列表加载/滚动与兜底回退。调试输出新增：广告主匹配后全部卡、按 `first_seen=target_date` 筛后卡，以及逐张点击日志（含 `UTC+8` 时间）。
 
@@ -120,7 +126,7 @@
 ### [VE] 飞书主表 `视频` 附件 + 恢复 `launched_effects_db.py`（我方已投 + embedding）
 
 - `**sync_raw_analysis_to_bitable_and_push_card.py`**：`FIELD_DEFS` 增「视频」(type=17)；对 `video_duration>0` 且可直链下载的 `pick_video_url` 拉流上传（`VIDEO_BITABLE_MAX_MB` / `VIDEO_BITABLE_UPLOAD`）；主表同步前对 `analysis["results"]` 调用 `apply_launched_effects_filter`（与全链路 Step 2.9 一致）。
-- `**launched_effects_db.py**`：仓库中曾为空导致 Step 2.9 未生效；已补全：飞书已投放表拉取 + 本地缓存 + **关键词子串** + `**llm_client.call_embedding` 语义 cosine ≥ `LAUNCHED_EFFECTS_MATCH_THRESHOLD`（默认 0.65）**；无飞书时降级 `data/launched_effects_descriptions_only.json`。
+- `**launched_effects_db.py`**：仓库中曾为空导致 Step 2.9 未生效；已补全：飞书已投放表拉取 + 本地缓存 + 关键词子串 + `**llm_client.call_embedding` 语义 cosine ≥ `LAUNCHED_EFFECTS_MATCH_THRESHOLD`（默认 0.65）**；无飞书时降级 `data/launched_effects_descriptions_only.json`。
 - `**workflow_video_enhancer_acceptance.py`**：已补全实现；`run_acceptance_after_workflow` 汇总 raw/analysis/方向卡片/封面与已投放 step/推送表行数/历史截断量，写 `data/workflow_video_enhancer_{date}_acceptance.json` 与 `reports/…_acceptance.md`；环境变量与 AGENTS 中「工作流验收」说明一致。未增加 `daily_video_enhancer_acceptance` 表（文档曾提及，当前以文件落盘 + 既有 DB 查询为主）。
 
 ---
@@ -129,10 +135,10 @@
 
 ### [Arrow2] `latest_yesterday`：滚动越过「昨日」边界 + 竞品配置
 
-- `**run_search_workflow._search_one_keyword**`：可选 `scroll_until_older_than_date`（目标昨日 YYYY-MM-DD）。在「最新创意」下持续滚动直到底层 napi 合并结果里出现 **first_seen 或 created_at（UTC+8）早于该日** 的素材（认为已扫完目标日窗口），或仍受「连续 3 轮无新批次」与**约 48 轮**上限约束。之后 `filter_yesterday_only` 仍只保留 `first_seen=昨日`。
+- `**run_search_workflow._search_one_keyword`**：可选 `scroll_until_older_than_date`（目标昨日 YYYY-MM-DD）。在「最新创意」下持续滚动直到底层 napi 合并结果里出现 first_seen 或 created_at（UTC+8）早于该日 的素材（认为已扫完目标日窗口），或仍受「连续 3 轮无新批次」与**约 48 轮**上限约束。之后 `filter_yesterday_only` 仍只保留 `first_seen=昨日`。
 - `**run_arrow2_batch`**：对 `order_by=latest` 且 `filter_yesterday_only` 的 pull_spec，默认开启上述滚动（`scroll_until_past_target_date` 缺省为真）；显式设为 `false` 可恢复较短轮数 + idle 的旧停法。
-- `**config/arrow2_competitor.json**`：移除 `com.arrow.out` 行；`latest_yesterday` 中说明 `scroll_until_past_target_date`。
-- `**test_arrow2_competitors.py**`：未指定 `--products` 时默认只跑配置中**第一个**产品；`--all-products` 跑全部。
+- `**config/arrow2_competitor.json`**：移除 `com.arrow.out` 行；`latest_yesterday` 中说明 `scroll_until_past_target_date`。
+- `**test_arrow2_competitors.py`**：未指定 `--products` 时默认只跑配置中**第一个**产品；`--all-products` 跑全部。
 - **Arrow2 `order_by=latest`（含 latest_yesterday）**：与 `exposure` 一样改为 `**arrow2_build_result_from_dom_after_search`**，列表为 **DOM 卡片 + detail-v2**（`list_source=dom`）；`filter_yesterday_only` 时单词默认多取卡（`max_n` 默认 120、硬顶 200）再按 first_seen 筛昨日。旧无 `pull_specs` 矩阵里 `latest` 亦走 DOM。
 - **DOM 广告主过滤**：`run_arrow2_batch` 增加 `keyword_product`（搜索框 key → 与 config `match` 一致的产品名）；`arrow2_build_result_from_dom_after_search` 在 detail-v2 后调用 `advertiser_matches_product` 剔除与目标产品不一致的卡。`test_arrow2_competitors` 自动传入各条目的 `product`。
 
@@ -149,7 +155,7 @@
 - **指纹**（默认开，`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED`）：在算 CLIP 前仍调用 `crossday_filter_items_against_creative_library`，与文首「封面跨日指纹」一致。
 - **向量**：优先读库 `load_cover_embedding_blob_map_by_ad_keys`；缺失则 `cover_embedding.compute_cover_embedding_vector_from_url` 仅算向量、不写库（当日首轮入库前新 `ad_key` 可能无行；后续 `run_cover_embedding_job` 等仍会补 `cover_embedding`）。
 - **占位入库**：`insight_cover_style` 写入 CLIP 占位 JSON（如 `style_type`: 「CLIP视觉」），`upsert_single_cover_style_insight` 逐条更新。
-- **聚类**：同 `appid` 内并查集，边条件 `cosine_similarity ≥` `**COVER_VISUAL_DEDUP_THRESHOLD`**（默认 **0.8**）；簇内保留 `all_exposure_value` 最大一条；若最优来自**历史窗口**则剔今日（`cover_style_cluster_vs_yesterday`），若最优为今日则日内互斥（`cover_style_cluster`）。报告 `cover_dedupe_mode`: `**clip_visual`**。
+- **聚类**：同 `appid` 内并查集，边条件 `cosine_similarity ≥` `**COVER_VISUAL_DEDUP_THRESHOLD`**（默认 0.8）；簇内保留 `all_exposure_value` 最大一条；若最优来自**历史窗口**则剔今日（`cover_style_cluster_vs_yesterday`），若最优为今日则日内互斥（`cover_style_cluster`）。报告 `cover_dedupe_mode`: `**clip_visual`**。
 - **历史窗口**：`COVER_STYLE_CROSS_DAY_ENABLED` 开启时，加载 `**target_date` 前连续 N 日**（`**COVER_STYLE_HISTORY_LOOKBACK_DAYS`**，默认 **7**，即 T-1…T-7）内非空 `insight_cover_style`；`video_enhancer_pipeline_db.load_cover_style_rows_for_dates_grouped_by_appid` 合并多日，同一 `ad_key` 取 exposure 更高的一条。报告含 `cross_day_history_dates`、`cross_day_history_lookback_days`；`cross_day_prev_date` 仍为 **T-1**（兼容旧读者）；`per_appid` 增加 `history_ref_count`，并保留 `yesterday_ref_count` 与同长度（兼容）。
 
 **环境变量**（`.env.example` 已列）：`COVER_VISUAL_DEDUP_THRESHOLD`、`COVER_STYLE_HISTORY_LOOKBACK_DAYS`；其余 `COVER_STYLE_INTRADAY_ENABLED`、`COVER_STYLE_CROSS_DAY_*`、`COVER_STYLE_WORKERS` 仍适用。
@@ -320,7 +326,7 @@
 **变更**：
 
 - `scripts/workflow_video_enhancer_steps.py`：`crawl_store` 增加 `**--crawl-only`** — 只跑 `test_video_enhancer_two_competitors_318.py` 写 `workflow_video_enhancer_{日期}_raw.json`，**不**做封面去重、**不**写库；终端提示下一步执行 `cover_store`。
-- 新增子命令 `**cover_store`**：读已有 raw →（若 `COVER_STYLE_INTRADAY_ENABLED` 开启）`apply_intraday_cover_style_dedupe` → 写回 raw 与 `*_cover_style_intraday.json` → `**prune_daily_creative_insights_not_in_raw**`（删除当日库里已不在 raw 中的 `ad_key`，避免先全量入库再缩条后残留行）→ `upsert_daily_creative_insights` / `upsert_creative_library` / `upsert_daily_video_enhancer_filter_log`。
+- 新增子命令 `**cover_store`**：读已有 raw →（若 `COVER_STYLE_INTRADAY_ENABLED` 开启）`apply_intraday_cover_style_dedupe` → 写回 raw 与 `*_cover_style_intraday.json` → `**prune_daily_creative_insights_not_in_raw`**（删除当日库里已不在 raw 中的 `ad_key`，避免先全量入库再缩条后残留行）→ `upsert_daily_creative_insights` / `upsert_creative_library` / `upsert_daily_video_enhancer_filter_log`。
 - `scripts/video_enhancer_pipeline_db.py`：新增 `**prune_daily_creative_insights_not_in_raw**`。
 - `scripts/workflow_video_enhancer_full_pipeline.py`：增加 `**--skip-cover-dedupe**` — 一键流程中跳过封面聚类块，抓取后直接用全量 raw 继续（与关闭封面类似，无需改环境变量）。
 - 默认 `**crawl_store` 不带 `--crawl-only**` 时行为与改前一致（抓取 + 封面 + 入库）。分步编号在文件头注释中已更新为含 `cover_store`。
@@ -346,9 +352,9 @@
 
 **变更**：
 
-- `scripts/video_enhancer_pipeline_db.py`：抽取 `**crossday_filter_items_against_creative_library(target_date, items)`**（同 appid 下对 `creative_library` 早于当日的记录比对 `ad_key` / 主媒体 URL / 封面 `image_ahash_md5` 汉明距离 ≤ 阈值）。`**get_deduped_items_for_analysis**` 的 Step B 改为调用该函数，避免重复实现。
-- `scripts/cover_style_intraday.py`：在 `apply_intraday_cover_style_dedupe` 内、**CLIP 编码之前**默认执行上述过滤；命中则从本条列表剔除，不再进入后续封面向量步骤。报告含 `**cross_day_fingerprint_removed_count` / `cross_day_fingerprint_removed`**、`**input_count_before_cross_day_fingerprint**`；若过滤后无剩余素材，返回 `**empty_after_cross_day_fingerprint**`。
-- 环境变量 `**COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED**`（默认开启；`0`/`false`/`no`/`off` 关闭指纹层；**不**影响上文「历史 `insight_cover_style` + CLIP」跨日，后者仍由 `**COVER_STYLE_CROSS_DAY_ENABLED`** / `**COVER_STYLE_HISTORY_LOOKBACK_DAYS**` 控制）。
+- `scripts/video_enhancer_pipeline_db.py`：抽取 `**crossday_filter_items_against_creative_library(target_date, items)`**（同 appid 下对 `creative_library` 早于当日的记录比对 `ad_key` / 主媒体 URL / 封面 `image_ahash_md5` 汉明距离 ≤ 阈值）。`**get_deduped_items_for_analysis`** 的 Step B 改为调用该函数，避免重复实现。
+- `scripts/cover_style_intraday.py`：在 `apply_intraday_cover_style_dedupe` 内、**CLIP 编码之前**默认执行上述过滤；命中则从本条列表剔除，不再进入后续封面向量步骤。报告含 `**cross_day_fingerprint_removed_count` / `cross_day_fingerprint_removed`**、`**input_count_before_cross_day_fingerprint`**；若过滤后无剩余素材，返回 `**empty_after_cross_day_fingerprint**`。
+- 环境变量 `**COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED**`（默认开启；`0`/`false`/`no`/`off` 关闭指纹层；**不**影响上文「历史 `insight_cover_style` + CLIP」跨日，后者仍由 `**COVER_STYLE_CROSS_DAY_ENABLED`** / `**COVER_STYLE_HISTORY_LOOKBACK_DAYS`** 控制）。
 - `.env.example` 已补充 `COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED` 说明。
 
 **监控关注点**：指纹层依赖 `creative_library` 已有历史行（`first_target_date < 当日`）；冷启动或从未入库的竞品首日可能无命中，仅靠 **CLIP 历史窗口**参照兜底（见 **§2026-04-14**）。
@@ -359,7 +365,7 @@
 
 ### [VE] OpenRouter 用量：工作流前后各查一次 Key
 
-**变更**：主流程在 `workflow_video_enhancer_full_pipeline.py` 内调用 `**llm_client.print_openrouter_key_meter`**（工作流开始前 / 结束后各一次，需 `.env` 中 `OPENROUTER_API_KEY`）。默认关闭；设 `**OPENROUTER_METER=1**` 等开启（以 `llm_client` 内逻辑为准），输出经 `tee` 进入当日 `logs/daily_video_enhancer_workflow_${TARGET_DATE}.log`。独立脚本 `**scripts/openrouter_key_snapshot.sh**` 供单次手动对比（可能用 `curl`）。
+**变更**：主流程在 `workflow_video_enhancer_full_pipeline.py` 内调用 `**llm_client.print_openrouter_key_meter`**（工作流开始前 / 结束后各一次，需 `.env` 中 `OPENROUTER_API_KEY`）。默认关闭；设 `**OPENROUTER_METER=1`** 等开启（以 `llm_client` 内逻辑为准），输出经 `tee` 进入当日 `logs/daily_video_enhancer_workflow_${TARGET_DATE}.log`。独立脚本 `**scripts/openrouter_key_snapshot.sh**` 供单次手动对比（可能用 `curl`）。
 
 ### [VE] 终端耗时：灵感多模态 / 封面多模态
 
@@ -753,8 +759,8 @@ python scripts/arrow2_weekly_trend.py --workflow 展示估值
 
 - `**analyze_video_from_raw_json.py`**：VE prompt footer 新增 `【特效玩法】` 行（约 10~20 字概括核心特效/玩法/创意卖点，如「圣诞华服换脸」「AI 肌肉编辑」）。
 - `_strip_arrow2_footer_lines` 返回值新增第 5 项 `effect_one_liner`；VE 路径解析该行并写入输出。
-- `**video_enhancer_pipeline_db.py**`：`daily_creative_insights` 和 `creative_library` 均新增 `effect_one_liner TEXT` 列；`upsert` 时写入。
-- `**sync_raw_analysis_to_bitable_and_push_card.py**`：`FIELD_DEFS` 新增「特效玩法」字段（type=1）；同步时从 analysis 取 `effect_one_liner` 写入。
+- `**video_enhancer_pipeline_db.py`**：`daily_creative_insights` 和 `creative_library` 均新增 `effect_one_liner TEXT` 列；`upsert` 时写入。
+- `**sync_raw_analysis_to_bitable_and_push_card.py`**：`FIELD_DEFS` 新增「特效玩法」字段（type=1）；同步时从 analysis 取 `effect_one_liner` 写入。
 
 #### 2) 去重逻辑精简
 
@@ -805,8 +811,8 @@ python scripts/arrow2_weekly_trend.py --workflow 展示估值
 #### 5) 移除 UA 建议
 
 - `**analyze_video_from_raw_json.py`**：删除 `_build_single_ua_suggestion` 函数及调用；移除 `ua_suggestion_single` 和 `ad_one_liner` 从 VE 输出。
-- `**workflow_video_enhancer_full_pipeline.py**`：移除 `ua_suggestion_single` 和 `ad_one_liner` 在 `analysis_by_ad` 字典中的传递。
-- `**video_enhancer_pipeline_db.py**`：移除 `ad_one_liner` 在 `upsert_daily_creative_insight` 中的读取和写入（DB 列保留）。
+- `**workflow_video_enhancer_full_pipeline.py`**：移除 `ua_suggestion_single` 和 `ad_one_liner` 在 `analysis_by_ad` 字典中的传递。
+- `**video_enhancer_pipeline_db.py`**：移除 `ad_one_liner` 在 `upsert_daily_creative_insight` 中的读取和写入（DB 列保留）。
 
 #### 6) 分析重试机制
 
@@ -951,4 +957,4 @@ daily_ua_job.sh（可选）
 - `ua_suggestion_single`: 单条 UA 建议（已移除，不再生成第二次 LLM 调用）
 - `ad_one_liner`: 一句话说明（已从 VE 输出移除，Arrow2 路径保留）
 
-主流程合并后的 `analysis` JSON 还可能含：`pipeline_items`、`exclude_from_cluster`（2.8）、`launched_effect_match`（2.9）、`semantic_dedup_`* 等，以当日产物为准。
+主流程合并后的 `analysis` JSON 还可能含：`pipeline_items`、`exclude_from_cluster`（2.8）、`launched_effect_match`（2.9）、`semantic_dedup`_* 等，以当日产物为准。

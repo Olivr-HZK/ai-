@@ -172,7 +172,7 @@ def main() -> None:
     print(f"[arrow2-pipeline] Step2 arrow2_creative_library 写入/更新 {n_lib} 条")
 
     if not args.skip_cover:
-        from arrow2_cover_style_intraday import apply_arrow2_cover_style_dedupe
+        from ua_workflows.arrow2.cover_dedupe import apply_arrow2_cover_style_dedupe
 
         items2, cov_rep = apply_arrow2_cover_style_dedupe(items, td, raw.get("crawl_date"))
         raw["items"] = items2
