@@ -14,6 +14,7 @@ Video Enhancer 工作流验收：检查当日产物文件、分析成功率、�
   ACCEPTANCE_LOOKBACK_DAYS=7     历史截断后条数对比窗口
   ACCEPTANCE_LOW_VS_MEAN=0.5     今日 post_total 低于 lookback 均值比例时 warn
   ACCEPTANCE_HIGH_VS_MEAN=2.0    今日 post_total 高于 lookback 均值比例时 warn
+  ACCEPTANCE_MIN_EFFECT_COVERAGE=0.9 新素材 effect_one_liner 覆盖率低于该值时提示
   ACCEPTANCE_EXIT_ON_SOFT=0      为 1 时 soft 问题也 exit(2)（与 BLOCK 配合）
   ACCEPTANCE_STRICT=0            为 1 时部分「仅提示」升级为 soft
   ACCEPTANCE_FEISHU_ENABLED=0    为 1 且配置了 webhook 时发飞书卡片
@@ -43,6 +44,7 @@ from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT, REPORTS_DIR
 from ua_workflows.shared.db.video_enhancer import (
     DB_PATH,
     init_db,
+    load_daily_material_report,
     should_persist_suggestion_to_push_table,
 )
 
@@ -254,6 +256,15 @@ def _build_stages(target_date: str, partial: bool) -> Dict[str, Any]:
     )
     filter_step3 = {"input": f3_in, "output": f3_out, "skipped": f3_skip}
 
+    material_report: Dict[str, Any] = {}
+    material_summary: Dict[str, Any] = {}
+    material_error = ""
+    try:
+        material_report = load_daily_material_report(target_date, lookback_days=lb)
+        material_summary = dict(material_report.get("summary") or {})
+    except Exception as e:
+        material_error = str(e)
+
     stages: Dict[str, Any] = {
         "raw": {
             "path": str(raw_path.resolve()),
@@ -306,6 +317,10 @@ def _build_stages(target_date: str, partial: bool) -> Dict[str, Any]:
             "today_post_total": post_t,
             "history_mean_after_cnt": round(mean_after, 2),
         },
+        "material_report": {
+            "summary": material_summary,
+            "error": material_error or None,
+        },
     }
     if partial:
         stages["_partial"] = True
@@ -335,12 +350,16 @@ def _collect_issues(
     cl = stages.get("cluster") or {}
     push = stages.get("push") or {}
     hist = stages.get("history") or {}
+    material = stages.get("material_report") or {}
+    material_summary = material.get("summary") or {}
     f3 = (stages.get("filters") or {}).get("filter_step3") or {}
 
     if not raw.get("exists") and not partial:
         _issue(issues, "hard", "missing_raw", f"缺少 raw 文件或无法解析: {raw.get('path')}")
     if not an.get("exists") and not partial:
         _issue(issues, "hard", "missing_analysis", f"缺少 analysis 文件或无法解析: {an.get('path')}")
+    if material.get("error"):
+        _issue(issues, "warn", "material_report_error", f"日报素材报告生成失败: {material.get('error')}")
 
     if an.get("exists") and int(an.get("new_failed") or 0) > 0:
         _issue(
@@ -377,6 +396,28 @@ def _collect_issues(
         _issue(issues, "soft", "empty_push_table", "按规则应写入 daily_ua_push_content，但当天行数为 0。")
     if not should_p and pr > 0:
         _issue(issues, "warn", "unexpected_push_rows", f"按规则不必写入推送表，但存在 {pr} 行，请核对。")
+
+    new_material_count = int(material_summary.get("new_material_count") or 0)
+    if raw.get("exists") and not partial and new_material_count == 0:
+        _issue(issues, "soft", "no_new_materials", "当日 creative_library 中没有 first_target_date=target_date 的新素材。")
+
+    min_effect_cov = _env_float("ACCEPTANCE_MIN_EFFECT_COVERAGE", "0.9")
+    effect_cov = float(material_summary.get("effect_one_liner_coverage") or 0.0)
+    if new_material_count > 0 and effect_cov < min_effect_cov:
+        _issue(
+            issues,
+            "soft" if strict else "warn",
+            "low_effect_one_liner_coverage",
+            f"新素材 effect_one_liner 覆盖率 {effect_cov:.1%} 低于阈值 {min_effect_cov:.0%}。",
+        )
+
+    if hist.get("history_pairs") and int(material_summary.get("sustained_signal_count") or 0) == 0:
+        _issue(
+            issues,
+            "warn",
+            "no_sustained_signals",
+            "近几日已有历史数据，但当日未生成持续发力信号，请核对去重报告或玩法字段。",
+        )
 
     # 封面剔除比例
     if not f3.get("skipped") and f3.get("input") and f3.get("output") is not None:

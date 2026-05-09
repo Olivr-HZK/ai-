@@ -11,9 +11,11 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from collections import defaultdict
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from ua_workflows.shared.config import DATA_DIR
@@ -2186,6 +2188,519 @@ def load_recent_direction_cards(
 # 特效玩法去重 & 新素材识别 & 持续发力信号
 # ---------------------------------------------------------------------------
 
+_EFFECT_FILLER_PATTERNS = [
+    r"ai",
+    r"人工智能",
+    r"一键",
+    r"自动",
+    r"智能",
+    r"生成",
+    r"制作",
+    r"打造",
+    r"输出",
+    r"特效",
+    r"玩法",
+    r"素材",
+    r"广告",
+    r"视频",
+    r"图片",
+    r"照片",
+]
+
+_EFFECT_SYNONYM_REPLACEMENTS = [
+    ("polaroid", "宝丽来"),
+    ("拍立得", "宝丽来"),
+    ("明星", "名人"),
+    ("偶像", "名人"),
+    ("艺人", "名人"),
+    ("合照", "合影"),
+    ("同框", "合影"),
+    ("修脸", "修图"),
+    ("修复", "修图"),
+    ("美化", "修图"),
+]
+
+
+def normalize_effect_one_liner(text: str) -> str:
+    """Normalize short effect descriptions for cross-day play matching."""
+    s = str(text or "").strip().lower()
+    if not s or s == "none":
+        return ""
+    s = re.sub(r"[（(].*?[）)]", "", s)
+    s = re.sub(r"[【】\[\]{}<>《》\"'“”‘’]", "", s)
+    for src, dst in _EFFECT_SYNONYM_REPLACEMENTS:
+        s = s.replace(src, dst)
+    s = re.sub(r"[\s,，.。:：;；!！?？/\\|_+\-—~·•]+", "", s)
+    for pat in _EFFECT_FILLER_PATTERNS:
+        s = re.sub(pat, "", s, flags=re.I)
+    return s.strip()
+
+
+def _effect_similarity_threshold() -> float:
+    raw = (os.getenv("EFFECT_ONE_LINER_SIMILARITY_THRESHOLD") or "0.82").strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.82
+
+
+def _intraday_effect_similarity_threshold() -> float:
+    raw = (
+        os.getenv("INTRADAY_EFFECT_SIMILARITY_THRESHOLD")
+        or os.getenv("EFFECT_ONE_LINER_SIMILARITY_THRESHOLD")
+        or "0.82"
+    ).strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.82
+
+
+def _old_effect_bitable_similarity_threshold() -> float:
+    raw = (os.getenv("OLD_EFFECT_SIMILARITY_THRESHOLD") or "0.94").strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.94
+
+
+def _embedding_duplicate_candidate_threshold() -> float:
+    raw = (os.getenv("EMBEDDING_DUP_CANDIDATE_THRESHOLD") or "0.92").strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.92
+
+
+_EFFECT_SIGNATURES = [
+    ("名人宝丽来合影", ("名人", "宝丽来", "合影"), 0.92),
+    ("派对修图前后对比", ("派对", "修图", "前后对比"), 0.9),
+]
+
+
+def _effect_signature_similarity(na: str, nb: str) -> float:
+    best = 0.0
+    for _, tokens, score in _EFFECT_SIGNATURES:
+        if all(t in na for t in tokens) and all(t in nb for t in tokens):
+            best = max(best, score)
+    return best
+
+
+def _effect_text_similarity(a: str, b: str) -> float:
+    a0 = str(a or "").strip()
+    b0 = str(b or "").strip()
+    if not a0 or not b0:
+        return 0.0
+    if a0 == b0:
+        return 1.0
+    na = normalize_effect_one_liner(a0)
+    nb = normalize_effect_one_liner(b0)
+    if not na or not nb:
+        return 0.0
+    if na == nb:
+        return 1.0
+    if len(na) >= 5 and len(nb) >= 5 and (na in nb or nb in na):
+        return 0.92
+    return max(_effect_signature_similarity(na, nb), float(SequenceMatcher(None, na, nb).ratio()))
+
+
+def _append_material_tag(row: Dict[str, Any], tag: str) -> None:
+    tags = row.get("material_tags")
+    if not isinstance(tags, list):
+        tags = []
+    if tag not in tags:
+        tags.append(tag)
+    row["material_tags"] = tags
+
+
+def _effect_row_score(row: Dict[str, Any]) -> Tuple[int, int, int, str]:
+    def as_int(value: Any) -> int:
+        try:
+            return int(float(value or 0))
+        except Exception:
+            return 0
+
+    return (
+        as_int(row.get("all_exposure_value")),
+        as_int(row.get("impression")),
+        as_int(row.get("heat")),
+        str(row.get("ad_key") or ""),
+    )
+
+
+def apply_intraday_effect_bitable_filter(
+    rows: List[Dict[str, Any]],
+    threshold: float | None = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    Mark same-day duplicate plays within the same appid.
+
+    It keeps the strongest representative in each connected similarity group and
+    excludes the rest from Bitable/direction cards. This catches duplicate captures
+    inside one daily batch, which cross-day history matching cannot see.
+    """
+    if not rows:
+        return 0, []
+    if threshold is None:
+        threshold = _intraday_effect_similarity_threshold()
+
+    by_app: Dict[str, List[int]] = defaultdict(list)
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        if row.get("exclude_from_bitable"):
+            continue
+        appid = str(row.get("appid") or "").strip()
+        effect = str(row.get("effect_one_liner") or "").strip()
+        if appid and effect and effect != "None" and normalize_effect_one_liner(effect):
+            by_app[appid].append(idx)
+
+    details: List[Dict[str, Any]] = []
+    newly_marked = 0
+    for indices in by_app.values():
+        kept_indices: List[int] = []
+        for idx in sorted(indices, key=lambda i: _effect_row_score(rows[i]), reverse=True):
+            row = rows[idx]
+            effect = str(row.get("effect_one_liner") or "")
+            best_keeper_idx: int | None = None
+            best_sim = 0.0
+            for kept_idx in kept_indices:
+                sim = _effect_text_similarity(effect, str(rows[kept_idx].get("effect_one_liner") or ""))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_keeper_idx = kept_idx
+            if best_keeper_idx is None or best_sim < threshold:
+                kept_indices.append(idx)
+                continue
+
+            keeper = rows[best_keeper_idx]
+            keeper_effect = str(keeper.get("effect_one_liner") or "")
+            was_excluded = bool(row.get("exclude_from_bitable"))
+            row["exclude_from_bitable"] = True
+            row["exclude_from_cluster"] = True
+            row["intraday_effect_match"] = {
+                "kept_ad_key": str(keeper.get("ad_key") or ""),
+                "kept_effect_one_liner": keeper_effect,
+                "similarity": round(best_sim, 3),
+                "threshold": round(float(threshold), 3),
+                "match_type": "exact" if best_sim >= 0.999 else "similar",
+            }
+            _append_material_tag(row, "日内玩法重复")
+            if not was_excluded:
+                newly_marked += 1
+            details.append(
+                {
+                    "ad_key": str(row.get("ad_key") or ""),
+                    "product": str(row.get("product") or ""),
+                    "effect_one_liner": effect,
+                    "kept_ad_key": str(keeper.get("ad_key") or ""),
+                    "kept_effect_one_liner": keeper_effect,
+                    "similarity": round(best_sim, 3),
+                    "match_type": "exact" if best_sim >= 0.999 else "similar",
+                    "newly_marked": not was_excluded,
+                }
+            )
+    return newly_marked, details
+
+
+def apply_embedding_duplicate_candidate_tags(
+    target_date: str,
+    rows: List[Dict[str, Any]],
+    lookback_days: int = 7,
+    threshold: float | None = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    Mark embedding-based duplicate candidates without excluding them.
+
+    This is a soft calibration signal only: it appends `embedding重复候选` and writes
+    match metadata, but deliberately does not set exclude_from_bitable/cluster.
+    """
+    if not rows:
+        return 0, []
+    if threshold is None:
+        threshold = _embedding_duplicate_candidate_threshold()
+    try:
+        lookback_days = int(os.getenv("EMBEDDING_DUP_CANDIDATE_LOOKBACK_DAYS") or lookback_days)
+    except ValueError:
+        lookback_days = 7
+    lookback_days = max(1, min(60, lookback_days))
+
+    try:
+        from ua_workflows.shared.llm.client import call_embedding, cosine_similarity
+    except Exception:
+        return 0, []
+
+    embed_cache: Dict[str, List[float]] = {}
+
+    def embed(text: str) -> Optional[List[float]]:
+        t = str(text or "").strip()
+        if not t:
+            return None
+        if t not in embed_cache:
+            try:
+                embed_cache[t] = call_embedding(t[:300])
+            except Exception:
+                return None
+        return embed_cache.get(t)
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        hist_map = _load_effect_history_rows(cur, target_date, lookback_days)
+    finally:
+        conn.close()
+
+    candidates: List[Tuple[int, str, Dict[str, Any], float]] = []
+
+    by_app: Dict[str, List[int]] = defaultdict(list)
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("exclude_from_bitable"):
+            continue
+        appid = str(row.get("appid") or "").strip()
+        effect = str(row.get("effect_one_liner") or "").strip()
+        if appid and effect and effect != "None":
+            by_app[appid].append(idx)
+
+    # Same-day soft candidates: compare to kept representatives, ordered by strength.
+    for indices in by_app.values():
+        kept_indices: List[int] = []
+        for idx in sorted(indices, key=lambda i: _effect_row_score(rows[i]), reverse=True):
+            row = rows[idx]
+            effect = str(row.get("effect_one_liner") or "")
+            vec = embed(effect)
+            if vec is None:
+                kept_indices.append(idx)
+                continue
+            best_keeper_idx: int | None = None
+            best_sim = 0.0
+            for kept_idx in kept_indices:
+                kvec = embed(str(rows[kept_idx].get("effect_one_liner") or ""))
+                if kvec is None:
+                    continue
+                sim = float(cosine_similarity(vec, kvec))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_keeper_idx = kept_idx
+            if best_keeper_idx is not None and best_sim >= threshold:
+                keeper = rows[best_keeper_idx]
+                candidates.append(
+                    (
+                        idx,
+                        "same_day_effect_embedding",
+                        {
+                            "matched_ad_key": str(keeper.get("ad_key") or ""),
+                            "matched_effect_one_liner": str(keeper.get("effect_one_liner") or ""),
+                        },
+                        best_sim,
+                    )
+                )
+            kept_indices.append(idx)
+
+    # Cross-day soft candidates against recent history.
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("exclude_from_bitable"):
+            continue
+        appid = str(row.get("appid") or "").strip()
+        effect = str(row.get("effect_one_liner") or "").strip()
+        vec = embed(effect)
+        if not appid or vec is None:
+            continue
+        best_hist: Optional[Dict[str, Any]] = None
+        best_sim = 0.0
+        for hist in hist_map.get(appid, []):
+            hvec = embed(str(hist.get("effect_one_liner") or ""))
+            if hvec is None:
+                continue
+            sim = float(cosine_similarity(vec, hvec))
+            if sim > best_sim:
+                best_sim = sim
+                best_hist = hist
+        if best_hist and best_sim >= threshold:
+            candidates.append(
+                (
+                    idx,
+                    "crossday_effect_embedding",
+                    {
+                        "matched_effect_one_liner": str(best_hist.get("effect_one_liner") or ""),
+                        "matched_first_seen_date": str(best_hist.get("earliest_date") or ""),
+                        "matched_latest_seen_date": str(best_hist.get("latest_date") or ""),
+                    },
+                    best_sim,
+                )
+            )
+
+    best_by_idx: Dict[int, Tuple[str, Dict[str, Any], float]] = {}
+    for idx, source, match, sim in candidates:
+        prev = best_by_idx.get(idx)
+        if prev is None or sim > prev[2]:
+            best_by_idx[idx] = (source, match, sim)
+
+    details: List[Dict[str, Any]] = []
+    for idx, (source, match, sim) in best_by_idx.items():
+        row = rows[idx]
+        row["embedding_duplicate_candidate"] = {
+            "source": source,
+            "similarity": round(float(sim), 3),
+            "threshold": round(float(threshold), 3),
+            "scope": "effect_one_liner",
+            **match,
+        }
+        _append_material_tag(row, "embedding重复候选")
+        details.append(
+            {
+                "ad_key": str(row.get("ad_key") or ""),
+                "product": str(row.get("product") or ""),
+                "effect_one_liner": str(row.get("effect_one_liner") or ""),
+                "source": source,
+                "similarity": round(float(sim), 3),
+                **match,
+            }
+        )
+    return len(details), details
+
+
+def _load_effect_history_rows(
+    cur: sqlite3.Cursor,
+    target_date: str,
+    lookback_days: int,
+) -> Dict[str, List[Dict[str, Any]]]:
+    from datetime import date, timedelta
+
+    try:
+        td = date.fromisoformat(target_date)
+    except ValueError:
+        return {}
+    start_date = (td - timedelta(days=lookback_days)).isoformat()
+    cur.execute(
+        """
+        SELECT appid, effect_one_liner,
+               MIN(first_target_date) AS earliest_date,
+               MAX(last_target_date) AS latest_date,
+               COUNT(*) AS hist_count,
+               MAX(best_impression) AS max_impression
+        FROM creative_library
+        WHERE first_target_date >= ? AND first_target_date < ?
+          AND COALESCE(TRIM(effect_one_liner), '') != ''
+        GROUP BY appid, effect_one_liner
+        """,
+        (start_date, target_date),
+    )
+    by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for row in cur.fetchall():
+        appid = str(row["appid"] or "").strip()
+        eff = str(row["effect_one_liner"] or "").strip()
+        if not appid or not eff or eff == "None":
+            continue
+        by_app[appid].append(
+            {
+                "effect_one_liner": eff,
+                "normalized_effect": normalize_effect_one_liner(eff),
+                "earliest_date": str(row["earliest_date"] or ""),
+                "latest_date": str(row["latest_date"] or ""),
+                "history_count": int(row["hist_count"] or 0),
+                "max_impression": int(row["max_impression"] or 0),
+            }
+        )
+    return dict(by_app)
+
+
+def _best_effect_history_match(
+    effect_one_liner: str,
+    history_rows: List[Dict[str, Any]],
+    threshold: float,
+) -> Optional[Dict[str, Any]]:
+    best: Optional[Dict[str, Any]] = None
+    best_sim = 0.0
+    for hist in history_rows:
+        sim = _effect_text_similarity(effect_one_liner, str(hist.get("effect_one_liner") or ""))
+        if sim > best_sim:
+            best_sim = sim
+            best = hist
+    if best is None or best_sim < threshold:
+        return None
+    out = dict(best)
+    out["similarity"] = round(best_sim, 3)
+    out["match_type"] = "exact" if best_sim >= 0.999 else "similar"
+    return out
+
+
+def apply_old_effect_bitable_filter(
+    target_date: str,
+    rows: List[Dict[str, Any]],
+    lookback_days: int = 7,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    Mark rows whose same-app effect_one_liner has appeared in the recent history.
+
+    This is intentionally stricter than the daily report wording: matched rows are
+    excluded from the Bitable main table and direction cards so the daily push focuses
+    on new material/new play candidates.
+    """
+    if not rows:
+        return 0, []
+    init_db()
+    try:
+        lookback_days = int(os.getenv("OLD_EFFECT_LOOKBACK_DAYS") or lookback_days)
+    except ValueError:
+        lookback_days = 7
+    lookback_days = max(1, min(60, lookback_days))
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        hist_map = _load_effect_history_rows(cur, target_date, lookback_days)
+    finally:
+        conn.close()
+
+    threshold = _old_effect_bitable_similarity_threshold()
+    details: List[Dict[str, Any]] = []
+    newly_marked = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        appid = str(row.get("appid") or "").strip()
+        effect = str(row.get("effect_one_liner") or "").strip()
+        if not appid or not effect or effect == "None":
+            continue
+        hit = _best_effect_history_match(effect, hist_map.get(appid, []), threshold)
+        if not hit:
+            continue
+
+        was_excluded = bool(row.get("exclude_from_bitable"))
+        row["exclude_from_bitable"] = True
+        row["exclude_from_cluster"] = True
+        row["old_effect_match"] = {
+            "matched_effect_one_liner": str(hit.get("effect_one_liner") or ""),
+            "first_seen_date": str(hit.get("earliest_date") or ""),
+            "latest_seen_date": str(hit.get("latest_date") or ""),
+            "history_count": int(hit.get("history_count") or 0),
+            "similarity": float(hit.get("similarity") or 0.0),
+            "match_type": str(hit.get("match_type") or ""),
+            "lookback_days": lookback_days,
+        }
+        tags = row.get("material_tags")
+        if not isinstance(tags, list):
+            tags = []
+        if "老玩法重复" not in tags:
+            tags.append("老玩法重复")
+        row["material_tags"] = tags
+        if not was_excluded:
+            newly_marked += 1
+        details.append(
+            {
+                "ad_key": str(row.get("ad_key") or ""),
+                "product": str(row.get("product") or ""),
+                "effect_one_liner": effect,
+                "matched_effect_one_liner": str(hit.get("effect_one_liner") or ""),
+                "first_seen_date": str(hit.get("earliest_date") or ""),
+                "similarity": float(hit.get("similarity") or 0.0),
+                "match_type": str(hit.get("match_type") or ""),
+                "newly_marked": not was_excluded,
+            }
+        )
+    return newly_marked, details
+
+
 def effect_based_crossday_dedup(
     target_date: str,
     items: List[Dict[str, Any]],
@@ -2193,7 +2708,7 @@ def effect_based_crossday_dedup(
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """
     用 effect_one_liner 做跨天去重：同 appid 内，若某素材的 effect_one_liner
-    在历史 N 天内已出现过，则标记为「非新素材」（effect_seen_before=True）。
+    在历史 N 天内已出现过或高度相似，则标记为「非新玩法」。
 
     返回 (report, updated_items)。
     report 包含：
@@ -2219,28 +2734,7 @@ def effect_based_crossday_dedup(
     conn = _get_conn()
     try:
         cur = conn.cursor()
-        # 加载历史 effect_one_liner（去重后，同 appid 同 effect 只记最早日期和条数）
-        cur.execute(
-            """
-            SELECT appid, effect_one_liner,
-                   MIN(first_target_date) as earliest_date,
-                   COUNT(*) as hist_count
-            FROM creative_library
-            WHERE first_target_date >= ? AND first_target_date < ?
-              AND COALESCE(TRIM(effect_one_liner), '') != ''
-            GROUP BY appid, effect_one_liner
-            """,
-            (start_date, target_date),
-        )
-        hist_map: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
-        for r in cur.fetchall():
-            aid = str(r["appid"] or "").strip()
-            eff = str(r["effect_one_liner"] or "").strip()
-            if aid and eff:
-                hist_map[aid][eff] = {
-                    "earliest_date": str(r["earliest_date"] or ""),
-                    "count": int(r["hist_count"] or 0),
-                }
+        hist_map = _load_effect_history_rows(cur, target_date, lookback_days)
     finally:
         conn.close()
 
@@ -2270,16 +2764,25 @@ def effect_based_crossday_dedup(
         is_new = True
         first_date = target_date
         hist_count = 0
+        hit: Optional[Dict[str, Any]] = None
         if appid and eff:
-            hit = hist_map.get(appid, {}).get(eff)
+            hit = _best_effect_history_match(
+                eff,
+                hist_map.get(appid, []),
+                _effect_similarity_threshold(),
+            )
             if hit:
                 is_new = False
                 first_date = hit["earliest_date"]
-                hist_count = hit["count"]
+                hist_count = int(hit.get("history_count") or 0)
 
         item2["effect_is_new"] = is_new
         item2["effect_first_seen_date"] = first_date
         item2["effect_history_count"] = hist_count
+        if not is_new and hit:
+            item2["effect_matched_one_liner"] = hit.get("effect_one_liner")
+            item2["effect_match_similarity"] = hit.get("similarity")
+            item2["effect_match_type"] = hit.get("match_type")
 
         if is_new:
             report["new_count"] += 1
@@ -2365,10 +2868,10 @@ def compute_sustained_effort_signals(
             FROM creative_library
             WHERE first_target_date >= ? AND first_target_date <= ?
             GROUP BY dedup_group_id
-            HAVING day_span >= 2
+            HAVING day_span >= 2 AND latest_date = ?
             ORDER BY max_impression DESC
             """,
-            (start_date, target_date),
+            (start_date, target_date, target_date),
         )
         ahash_groups: List[Dict[str, Any]] = []
         for r in cur.fetchall():
@@ -2440,10 +2943,10 @@ def compute_sustained_effort_signals(
             WHERE first_target_date >= ? AND first_target_date <= ?
               AND COALESCE(TRIM(effect_one_liner), '') != ''
             GROUP BY appid, effect_one_liner
-            HAVING day_span >= 2
+            HAVING day_span >= 2 AND latest_date = ?
             ORDER BY max_impression DESC
             """,
-            (start_date, target_date),
+            (start_date, target_date, target_date),
         )
         effect_crossday: List[Dict[str, Any]] = []
         for r in cur.fetchall():
@@ -2484,77 +2987,72 @@ def compute_sustained_effort_signals(
     _conn2 = _get_conn()
     _cur2 = _conn2.cursor()
     try:
-        d = td
-        for _ in range(lookback_days + 1):
-            ds = d.isoformat()
-            for prefix in ("workflow_video_enhancer", "workflow_arrow2"):
-                for suffix in ("", "_exposure_top10", "_latest_yesterday"):
-                    fname = f"{prefix}_{ds}{suffix}_cover_style_intraday.json"
-                    fpath = os.path.join(str(DATA_DIR), fname)
-                    if os.path.exists(fpath):
-                        with open(fpath, "r", encoding="utf-8") as fh:
-                            rdata = json.load(fh)
-                        # 1a: cross_day_fingerprint_removed（指纹去重）
-                        for item in rdata.get("cross_day_fingerprint_removed", []):
-                            item2 = dict(item)
-                            item2["report_date"] = ds
-                            item2["source"] = "fingerprint"
-                            matched_key = item2.get("matched_ad_key", "")
-                            if matched_key:
-                                _cur2.execute(
-                                    "SELECT effect_one_liner, product, video_url, preview_img_url, "
-                                    "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
-                                    (matched_key,),
-                                )
-                                mrow = _cur2.fetchone()
-                                if mrow:
-                                    eff = str(mrow["effect_one_liner"] or "")
-                                    if eff == "None":
-                                        eff = ""
-                                    item2["matched_effect_one_liner"] = eff
-                                    item2["matched_product"] = str(mrow["product"] or "")
-                                    item2["matched_video_url"] = str(mrow["video_url"] or "")
-                                    item2["matched_preview_img_url"] = str(mrow["preview_img_url"] or "")
-                                    item2["matched_video_duration"] = int(mrow["video_duration"] or 0)
-                            cover_crossday.append(item2)
-                        # 1b: CLIP 向量去重中去掉的（per_appid[].removed）
-                        for pa in rdata.get("per_appid", []):
-                            pa_product = pa.get("product", "")
-                            for rem in pa.get("removed", []):
-                                reason = rem.get("reason", "")
-                                kept_key = rem.get("kept_ad_key", "")
-                                rem_ad_key = rem.get("ad_key", "")
-                                if not kept_key or reason not in (
-                                    "cover_style_cluster_vs_yesterday",
-                                    "cover_style_cluster",
-                                ):
-                                    continue
-                                entry = {
-                                    "ad_key": rem_ad_key,
-                                    "reason": reason,
-                                    "kept_ad_key": kept_key,
-                                    "report_date": ds,
-                                    "source": "clip_cluster",
-                                    "product": pa_product,
-                                }
-                                # 追溯：查被保留素材的 effect_one_liner + 媒体链接
-                                _cur2.execute(
-                                    "SELECT effect_one_liner, product, video_url, preview_img_url, "
-                                    "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
-                                    (kept_key,),
-                                )
-                                krow = _cur2.fetchone()
-                                if krow:
-                                    eff = str(krow["effect_one_liner"] or "")
-                                    if eff == "None":
-                                        eff = ""
-                                    entry["matched_effect_one_liner"] = eff
-                                    entry["matched_product"] = str(krow["product"] or pa_product)
-                                    entry["matched_video_url"] = str(krow["video_url"] or "")
-                                    entry["matched_preview_img_url"] = str(krow["preview_img_url"] or "")
-                                    entry["matched_video_duration"] = int(krow["video_duration"] or 0)
-                                cover_crossday.append(entry)
-            d -= timedelta(days=1)
+        for ds in (target_date,):
+            fname = f"workflow_video_enhancer_{ds}_cover_style_intraday.json"
+            fpath = os.path.join(str(DATA_DIR), fname)
+            if os.path.exists(fpath):
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    rdata = json.load(fh)
+                # 1a: cross_day_fingerprint_removed（指纹去重）
+                for item in rdata.get("cross_day_fingerprint_removed", []):
+                    item2 = dict(item)
+                    item2["report_date"] = ds
+                    item2["source"] = "fingerprint"
+                    matched_key = item2.get("matched_ad_key", "")
+                    if matched_key:
+                        _cur2.execute(
+                            "SELECT effect_one_liner, product, video_url, preview_img_url, "
+                            "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
+                            (matched_key,),
+                        )
+                        mrow = _cur2.fetchone()
+                        if mrow:
+                            eff = str(mrow["effect_one_liner"] or "")
+                            if eff == "None":
+                                eff = ""
+                            item2["matched_effect_one_liner"] = eff
+                            item2["matched_product"] = str(mrow["product"] or "")
+                            item2["matched_video_url"] = str(mrow["video_url"] or "")
+                            item2["matched_preview_img_url"] = str(mrow["preview_img_url"] or "")
+                            item2["matched_video_duration"] = int(mrow["video_duration"] or 0)
+                    cover_crossday.append(item2)
+                # 1b: CLIP 向量去重中去掉的（per_appid[].removed）
+                for pa in rdata.get("per_appid", []):
+                    pa_product = pa.get("product", "")
+                    for rem in pa.get("removed", []):
+                        reason = rem.get("reason", "")
+                        kept_key = rem.get("kept_ad_key", "")
+                        rem_ad_key = rem.get("ad_key", "")
+                        if not kept_key or reason not in (
+                            "cover_style_cluster_vs_yesterday",
+                            "cover_style_cluster",
+                        ):
+                            continue
+                        entry = {
+                            "ad_key": rem_ad_key,
+                            "reason": reason,
+                            "kept_ad_key": kept_key,
+                            "report_date": ds,
+                            "source": "clip_cluster",
+                            "product": pa_product,
+                        }
+                        # 追溯：查被保留素材的 effect_one_liner + 媒体链接
+                        _cur2.execute(
+                            "SELECT effect_one_liner, product, video_url, preview_img_url, "
+                            "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
+                            (kept_key,),
+                        )
+                        krow = _cur2.fetchone()
+                        if krow:
+                            eff = str(krow["effect_one_liner"] or "")
+                            if eff == "None":
+                                eff = ""
+                            entry["matched_effect_one_liner"] = eff
+                            entry["matched_product"] = str(krow["product"] or pa_product)
+                            entry["matched_video_url"] = str(krow["video_url"] or "")
+                            entry["matched_preview_img_url"] = str(krow["preview_img_url"] or "")
+                            entry["matched_video_duration"] = int(krow["video_duration"] or 0)
+                        cover_crossday.append(entry)
     except Exception:
         pass
     finally:
@@ -2595,7 +3093,7 @@ def load_new_creatives_for_date(
             SELECT cl.ad_key, cl.product, cl.appid, cl.platform, cl.creative_type,
                    cl.title, cl.best_heat, cl.best_impression, cl.best_all_exposure_value,
                    cl.effect_one_liner, cl.first_target_date, cl.dedup_group_id,
-                   cl.preview_img_url, cl.video_url
+                   cl.preview_img_url, cl.video_url, cl.video_duration
             FROM creative_library cl
             WHERE cl.first_target_date = ?
             ORDER BY cl.best_impression DESC
@@ -2605,3 +3103,198 @@ def load_new_creatives_for_date(
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+def _media_link_from_row(row: Dict[str, Any]) -> Tuple[str, bool]:
+    video_url = str(row.get("video_url") or row.get("top_video_url") or row.get("canonical_video_url") or row.get("matched_video_url") or "")
+    preview_url = str(row.get("preview_img_url") or row.get("top_preview_img_url") or row.get("canonical_preview_img_url") or row.get("matched_preview_img_url") or "")
+    duration = int(row.get("video_duration") or row.get("top_video_duration") or row.get("canonical_video_duration") or row.get("matched_video_duration") or 0)
+    if video_url and (duration > 0 or str(row.get("creative_type") or "").lower() == "video"):
+        return video_url, True
+    if preview_url:
+        return preview_url, False
+    return video_url or preview_url, duration > 0
+
+
+def _append_sustained_display_item(
+    bucket: Dict[str, List[Dict[str, Any]]],
+    seen: set[str],
+    item: Dict[str, Any],
+) -> None:
+    product = str(item.get("product") or item.get("matched_product") or item.get("top_product") or item.get("canonical_product") or "").strip()
+    if not product:
+        product = "未知"
+    effect = str(
+        item.get("effect_one_liner")
+        or item.get("matched_effect_one_liner")
+        or item.get("top_effect_one_liner")
+        or item.get("canonical_effect_one_liner")
+        or ""
+    ).strip()
+    if effect == "None":
+        effect = ""
+    link, is_video = _media_link_from_row(item)
+    key = "|".join(
+        [
+            product,
+            effect or str(item.get("ad_key") or item.get("top_ad_key") or item.get("dedup_group_id") or ""),
+            link,
+            str(item.get("source") or item.get("signal_type") or ""),
+        ]
+    )
+    if key in seen:
+        return
+    seen.add(key)
+    out = dict(item)
+    out["product"] = product
+    out["effect_one_liner"] = effect or "同画面/同玩法跨日重复投放"
+    out["link"] = link
+    out["is_video"] = is_video
+    bucket[product].append(out)
+
+
+def _sustained_display_by_product(
+    signals: Dict[str, Any],
+    per_product_limit: int = 3,
+) -> Dict[str, List[Dict[str, Any]]]:
+    by_product: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    seen: set[str] = set()
+
+    for row in signals.get("effect_crossday") or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        item["signal_type"] = "effect"
+        item["signal_label"] = "玩法跨天"
+        item["product"] = str(row.get("top_product") or row.get("product") or "")
+        item["video_url"] = row.get("top_video_url")
+        item["preview_img_url"] = row.get("top_preview_img_url")
+        item["video_duration"] = row.get("top_video_duration")
+        _append_sustained_display_item(by_product, seen, item)
+
+    for row in signals.get("ahash_group_crossday") or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        item["signal_type"] = "ahash"
+        item["signal_label"] = "同画面换素材"
+        item["product"] = str(row.get("canonical_product") or row.get("products") or "")
+        item["effect_one_liner"] = str(row.get("canonical_effect_one_liner") or "")
+        item["video_url"] = row.get("canonical_video_url")
+        item["preview_img_url"] = row.get("canonical_preview_img_url")
+        item["video_duration"] = row.get("canonical_video_duration")
+        _append_sustained_display_item(by_product, seen, item)
+
+    for row in signals.get("cover_crossday_removed") or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        item["signal_type"] = str(row.get("source") or "cover")
+        item["signal_label"] = "同画面/URL复投"
+        item["product"] = str(row.get("matched_product") or row.get("product") or "")
+        item["effect_one_liner"] = str(row.get("matched_effect_one_liner") or "")
+        item["video_url"] = row.get("matched_video_url")
+        item["preview_img_url"] = row.get("matched_preview_img_url")
+        item["video_duration"] = row.get("matched_video_duration")
+        _append_sustained_display_item(by_product, seen, item)
+
+    def score(row: Dict[str, Any]) -> Tuple[int, int, str]:
+        return (
+            int(row.get("max_impression") or row.get("canonical_best_impression") or 0),
+            int(row.get("day_span") or row.get("material_count") or 0),
+            str(row.get("effect_one_liner") or ""),
+        )
+
+    limited: Dict[str, List[Dict[str, Any]]] = {}
+    for product, rows in by_product.items():
+        rows2 = sorted(rows, key=score, reverse=True)
+        limited[product] = rows2[: max(1, per_product_limit)]
+    return limited
+
+
+def load_daily_material_report(
+    target_date: str,
+    lookback_days: int = 7,
+    sustained_per_product_limit: int = 3,
+) -> Dict[str, Any]:
+    """
+    Build the daily material report used by push channels and acceptance.
+
+    Definitions:
+      - new material: creative_library.first_target_date == target_date
+      - new play: this material's effect_one_liner is not exact/similar to the same
+        appid's effect_one_liner in the lookback window
+      - sustained effort: cross-day visual/url/hash/effect signals, grouped for display
+    """
+    init_db()
+    threshold = _effect_similarity_threshold()
+    new_items = load_new_creatives_for_date(target_date)
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        hist_by_app = _load_effect_history_rows(cur, target_date, lookback_days)
+        for item in new_items:
+            ad_key = str(item.get("ad_key") or "")
+            effect = str(item.get("effect_one_liner") or "")
+            if (not effect or effect == "None") and ad_key:
+                cur.execute(
+                    "SELECT insight_analysis, effect_one_liner FROM daily_creative_insights "
+                    "WHERE ad_key LIKE ? AND target_date = ? LIMIT 1",
+                    (ad_key[:16] + "%", target_date),
+                )
+                row = cur.fetchone()
+                if row:
+                    effect = str(row["effect_one_liner"] or "")
+                    item["_analysis_one_liner"] = str(row["insight_analysis"] or "")
+            if effect == "None":
+                effect = ""
+            item["effect_one_liner"] = effect
+
+            appid = str(item.get("appid") or "")
+            match = _best_effect_history_match(effect, hist_by_app.get(appid, []), threshold) if effect else None
+            item["material_is_new"] = True
+            item["effect_is_new"] = (match is None) if effect else None
+            if effect and match is None:
+                first_seen_date = target_date
+            elif match:
+                first_seen_date = str(match.get("earliest_date") or "")
+            else:
+                first_seen_date = ""
+            item["effect_first_seen_date"] = first_seen_date
+            item["effect_history_count"] = 0 if match is None else int(match.get("history_count") or 0)
+            if match:
+                item["effect_matched_one_liner"] = str(match.get("effect_one_liner") or "")
+                item["effect_match_similarity"] = float(match.get("similarity") or 0)
+                item["effect_match_type"] = str(match.get("match_type") or "")
+    finally:
+        conn.close()
+
+    sustained_signals = compute_sustained_effort_signals(target_date, lookback_days=lookback_days)
+    sustained_by_product = _sustained_display_by_product(
+        sustained_signals,
+        per_product_limit=sustained_per_product_limit,
+    )
+
+    effect_present_count = sum(1 for x in new_items if str(x.get("effect_one_liner") or "").strip())
+    new_effect_count = sum(1 for x in new_items if x.get("effect_is_new") is True)
+    old_effect_new_material_count = sum(1 for x in new_items if x.get("effect_is_new") is False)
+    sustained_display_count = sum(len(v) for v in sustained_by_product.values())
+
+    return {
+        "target_date": target_date,
+        "lookback_days": lookback_days,
+        "effect_similarity_threshold": threshold,
+        "new_items": new_items,
+        "sustained_by_product": sustained_by_product,
+        "sustained_signals": sustained_signals,
+        "summary": {
+            "new_material_count": len(new_items),
+            "new_effect_count": new_effect_count,
+            "old_effect_new_material_count": old_effect_new_material_count,
+            "effect_one_liner_present_count": effect_present_count,
+            "effect_one_liner_coverage": round(effect_present_count / len(new_items), 4) if new_items else 1.0,
+            "sustained_display_count": sustained_display_count,
+            "sustained_signal_count": int((sustained_signals.get("summary") or {}).get("total_sustained_signals") or 0),
+        },
+    }

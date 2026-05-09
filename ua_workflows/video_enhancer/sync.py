@@ -2,9 +2,9 @@
 把 raw + 灵感分析写入指定飞书多维表，并把统一 UA 建议推送到飞书卡片。
 
 主表同步：仅写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]），
-且 exclude_from_bitable 不为真（命中「我方已经投过」套路的素材不同步主表）。
-同步前会调用 `launched_effects_db.apply_launched_effects_filter`（需 FEISHU 凭证 + 已投放表/API），
-为结果补全 exclude 与补标。封面图、**视频**均尽量下载为附件上传（`VIDEO_BITABLE_MAX_MB` 限制大小；
+且 exclude_from_bitable 不为真（命中老玩法、成人风险或「我方已经投过」的素材不同步主表）。
+同步前会补跑老玩法/成人风险/已投放匹配，为结果补全 exclude 与补标。
+封面图、**视频**均尽量下载为附件上传（`VIDEO_BITABLE_MAX_MB` 限制大小；
 `VIDEO_BITABLE_UPLOAD=0` 可关视频上传）。
 不写入 raw 中仅入库、未分析或分析失败的条目。聚类表逻辑不变。
 
@@ -42,7 +42,14 @@ from lark_oapi.api.drive.v1.model import (
 )
 
 from ua_workflows.shared.config import DATA_DIR
-from ua_workflows.shared.db.video_enhancer import init_db as init_pipeline_db, update_push_status
+from ua_workflows.shared.db.video_enhancer import (
+    apply_embedding_duplicate_candidate_tags,
+    apply_intraday_effect_bitable_filter,
+    apply_old_effect_bitable_filter,
+    init_db as init_pipeline_db,
+    update_push_status,
+)
+from ua_workflows.video_enhancer.content_filters import apply_adult_content_filter
 
 load_dotenv()
 
@@ -725,6 +732,7 @@ def main() -> None:
 
     raw = json.loads(Path(args.raw).read_text(encoding="utf-8"))
     analysis = json.loads(Path(args.analysis).read_text(encoding="utf-8"))
+    target_date = str(raw.get("target_date") or "")
     suggestion_json: Dict[str, Any] | None = None
     sjson_path = Path(args.suggestion_json)
     if sjson_path.exists():
@@ -744,14 +752,64 @@ def main() -> None:
                 analysis_by_ad[k] = str(it.get("analysis") or "")
                 effect_by_ad[k] = str(it.get("effect_one_liner") or "")
 
-    token = get_tenant_access_token()
     need_raw_sync = args.sync_target in ("both", "raw")
     need_cluster_sync = args.sync_target in ("both", "cluster")
+    token = get_tenant_access_token()
     if need_raw_sync:
         ensure_fields(token, app_token, table_id)
+        res_list = analysis.get("results")
+        if isinstance(res_list, list) and res_list:
+            n_adult, _ = apply_adult_content_filter(res_list)
+            if n_adult:
+                print(f"[sync] 成人/色情风险处理 {n_adult} 条（排除/补标）")
+
+            intraday_effect_on = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "1").strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
+                "",
+            )
+            if intraday_effect_on:
+                try:
+                    n_intraday, _ = apply_intraday_effect_bitable_filter(res_list)
+                    if n_intraday:
+                        print(f"[sync] 日内玩法重复处理 {n_intraday} 条（排除/补标）")
+                except Exception as e:
+                    print(f"[sync] intraday_effect_filter 跳过: {e}")
+
+            old_effect_on = (os.getenv("OLD_EFFECT_BITABLE_FILTER_ENABLED") or "1").strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
+                "",
+            )
+            if old_effect_on and target_date:
+                try:
+                    n_old, _ = apply_old_effect_bitable_filter(target_date, res_list)
+                    if n_old:
+                        print(f"[sync] 老玩法重复处理 {n_old} 条（排除/补标）")
+                except Exception as e:
+                    print(f"[sync] old_effect_filter 跳过: {e}")
+
+            embedding_dup_on = (os.getenv("EMBEDDING_DUP_CANDIDATE_ENABLED") or "1").strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
+                "",
+            )
+            if embedding_dup_on and target_date:
+                try:
+                    n_emb_dup, _ = apply_embedding_duplicate_candidate_tags(target_date, res_list)
+                    if n_emb_dup:
+                        print(f"[sync] embedding 重复候选标记 {n_emb_dup} 条（仅打标，不排除）")
+                except Exception as e:
+                    print(f"[sync] embedding_dup_candidate 跳过: {e}")
+
         le_on = (os.getenv("LAUNCHED_EFFECTS_ENABLED") or "0").strip().lower() not in ("0", "false", "no", "off", "")
         if le_on:
-            res_list = analysis.get("results")
             if isinstance(res_list, list) and res_list:
                 try:
                     from ua_workflows.video_enhancer.launched_effects import apply_launched_effects_filter
@@ -762,8 +820,16 @@ def main() -> None:
                 except Exception as e:
                     print(f"[sync] launched_effects 跳过: {e}")
 
+    material_tags_by_ad: Dict[str, List[str]] = {}
+    for it in analysis.get("results") or []:
+        if not isinstance(it, dict):
+            continue
+        k = str(it.get("ad_key") or "").strip()
+        tags = it.get("material_tags")
+        if k and isinstance(tags, list):
+            material_tags_by_ad[k] = [str(x) for x in tags if x]
+
     records: List[Dict[str, Any]] = []
-    target_date = str(raw.get("target_date") or "")
     target_ms = to_ms_from_date_str(target_date)
     # 卡片前置信息：仅保留日期（不展示筛选规则/计数/产品分布）
     raw_items = raw.get("items") or []
@@ -797,7 +863,7 @@ def main() -> None:
             if isinstance(it, dict) and it.get("exclude_from_bitable")
         )
         if n_style_skip:
-            print(f"[sync] 主表将跳过「我方已投套路」素材 {n_style_skip} 条（不同步多维表）。")
+            print(f"[sync] 主表将跳过已标记排除素材 {n_style_skip} 条（不同步多维表）。")
         items_to_sync = raw_items_with_successful_analysis(raw, analysis)
         n_raw_items = len(raw.get("items") or [])
         if n_raw_items > len(items_to_sync):
@@ -838,11 +904,12 @@ def main() -> None:
             }
             if target_ms is not None:
                 fields["抓取日期"] = target_ms
+            tag_list: List[str] = []
             pt = c.get("pipeline_tags")
-            if isinstance(pt, list) and pt:
-                fields["素材标签"] = "、".join(str(x) for x in pt if x)
-            else:
-                fields["素材标签"] = ""
+            if isinstance(pt, list):
+                tag_list.extend(str(x) for x in pt if x)
+            tag_list.extend(material_tags_by_ad.get(ad_key, []))
+            fields["素材标签"] = "、".join(dict.fromkeys(tag_list))
             created_ms = to_ms_from_unix_sec(c.get("created_at"))
             first_seen_ms = to_ms_from_unix_sec(c.get("first_seen"))
             if created_ms is not None:
@@ -939,4 +1006,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

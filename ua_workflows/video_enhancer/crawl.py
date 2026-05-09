@@ -1,6 +1,6 @@
 """
 测试：跑 video enhancer 类下的竞品（仅排除 Hula），抓当前 7 天窗口内素材，不入库，写两个 JSON。
-可按日期筛选 target_date；若某个产品在该日命中素材超过 10 条，则仅保留「按展示估值 all_exposure_value 降序的前 10 条」。
+可按日期筛选 target_date；默认不再做单产品硬截断，后续依赖封面/玩法/同步前规则筛选。
 重投素材（resume_advertising_flag）一律不纳入。
 
 - 原始 JSON：按产品分组的完整创意列表（raw creative 对象）
@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -161,19 +162,32 @@ async def main():
 
     results = await run_batch(
         keywords=keywords,
-        debug=bool(__import__("os").environ.get("DEBUG")),
+        debug=bool(os.environ.get("DEBUG")),
         is_tool=True,
         order_by="latest",
         use_popularity_top1=False,
     )
 
-# 应用与主工作流一致的筛选：广告主匹配 + 可选日期命中；重投一律去掉；单产品候选 >10 则只保留展示估值最高的 10 条
+# 应用与主工作流一致的筛选：广告主匹配 + 可选日期命中；重投一律去掉。
+# 单产品硬截断默认关闭，避免好素材在封面/玩法去重前被提前丢弃。
     raw_items: list[dict[str, Any]] = []
     by_product_reduce: dict[str, list[dict]] = {}
     filter_pre_total = 0
     filter_post_total = 0
-    filter_threshold = 10
-    filter_keep = 10
+    per_product_truncation_enabled = (os.getenv("VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_ENABLED") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    try:
+        filter_threshold = int(os.getenv("VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_THRESHOLD") or "10")
+    except ValueError:
+        filter_threshold = 10
+    try:
+        filter_keep = int(os.getenv("VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_KEEP") or "10")
+    except ValueError:
+        filter_keep = 10
     filter_sort_metric = "all_exposure_value"
     per_product_before: dict[str, int] = {}
     per_product_after: dict[str, int] = {}
@@ -212,7 +226,13 @@ async def main():
         product_key = comp.product or kw
         before_cnt = len(candidates)
         truncated = False
-        if args.target_date and before_cnt > filter_threshold:
+        if (
+            args.target_date
+            and per_product_truncation_enabled
+            and filter_threshold > 0
+            and filter_keep > 0
+            and before_cnt > filter_threshold
+        ):
             candidates.sort(key=lambda x: int(x.get("all_exposure_value") or 0), reverse=True)
             candidates = candidates[:filter_keep]
             truncated = True
@@ -243,9 +263,12 @@ async def main():
             f"[filter] 目标日期={args.target_date} "
             f"筛选前候选总数={filter_pre_total}（广告主+日期；已排除全部重投）"
         )
-        print(
-            f"[filter] 截断：单产品候选>{filter_threshold} 条时仅保留前 {filter_keep} 条；排序字段={filter_sort_metric}"
-        )
+        if per_product_truncation_enabled:
+            print(
+                f"[filter] 截断：单产品候选>{filter_threshold} 条时仅保留前 {filter_keep} 条；排序字段={filter_sort_metric}"
+            )
+        else:
+            print("[filter] 单产品硬截断已关闭：保留日期命中素材，后续由封面/玩法/同步前规则筛选。")
         for k in sorted(per_product_after.keys()):
             print(
                 f"[filter] product={k} before={per_product_before.get(k,0)} after={per_product_after.get(k,0)} "
@@ -269,6 +292,7 @@ async def main():
             "filter_threshold": filter_threshold,
             "filter_keep": filter_keep,
             "filter_sort_metric": filter_sort_metric,
+            "per_product_truncation_enabled": per_product_truncation_enabled,
             "resume_excluded_all": True,
             "pre_truncation_total": filter_pre_total,
             "post_truncation_total": filter_post_total,

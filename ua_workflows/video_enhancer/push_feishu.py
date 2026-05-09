@@ -12,7 +12,6 @@ import argparse
 import json
 import os
 import re
-import sqlite3
 from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
@@ -22,7 +21,11 @@ import requests
 from dotenv import load_dotenv
 
 from ua_workflows.shared.config import DATA_DIR
-from ua_workflows.shared.db.video_enhancer import _get_conn, init_db
+from ua_workflows.shared.db.video_enhancer import (
+    _get_conn,
+    init_db,
+    load_daily_material_report,
+)
 
 # ── 产品主题 ──────────────────────────────────────────
 PRODUCT_THEMES: Dict[str, str] = {
@@ -139,16 +142,20 @@ def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]
     """渲染日报卡片 Markdown。
 
     格式：按竞品分组，每条素材用一句话说明（effect_one_liner）做可点击链接跳转到视频/图片。
-    只展示新素材，持续发力暂不展示。
     """
     by_product: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for item in new_items:
         by_product[item["product"]].append(item)
 
     total_new = len(new_items)
+    new_effect = sum(1 for item in new_items if item.get("effect_is_new"))
+    total_sustained = sum(len(v) for v in sustained_by_product.values())
 
     lines: List[str] = []
-    lines.append(f"**{target_date}** | 新素材 **{total_new}** 条")
+    lines.append(
+        f"**{target_date}** | 新素材 **{total_new}** 条 | "
+        f"新玩法 **{new_effect}** 条 | 持续发力 **{total_sustained}** 条"
+    )
     lines.append("")
 
     for product in by_product:
@@ -164,13 +171,21 @@ def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]
         lines.append(header)
 
         for item in items:
-            is_video = int(item.get("video_duration") or 0) > 0
+            is_video = int(item.get("video_duration") or 0) > 0 or (
+                str(item.get("creative_type") or "").lower() == "video" and bool(item.get("video_url"))
+            )
             effect = str(item.get("effect_one_liner") or "")
             if not effect:
                 effect = str(item.get("_one_liner") or "")
             if not effect:
+                effect = _extract_one_liner(str(item.get("_analysis_one_liner") or ""))
+            if not effect:
                 imp = item.get("best_impression", 0)
                 effect = f"展示{imp:,}"
+            if item.get("effect_is_new") is False:
+                first_date = str(item.get("effect_first_seen_date") or "")
+                if first_date:
+                    effect = f"{effect}（老玩法 {first_date}）"
 
             if is_video and item.get("video_url"):
                 link = item["video_url"]
@@ -186,6 +201,34 @@ def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]
                 lines.append(f"{icon} {effect}")
 
         lines.append("")
+
+    if sustained_by_product:
+        lines.append("**持续发力**")
+        for product in sustained_by_product:
+            rows = sustained_by_product[product]
+            if not rows:
+                continue
+            short_name = product.split(":")[0].split(" - ")[0].strip()
+            lines.append(f"**{short_name}**")
+            for row in rows:
+                effect = str(row.get("effect_one_liner") or "同画面/同玩法跨日重复投放")
+                label = str(row.get("signal_label") or "跨日重复")
+                span = int(row.get("day_span") or 0)
+                count = int(row.get("material_count") or 0)
+                suffix_parts = [label]
+                if span >= 2:
+                    suffix_parts.append(f"{span}天")
+                if count >= 2:
+                    suffix_parts.append(f"{count}条")
+                suffix = "，".join(suffix_parts)
+                link = str(row.get("link") or "")
+                icon = "🎬" if row.get("is_video") else "🖼"
+                text = f"{effect}（{suffix}）"
+                if link:
+                    lines.append(f"{icon} [{text}]({link})")
+                else:
+                    lines.append(f"{icon} {text}")
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -225,34 +268,9 @@ def main() -> None:
     args = parse_args()
     target_date = args.date
 
-    # ── 新素材 ──
-    conn = _get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT ad_key, product, creative_type, best_impression, best_all_exposure_value, "
-        "best_heat, video_url, preview_img_url, video_duration "
-        "FROM creative_library WHERE first_target_date = ? ORDER BY best_impression DESC",
-        (target_date,),
-    )
-    new_items = [dict(row) for row in cur.fetchall()]
-
-    # 补充一句话摘要 + effect_one_liner
-    for item in new_items:
-        cur.execute(
-            "SELECT insight_analysis, effect_one_liner FROM daily_creative_insights "
-            "WHERE ad_key LIKE ? AND target_date = ? LIMIT 1",
-            (item["ad_key"][:16] + "%", target_date),
-        )
-        row = cur.fetchone()
-        item["_one_liner"] = _extract_one_liner(row["insight_analysis"] if row else "")
-        effect = ""
-        if row and row["effect_one_liner"] and row["effect_one_liner"] != "None":
-            effect = row["effect_one_liner"]
-        item["effect_one_liner"] = effect or item.get("effect_one_liner", "")
-    conn.close()
-
-    # ── 持续发力 ──
-    sustained = _load_sustained_effort(target_date, lookback_days=args.lookback)
+    report = load_daily_material_report(target_date, lookback_days=args.lookback)
+    new_items = report.get("new_items") or []
+    sustained = report.get("sustained_by_product") or {}
 
     if not new_items and not any(sustained.values()):
         print(f"[feishu-card] {target_date} 无新素材也无持续发力，跳过推送。")

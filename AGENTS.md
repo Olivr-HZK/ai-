@@ -2,6 +2,30 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-05-09
+
+### [Arrow2] 企业微信周报：新玩法 / 新 Hook
+
+- `ua_workflows/video_enhancer/analyze.py`：Arrow2 精简分析 prompt 新增 `【玩法描述】` / `【Hook描述】` 固定字段，解析结果写入 `play_one_liner` / `hook_one_liner`，并保留 `ad_one_liner` 供同步与周报使用。
+- `ua_workflows/shared/db/arrow2.py`：`arrow2_daily_insights` 自动迁移新增 `play_one_liner`、`hook_one_liner` 两列；增量分析入库同步写入新字段。
+- `ua_workflows/shared/push/wecom.py`：抽出企业微信 markdown 分段推送公共 helper，VE 多渠道推送改为复用该 helper。
+- `ua_workflows/arrow2/push_weekly_wecom.py` / `scripts/run_arrow2_weekly_wecom.py`：新增 Arrow2 周报入口，默认统计昨日往前 7 天的「最新创意」，按同 `appid` 过去 28 天历史判断新玩法/新 Hook，支持 `--workflow`、`--lookback-days`、`--dry-run`、`--no-llm`，Webhook 读取 `ARROW2_WECOM_BOT_WEBHOOK` 或 `WECOM_BOT_WEBHOOK`。
+
+### [VE] 同步前老玩法/成人风险拦截 + 单产品硬截断默认关闭
+
+- `ua_workflows/video_enhancer/content_filters.py`：新增成人/色情风险文本拦截，综合 `analysis`、标题、正文、标签、`effect_one_liner` 等字段判断；命中后设置 `exclude_from_bitable` / `exclude_from_cluster`，避免仅因「核心卖点」没写出风险而漏筛。
+- `ua_workflows/shared/db/video_enhancer.py`：新增 `apply_old_effect_bitable_filter` 与 `apply_intraday_effect_bitable_filter`；同步前按同 `appid` 近 7 日历史玩法标记「老玩法重复」（主表拦截阈值默认 `OLD_EFFECT_SIMILARITY_THRESHOLD=0.94`，比日报新玩法口径更保守），同日同批次相似玩法仅保留展示估值更高的代表素材并标记「日内玩法重复」。`normalize_effect_one_liner` 补入少量同义词归一（如 名人/明星、合照/合影、宝丽来/拍立得、修脸/修图/修复）。
+- `ua_workflows/shared/db/video_enhancer.py`：新增 `apply_embedding_duplicate_candidate_tags`，对未被硬拦截的素材做 `effect_one_liner` embedding 相似候选标记；默认阈值 `EMBEDDING_DUP_CANDIDATE_THRESHOLD=0.92`，只加 `embedding重复候选` 标签和 `embedding_duplicate_candidate` 详情，不改 `exclude_from_bitable` / `exclude_from_cluster`。
+- `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：一键流程与单独同步均补跑成人风险、日内玩法、老玩法、embedding 候选、已投放等标记，保证独立同步不绕过筛选；可用 `INTRADAY_EFFECT_FILTER_ENABLED=0` / `OLD_EFFECT_BITABLE_FILTER_ENABLED=0` / `EMBEDDING_DUP_CANDIDATE_ENABLED=0` 分别关闭；`sync.py` 同步主表时会把 analysis `material_tags` 合并进「素材标签」字段。
+- `ua_workflows/video_enhancer/analyze.py`：复核并收紧 VE prompt：`核心卖点` 要求补充可区分场景/对象/风格/呈现方式，避免「AI修图/AI美颜」过泛导致误去重；新增固定 `【风险标签】` 行（成人色情/擦边露肤/版权名人/产品不适配/低质/无明显风险），并解析进 `material_tags` 供多维表「素材标签」复核，其中成人色情仍由内容过滤硬拦。
+- `ua_workflows/video_enhancer/crawl.py`：单产品 `>10` 只保留 Top10 的硬截断默认关闭，改为保留日期命中素材，后续交给封面去重/玩法筛选/同步前排除处理；如需临时恢复可设 `VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_ENABLED=1`。
+
+### [VE] 新素材 / 新玩法 / 持续发力日报口径落地
+
+- `ua_workflows/shared/db/video_enhancer.py`：新增 `load_daily_material_report` 公共聚合口径，仅用于 **Video Enhancer**：新素材仍以 `creative_library.first_target_date = target_date` 判断；新玩法以同 `appid` 下 `effect_one_liner` 过去 N 日（默认 7）精确或相似匹配判断；持续发力聚合 VE 封面/URL/ahash/玩法跨日信号，并按产品限制展示条数，不读取 Arrow2 报告。
+- `ua_workflows/video_enhancer/push_feishu.py` / `push_multichannel.py`：日报标题改为「新素材 / 新玩法 / 持续发力」三指标；新素材中若是老玩法会标注首次玩法日期；持续发力小节开始展示跨日重复素材/玩法。
+- `ua_workflows/video_enhancer/acceptance.py`：验收新增日报素材报告摘要，检查新素材数、`effect_one_liner` 覆盖率（`ACCEPTANCE_MIN_EFFECT_COVERAGE`，默认 0.9）和持续发力信号生成情况。
+
 ## 2026-05-08
 
 ### [Arrow2] 修复 pipeline 封面去重 import（cron Step3 崩溃）

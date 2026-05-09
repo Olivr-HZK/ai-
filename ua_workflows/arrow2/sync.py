@@ -861,7 +861,8 @@ def _load_arrow2_sync_from_db(target_date: str) -> tuple[Dict[str, Any], Dict[st
         cur.execute(
             """
             SELECT product, appid, raw_json, insight_analysis, insight_ua_suggestion,
-                   material_tags, insight_material_category, ad_one_liner
+                   material_tags, insight_material_category, ad_one_liner,
+                   play_one_liner, hook_one_liner
             FROM arrow2_daily_insights
             WHERE target_date = ?
             ORDER BY ad_key
@@ -899,6 +900,8 @@ def _load_arrow2_sync_from_db(target_date: str) -> tuple[Dict[str, Any], Dict[st
                 "material_tags": mt,
                 "arrow2_material_category": str(r["insight_material_category"] or ""),
                 "ad_one_liner": str(r["ad_one_liner"] or ""),
+                "play_one_liner": str(r["play_one_liner"] or ""),
+                "hook_one_liner": str(r["hook_one_liner"] or ""),
             }
         )
 

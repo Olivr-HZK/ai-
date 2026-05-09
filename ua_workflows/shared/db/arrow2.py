@@ -305,7 +305,7 @@ def _migrate_arrow2_crawl_workflow_column() -> None:
 
 
 def _migrate_arrow2_daily_insights_schema() -> None:
-    """为已有库补齐 Arrow2 日表字段（insight_material_category / ad_one_liner）。"""
+    """为已有库补齐 Arrow2 日表字段（素材类型 / 一句话 / 玩法 / Hook）。"""
     conn = _conn()
     try:
         cur = conn.cursor()
@@ -315,6 +315,10 @@ def _migrate_arrow2_daily_insights_schema() -> None:
             cur.execute("ALTER TABLE arrow2_daily_insights ADD COLUMN insight_material_category TEXT")
         if "ad_one_liner" not in cols:
             cur.execute("ALTER TABLE arrow2_daily_insights ADD COLUMN ad_one_liner TEXT")
+        if "play_one_liner" not in cols:
+            cur.execute("ALTER TABLE arrow2_daily_insights ADD COLUMN play_one_liner TEXT")
+        if "hook_one_liner" not in cols:
+            cur.execute("ALTER TABLE arrow2_daily_insights ADD COLUMN hook_one_liner TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -864,6 +868,8 @@ def upsert_arrow2_daily_insight_full(
     material_tags = json.dumps(mt, ensure_ascii=False) if isinstance(mt, list) else str(mt or "")
     mat_cat = str(analysis_raw.get("arrow2_material_category") or "").strip()[:500]
     one_liner = str(analysis_raw.get("ad_one_liner") or "").strip()[:120]
+    play_liner = str(analysis_raw.get("play_one_liner") or "").strip()[:120]
+    hook_liner = str(analysis_raw.get("hook_one_liner") or "").strip()[:120]
 
     cs = item.get("cover_style")
     if isinstance(cs, dict):
@@ -899,8 +905,9 @@ def upsert_arrow2_daily_insight_full(
               crawl_date, target_date, category, product, appid, ad_key, platform,
               video_url, preview_img_url, video_duration, first_seen, created_at, last_seen,
               days_count, heat, all_exposure_value, impression, raw_json, insight_analysis, insight_ua_suggestion,
-              insight_cover_style, material_tags, insight_material_category, ad_one_liner, crawl_workflow
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              insight_cover_style, material_tags, insight_material_category, ad_one_liner,
+              play_one_liner, hook_one_liner, crawl_workflow
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(target_date, ad_key) DO UPDATE SET
               crawl_date=excluded.crawl_date,
               insight_analysis=excluded.insight_analysis,
@@ -908,6 +915,8 @@ def upsert_arrow2_daily_insight_full(
               material_tags=excluded.material_tags,
               insight_material_category=excluded.insight_material_category,
               ad_one_liner=excluded.ad_one_liner,
+              play_one_liner=excluded.play_one_liner,
+              hook_one_liner=excluded.hook_one_liner,
               insight_cover_style=COALESCE(NULLIF(excluded.insight_cover_style,''), arrow2_daily_insights.insight_cover_style),
               raw_json=excluded.raw_json,
               heat=excluded.heat,
@@ -942,6 +951,8 @@ def upsert_arrow2_daily_insight_full(
                 material_tags,
                 mat_cat,
                 one_liner,
+                play_liner,
+                hook_liner,
                 cw,
             ),
         )

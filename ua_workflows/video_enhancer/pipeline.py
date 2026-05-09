@@ -49,6 +49,7 @@ from ua_workflows.video_enhancer.filter_reports import (
     write_cover_filter_step_json_skipped,
     write_launched_filter_step_json,
 )
+from ua_workflows.video_enhancer.content_filters import apply_adult_content_filter
 
 from ua_workflows.video_enhancer.analyze import is_creative_analyzable
 
@@ -62,6 +63,9 @@ from ua_workflows.shared.media.resolve import (
 from ua_workflows.shared.db.ua_crawl import format_video_enhancer_usage_log_line
 
 from ua_workflows.shared.db.video_enhancer import (
+    apply_embedding_duplicate_candidate_tags,
+    apply_intraday_effect_bitable_filter,
+    apply_old_effect_bitable_filter,
     build_inspiration_dedup_redirect_map,
     combined_analysis_results_for_pipeline,
     get_deduped_items_for_analysis,
@@ -634,6 +638,80 @@ def main() -> None:
     if n_sem:
         print(f"[semantic-dedup] 标记 {n_sem} 条语义重复素材（exclude_from_cluster）")
 
+    # 2.8b) 成人/色情素材拦截：不依赖 effect_one_liner，综合分析正文/标题/正文/标签判断
+    n_adult, adult_details = apply_adult_content_filter(combined_results)
+    if n_adult:
+        print(f"[content-filter] 标记 {n_adult} 条成人/色情风险素材（主表不同步；不进入方向卡片）")
+
+    # 2.8c) 日内玩法去重：同 appid 同批次相似玩法仅保留展示估值更高的代表素材
+    intraday_effect_details: list[dict] = []
+    n_intraday_effect = 0
+    intraday_effect_enabled = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+        "",
+    )
+    if intraday_effect_enabled:
+        try:
+            n_intraday_effect, intraday_effect_details = apply_intraday_effect_bitable_filter(combined_results)
+            if n_intraday_effect:
+                print(f"[intraday-effect-filter] 标记 {n_intraday_effect} 条日内玩法重复素材（主表不同步；不进入方向卡片）")
+        except Exception as e:
+            print(f"[intraday-effect-filter] skipped: {e}")
+            intraday_effect_details = []
+            n_intraday_effect = 0
+    else:
+        print("[intraday-effect-filter] 已关闭（INTRADAY_EFFECT_FILTER_ENABLED=0），跳过日内玩法筛选。")
+
+    # 2.8d) 老玩法拦截：同 appid 近 N 天已出现过的 effect_one_liner 不同步主表
+    old_effect_details: list[dict] = []
+    n_old_effect = 0
+    old_effect_enabled = (os.getenv("OLD_EFFECT_BITABLE_FILTER_ENABLED") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+        "",
+    )
+    if old_effect_enabled:
+        try:
+            n_old_effect, old_effect_details = apply_old_effect_bitable_filter(target_date, combined_results)
+            if n_old_effect:
+                print(f"[old-effect-filter] 标记 {n_old_effect} 条老玩法重复素材（主表不同步；不进入方向卡片）")
+        except Exception as e:
+            print(f"[old-effect-filter] skipped: {e}")
+            old_effect_details = []
+            n_old_effect = 0
+    else:
+        print("[old-effect-filter] 已关闭（OLD_EFFECT_BITABLE_FILTER_ENABLED=0），跳过老玩法同步前筛选。")
+
+    # 2.8e) embedding 重复候选：只打标签，不排除主表/方向卡片，用于后续人工校准
+    embedding_dup_details: list[dict] = []
+    n_embedding_dup = 0
+    embedding_dup_enabled = (os.getenv("EMBEDDING_DUP_CANDIDATE_ENABLED") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+        "",
+    )
+    if embedding_dup_enabled:
+        try:
+            n_embedding_dup, embedding_dup_details = apply_embedding_duplicate_candidate_tags(
+                target_date,
+                combined_results,
+            )
+            if n_embedding_dup:
+                print(f"[embedding-dup-candidate] 标记 {n_embedding_dup} 条 embedding 重复候选（仅打标，不排除）")
+        except Exception as e:
+            print(f"[embedding-dup-candidate] skipped: {e}")
+            embedding_dup_details = []
+            n_embedding_dup = 0
+    else:
+        print("[embedding-dup-candidate] 已关闭（EMBEDDING_DUP_CANDIDATE_ENABLED=0），跳过 embedding 候选打标。")
+
     # 2.9) vs 我方已投放特效库：命中则排除出方向卡片 + 主表不同步 + 打标
     # 当前默认关闭（LAUNCHED_EFFECTS_ENABLED=0），仅做记录不打 exclude
     launched_details: list[dict] = []
@@ -661,8 +739,21 @@ def main() -> None:
     )
     print(f"[filter-json] {lf_path.name}（我方已投放特效库匹配 {n_le} 条）")
 
+    if adult_details:
+        sample = adult_details[:3]
+        print(f"[content-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+    if intraday_effect_details:
+        sample = intraday_effect_details[:3]
+        print(f"[intraday-effect-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+    if old_effect_details:
+        sample = old_effect_details[:3]
+        print(f"[old-effect-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+    if embedding_dup_details:
+        sample = embedding_dup_details[:3]
+        print(f"[embedding-dup-candidate] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+
     # 如有 2.8/2.9 标记，回写 analysis JSON
-    if n_sem or n_le:
+    if n_sem or n_adult or n_intraday_effect or n_old_effect or n_embedding_dup or n_le:
         analysis_payload["results"] = combined_results
         analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -893,4 +984,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

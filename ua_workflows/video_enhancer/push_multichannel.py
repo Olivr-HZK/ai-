@@ -24,12 +24,14 @@ import requests
 from dotenv import load_dotenv
 
 from ua_workflows.shared.config import DATA_DIR
+from ua_workflows.shared.push.wecom import push_wecom_markdown
 from ua_workflows.video_enhancer.push_feishu import (
     _render_daily_card_markdown,
-    _extract_one_liner,
-    PRODUCT_THEMES,
 )
-from ua_workflows.shared.db.video_enhancer import _get_conn, init_db
+from ua_workflows.shared.db.video_enhancer import (
+    init_db,
+    load_daily_material_report,
+)
 
 load_dotenv()
 
@@ -61,9 +63,6 @@ def _resolve_paths(target_date: str, args: argparse.Namespace) -> tuple[Path, Pa
     return raw, s_md, s_json
 
 
-WECOM_MAX_TEXT_BYTES = 3800  # 企业微信单条上限 4096（UTF-8）；分段时 "[n/m]\n" 会占额外字节，留余量
-
-
 def _sanitize_gsheet_tab_name(raw: str, default: str) -> str:
     """防止 .env 误把两行粘成一行时 tab 名含 '=' 或超长导致 gspread 400。"""
     s = (raw or "").strip()
@@ -74,79 +73,15 @@ def _sanitize_gsheet_tab_name(raw: str, default: str) -> str:
     return s[:100]
 
 
-def _split_by_utf8_bytes(text: str, max_bytes: int = WECOM_MAX_TEXT_BYTES) -> List[str]:
-    chunks: List[str] = []
-    cur_chars: List[str] = []
-    cur_bytes = 0
-    for ch in text:
-        b = len(ch.encode("utf-8"))
-        if cur_bytes + b > max_bytes and cur_chars:
-            chunks.append("".join(cur_chars))
-            cur_chars = [ch]
-            cur_bytes = b
-        else:
-            cur_chars.append(ch)
-            cur_bytes += b
-    if cur_chars:
-        chunks.append("".join(cur_chars))
-    return chunks
-
-
-def _post_wecom(webhook: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    resp = requests.post(webhook, json=payload, timeout=10)
-    try:
-        data = resp.json()
-    except Exception:
-        data = {"raw": resp.text}
-    if resp.status_code != 200 or data.get("errcode") != 0:
-        raise RuntimeError(f"[wecom] 推送失败: status={resp.status_code}, resp={data}")
-    return data
-
-
-def push_wecom_markdown(webhook: str, text: str) -> None:
-    """企业微信 markdown 推送，按字节分段。"""
-    if not webhook:
-        print("[wecom] 未配置 WECOM_BOT_WEBHOOK，跳过。")
-        return
-
-    chunks = _split_by_utf8_bytes(text, max_bytes=WECOM_MAX_TEXT_BYTES)
-    total = len(chunks)
-    for i, part in enumerate(chunks, start=1):
-        content = f"[{i}/{total}]\n{part}" if total > 1 else part
-        payload = {"msgtype": "markdown", "markdown": {"content": content}}
-        _post_wecom(webhook, payload)
-    print(f"[wecom] markdown 推送完成，共 {total} 段。")
-
-
 def _build_daily_card_from_db(target_date: str) -> str:
     """从 DB 读取新素材，用新日报格式渲染 markdown（与飞书卡片一致）。"""
     init_db()
-    conn = _get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT ad_key, product, creative_type, best_impression, best_all_exposure_value, "
-        "best_heat, video_url, preview_img_url, video_duration "
-        "FROM creative_library WHERE first_target_date = ? ORDER BY best_impression DESC",
-        (target_date,),
+    report = load_daily_material_report(target_date, lookback_days=7)
+    return _render_daily_card_markdown(
+        target_date,
+        report.get("new_items") or [],
+        report.get("sustained_by_product") or {},
     )
-    new_items = [dict(row) for row in cur.fetchall()]
-
-    for item in new_items:
-        cur.execute(
-            "SELECT insight_analysis, effect_one_liner FROM daily_creative_insights "
-            "WHERE ad_key LIKE ? AND target_date = ? LIMIT 1",
-            (item["ad_key"][:16] + "%", target_date),
-        )
-        row = cur.fetchone()
-        item["_one_liner"] = _extract_one_liner(row["insight_analysis"] if row else "")
-        effect = ""
-        if row and row["effect_one_liner"] and row["effect_one_liner"] != "None":
-            effect = row["effect_one_liner"]
-        item["effect_one_liner"] = effect or item.get("effect_one_liner", "")
-
-    conn.close()
-    return _render_daily_card_markdown(target_date, new_items, {})
 
 
 def sync_to_google_sheet(webhook_url: str, target_date: str, raw_payload: Dict[str, Any], suggestion_payload: Dict[str, Any]) -> None:

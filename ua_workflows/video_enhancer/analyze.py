@@ -295,7 +295,7 @@ def _normalize_arrow2_category(raw: str) -> str:
 
 
 def _arrow2_one_liner_prompt(item: Dict[str, Any], creative: Dict[str, Any]) -> str:
-    """Arrow2 精简 prompt：仅要求一句话说明 + 素材类型，大幅降低 token 消耗。"""
+    """Arrow2 精简 prompt：输出周报可复用字段 + 素材类型，控制 token 消耗。"""
     return f"""
 以下是一条竞品 UA 素材：
 - 产品: {item.get('product', '')}
@@ -304,9 +304,11 @@ def _arrow2_one_liner_prompt(item: Dict[str, Any], creative: Dict[str, Any]) -> 
 - 标题: {creative.get('title', '') or '无'}
 - 文案: {creative.get('body', '') or '无'}
 
-请**仅**输出以下两行（固定格式，每行独立一行，不要输出其他任何内容）：
+请**仅**输出以下四行（固定格式，每行独立一行，不要输出其他任何内容）：
 
 【一句话说明】用约10个汉字一句话概括广告在播什么
+【玩法描述】用约10-18个汉字概括核心玩法/关卡机制，例如「爆金币箭头解谜」「填色解救人质」「箭头录屏通关」
+【Hook描述】用约10-18个汉字概括开头吸引点/视觉钩子，例如「角色被困倒计时」「金币即时爆发反馈」「失败差一步反差」
 【素材类型】只选一类：录屏素材、解救类素材、创意玩法素材
 """.strip()
 
@@ -325,18 +327,24 @@ def _arrow2_fixed_footer() -> str:
 def _ve_fixed_footer() -> str:
     """VE（视频增强）流程的 footer：核心卖点。"""
     return (
-        "\n7) 在全文最后**必须**追加一行（固定格式，便于系统解析）：\n"
+        "\n7) 在全文最后**必须**追加两行（固定格式，便于系统解析，每行独立一行）：\n"
         "【核心卖点】用一句中文（约10~20字）概括这条素材的核心卖点——用了什么特效、什么展现形式；"
         "参考风格：「真人照片一键变身奇幻恶魔特效」「AI多手化妆瞬间变身」「老照片修复转动态视频」"
         "「黑白线稿漫画滤镜」「巨型猫咪AR特效」「静态照片生成跳舞动画」"
-        "等——先写具体特效/玩法，必要时加展现形式；禁止写投放建议，只描述素材本身做了什么。"
+        "等——先写具体特效/玩法，必要时加展现形式；如果是常见修图/美颜/前后对比，必须补充可区分的场景、"
+        "对象、风格或呈现方式（如派对、泳装、商务头像、分屏滑动、宝丽来名人合影），避免只写「AI修图」「AI美颜」"
+        "这类过泛描述；禁止写投放建议，只描述素材本身做了什么。\n"
+        "【风险标签】只从以下标签中选择，多个用顿号连接；若无则写「无明显风险」："
+        "成人色情风险、擦边露肤风险、版权名人风险、产品不适配风险、低质素材风险、无明显风险。"
+        "只有画面/文案实际存在色情、裸体、露点、明显性行为或成人视频导向时，才写「成人色情风险」；"
+        "普通泳装、健身、正常露肤或仅平台可能限流，不要写成人色情风险，可写「擦边露肤风险」或「无明显风险」。"
     )
 
 
-def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str]:
+def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str, str, str]:
     """从分析正文移除末段固定行；解析素材类型、一句话说明、特效玩法；旧版【游戏素材标签】仍兼容为 llm_tags。
 
-    返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner)。
+    返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner)。
     """
     raw = (text or "").strip()
     if not raw:
@@ -344,9 +352,12 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
     lines = raw.splitlines()
     n = len(lines)
     legacy_tags: list[str] = []
+    footer_tags: list[str] = []
     category_raw = ""
     one_liner = ""
     effect_one_liner = ""
+    play_one_liner = ""
+    hook_one_liner = ""
     remove_idx: set[int] = set()
 
     def _read_block(start: int, prefix: str) -> tuple[str, int]:
@@ -383,7 +394,12 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
         if s.startswith("【Hook描述】") or s.startswith("【Hook 描述】"):
             prefix = "【Hook描述】" if s.startswith("【Hook描述】") else "【Hook 描述】"
             rest, i = _read_block(i, prefix)
-            one_liner = rest[:50]
+            hook_one_liner = rest[:60]
+            continue
+        if s.startswith("【玩法描述】") or s.startswith("【玩法 描述】"):
+            prefix = "【玩法描述】" if s.startswith("【玩法描述】") else "【玩法 描述】"
+            rest, i = _read_block(i, prefix)
+            play_one_liner = rest[:60]
             continue
         if s.startswith("【特效玩法】"):
             rest, i = _read_block(i, "【特效玩法】")
@@ -392,6 +408,13 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
         if s.startswith("【核心卖点】"):
             rest, i = _read_block(i, "【核心卖点】")
             effect_one_liner = rest[:60]
+            continue
+        if s.startswith("【风险标签】"):
+            rest, i = _read_block(i, "【风险标签】")
+            for part in rest.replace("、", ",").split(","):
+                t = part.strip()
+                if t and t not in ("无", "无明显风险", "未分类"):
+                    footer_tags.append(t[:40])
             continue
         if s.startswith("【游戏素材标签】"):
             rest = s.replace("【游戏素材标签】", "", 1).strip()
@@ -422,9 +445,20 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
                 llm_tags.append(nt)
         if not cat and llm_tags:
             cat = llm_tags[0]
+    for t in footer_tags:
+        if t and t not in llm_tags:
+            llm_tags.append(t)
 
     out_lines = [lines[k] for k in range(n) if k not in remove_idx]
-    return "\n".join(out_lines).strip(), llm_tags, cat, one_liner.strip(), effect_one_liner.strip()
+    return (
+        "\n".join(out_lines).strip(),
+        llm_tags,
+        cat,
+        one_liner.strip(),
+        effect_one_liner.strip(),
+        play_one_liner.strip(),
+        hook_one_liner.strip(),
+    )
 
 
 def _merge_material_tags_arrow2(creative: Dict[str, Any], llm_tags: list[str]) -> list[str]:
@@ -434,6 +468,17 @@ def _merge_material_tags_arrow2(creative: Dict[str, Any], llm_tags: list[str]) -
         out.extend(str(x).strip() for x in pt if str(x).strip())
     for t in llm_tags:
         if t and t not in out:
+            out.append(t)
+    return out
+
+
+def _merge_material_tags_ve(creative: Dict[str, Any], llm_tags: list[str]) -> list[str]:
+    out: list[str] = []
+    pt = creative.get("pipeline_tags")
+    if isinstance(pt, list):
+        out.extend(str(x).strip() for x in pt if str(x).strip())
+    for t in llm_tags:
+        if t and t not in out and t not in ("无", "无明显风险"):
             out.append(t)
     return out
 
@@ -575,7 +620,7 @@ def _build_video_prompt(
 2) Hook（前几秒抓人点）
 3) 情感基调
 4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议）
-5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度），禁止色情细节描写
+5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球、版权/名人肖像、产品功能不适配或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度、版权或产品适配），禁止色情细节描写
 6) 语言：全文仅使用汉字、英文字母与常规标点数字；遇外语口播/字幕/标题时用中文概括含义，勿整段保留阿拉伯文等非中英原文
 {foot}
 """.strip()
@@ -610,7 +655,7 @@ def _build_image_prompt(
 2) 视觉钩子（第一眼抓人的核心元素）
 3) 情感基调
 4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议）
-5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度），禁止色情细节描写
+5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球、版权/名人肖像、产品功能不适配或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度、版权或产品适配），禁止色情细节描写
 6) 语言：全文仅使用汉字、英文字母与常规标点数字；遇外语标题/画中字时用中文概括含义，勿整段保留阿拉伯文等非中英原文
 {foot}
 """.strip()
@@ -918,6 +963,8 @@ def _analyze_one_item(
     material_tags: List[str] = []
     arrow2_material_category = ""
     ad_one_liner = ""
+    play_one_liner = ""
+    hook_one_liner = ""
     ua_suggestion_single = ""
     effect_one_liner = ""
     inspiration_enrich: str = "none"
@@ -982,19 +1029,24 @@ def _analyze_one_item(
                 )
         analysis = _parse_inspiration_response(work)
         if arrow2:
-            # Arrow2 精简模式：prompt 只要求两行，直接从原始输出提取
+            # Arrow2 精简模式：prompt 只要求固定字段行，直接从原始输出提取
             raw_text = (work or "").strip()
-            analysis, llm_tags, arrow2_material_category, ad_one_liner, _effect = _strip_arrow2_footer_lines(
-                raw_text
-            )
+            (
+                analysis,
+                llm_tags,
+                arrow2_material_category,
+                ad_one_liner,
+                _effect,
+                play_one_liner,
+                hook_one_liner,
+            ) = _strip_arrow2_footer_lines(raw_text)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
             # Arrow2 精简模式下 analysis 正文可能为空（只有 footer），用原始输出作为入库文本
             if not analysis.strip():
                 analysis = raw_text
         else:
-            analysis, _, _, ad_one_liner, effect_one_liner = _strip_arrow2_footer_lines(
-                analysis
-            )
+            analysis, llm_tags, _, ad_one_liner, effect_one_liner, _, _ = _strip_arrow2_footer_lines(analysis)
+            material_tags = _merge_material_tags_ve(creative, llm_tags)
         analysis, inspiration_enrich = _apply_empty_multimodal_enrichment(
             analysis,
             work,
@@ -1023,14 +1075,19 @@ def _analyze_one_item(
         ):
             inspiration_enrich = "json_repair"
         if inspiration_enrich != "none" and arrow2:
-            analysis, llm_tags, arrow2_material_category, ad_one_liner, _effect = _strip_arrow2_footer_lines(
-                analysis
-            )
+            (
+                analysis,
+                llm_tags,
+                arrow2_material_category,
+                ad_one_liner,
+                _effect,
+                play_one_liner,
+                hook_one_liner,
+            ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
         if inspiration_enrich != "none" and not arrow2:
-            analysis, _, _, ad_one_liner, effect_one_liner = _strip_arrow2_footer_lines(
-                analysis
-            )
+            analysis, llm_tags, _, ad_one_liner, effect_one_liner, _, _ = _strip_arrow2_footer_lines(analysis)
+            material_tags = _merge_material_tags_ve(creative, llm_tags)
     else:
         analysis = work
 
@@ -1060,6 +1117,9 @@ def _analyze_one_item(
         "style_filter_match_summary": style_filter_match_summary,
         "material_tags": material_tags,
         "arrow2_material_category": arrow2_material_category,
+        "ad_one_liner": ad_one_liner,
+        "play_one_liner": play_one_liner,
+        "hook_one_liner": hook_one_liner,
         "effect_one_liner": effect_one_liner,
         "exclude_from_bitable": exclude_from_bitable,
         "exclude_from_cluster": exclude_from_cluster,
@@ -1113,6 +1173,8 @@ def _analyze_one_item(
                         "material_tags": material_tags,
                         "arrow2_material_category": arrow2_material_category,
                         "ad_one_liner": ad_one_liner,
+                        "play_one_liner": play_one_liner,
+                        "hook_one_liner": hook_one_liner,
                     },
                 )
             if ok:
@@ -1182,6 +1244,8 @@ def _analyze_arrow2_playable_item(
         "material_tags": material_tags,
         "arrow2_material_category": "",
         "ad_one_liner": "",
+        "play_one_liner": "",
+        "hook_one_liner": "",
         "effect_one_liner": "",
         "exclude_from_bitable": False,
         "exclude_from_cluster": False,
@@ -1206,6 +1270,8 @@ def _analyze_arrow2_playable_item(
                         "material_tags": material_tags,
                         "arrow2_material_category": "",
                         "ad_one_liner": "",
+                        "play_one_liner": "",
+                        "hook_one_liner": "",
                     },
                 )
             if ok:
@@ -1443,4 +1509,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
