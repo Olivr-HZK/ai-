@@ -17,7 +17,8 @@
 - `ua_workflows/shared/db/video_enhancer.py`：新增 `apply_old_effect_bitable_filter` 与 `apply_intraday_effect_bitable_filter`；同步前按同 `appid` 近 7 日历史玩法标记「老玩法重复」（主表拦截阈值默认 `OLD_EFFECT_SIMILARITY_THRESHOLD=0.94`，比日报新玩法口径更保守），同日同批次相似玩法仅保留展示估值更高的代表素材并标记「日内玩法重复」。`normalize_effect_one_liner` 补入少量同义词归一（如 名人/明星、合照/合影、宝丽来/拍立得、修脸/修图/修复）。
 - `ua_workflows/shared/db/video_enhancer.py`：新增 `apply_embedding_duplicate_candidate_tags`，对未被硬拦截的素材做 `effect_one_liner` embedding 相似候选标记；默认阈值 `EMBEDDING_DUP_CANDIDATE_THRESHOLD=0.92`，只加 `embedding重复候选` 标签和 `embedding_duplicate_candidate` 详情，不改 `exclude_from_bitable` / `exclude_from_cluster`。
 - `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：一键流程与单独同步均补跑成人风险、日内玩法、老玩法、embedding 候选、已投放等标记，保证独立同步不绕过筛选；可用 `INTRADAY_EFFECT_FILTER_ENABLED=0` / `OLD_EFFECT_BITABLE_FILTER_ENABLED=0` / `EMBEDDING_DUP_CANDIDATE_ENABLED=0` 分别关闭；`sync.py` 同步主表时会把 analysis `material_tags` 合并进「素材标签」字段。
-- `ua_workflows/video_enhancer/analyze.py`：复核并收紧 VE prompt：`核心卖点` 要求补充可区分场景/对象/风格/呈现方式，避免「AI修图/AI美颜」过泛导致误去重；新增固定 `【风险标签】` 行（成人色情/擦边露肤/版权名人/产品不适配/低质/无明显风险），并解析进 `material_tags` 供多维表「素材标签」复核，其中成人色情仍由内容过滤硬拦。
+- `ua_workflows/video_enhancer/analyze.py`：复核并收紧 VE prompt：`核心卖点` 要求补充可区分场景/对象/风格/呈现方式，避免「AI修图/AI美颜」过泛导致误去重；新增固定 `【风险标签】` 行（成人色情/擦边露肤/版权名人/产品不适配/低质/无明显风险）和 `【风险等级】` 行（低/中/高），标签解析进 `material_tags` 供多维表「素材标签」复核，等级写入单独「风险等级」列，其中成人色情仍由内容过滤硬拦。
+- `ua_workflows/video_enhancer/analyze.py` / `sync.py`：VE prompt 新增固定 `【Hook解析】` 与 `【脚本口播】` 输出，分析正文要求更侧重前 1~3 秒 Hook 与脚本/字幕/口播提炼，减少逐帧冗余；若广大大 raw/detail 后续带 `script` / `transcript` / `subtitle` / `ocr_text` 等字段，会一并喂给模型。同步主表自动新增并写入「Hook解析」「脚本/口播」「风险等级」三列。
 - `ua_workflows/video_enhancer/crawl.py`：单产品 `>10` 只保留 Top10 的硬截断默认关闭，改为保留日期命中素材，后续交给封面去重/玩法筛选/同步前排除处理；如需临时恢复可设 `VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_ENABLED=1`。
 
 ### [VE] 新素材 / 新玩法 / 持续发力日报口径落地

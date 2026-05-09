@@ -90,6 +90,13 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "封面图", "type": 17},
     {"field_name": "视频附件", "type": 17},
     {"field_name": "核心卖点", "type": 1},
+    {"field_name": "Hook解析", "type": 1},
+    {"field_name": "脚本/口播", "type": 1},
+    {
+        "field_name": "风险等级",
+        "type": 3,
+        "options": [{"name": "低风险"}, {"name": "中风险"}, {"name": "高风险"}],
+    },
     {"field_name": "AI分析结果", "type": 1},
     {"field_name": "抓取日期", "type": 5},
     {"field_name": "创建时间", "type": 5},
@@ -675,6 +682,23 @@ def raw_items_with_successful_analysis(
     return out
 
 
+def normalize_risk_level_for_bitable(value: Any, tags: List[str] | None = None) -> str:
+    s = str(value or "").strip()
+    if "高" in s:
+        return "高风险"
+    if "中" in s:
+        return "中风险"
+    if "低" in s or "无明显" in s or "无风险" in s:
+        return "低风险"
+
+    joined = "、".join(str(t or "") for t in (tags or []))
+    if any(x in joined for x in ("成人色情风险", "色情/成人风险", "成人风险", "露点", "裸体")):
+        return "高风险"
+    if any(x in joined for x in ("擦边露肤风险", "版权名人风险", "产品不适配风险", "低质素材风险")):
+        return "中风险"
+    return ""
+
+
 def sync_cluster_cards_to_bitable(
     access_token: str,
     cluster_url: str,
@@ -744,6 +768,8 @@ def main() -> None:
 
     analysis_by_ad: Dict[str, str] = {}
     effect_by_ad: Dict[str, str] = {}
+    hook_by_ad: Dict[str, str] = {}
+    voiceover_by_ad: Dict[str, str] = {}
     meta_by_ad = build_meta_by_ad_from_analysis_payload(analysis)
     for it in analysis.get("results") or []:
         if isinstance(it, dict):
@@ -751,6 +777,8 @@ def main() -> None:
             if k:
                 analysis_by_ad[k] = str(it.get("analysis") or "")
                 effect_by_ad[k] = str(it.get("effect_one_liner") or "")
+                hook_by_ad[k] = str(it.get("hook_one_liner") or "")
+                voiceover_by_ad[k] = str(it.get("voiceover_script") or "")
 
     need_raw_sync = args.sync_target in ("both", "raw")
     need_cluster_sync = args.sync_target in ("both", "cluster")
@@ -821,6 +849,7 @@ def main() -> None:
                     print(f"[sync] launched_effects 跳过: {e}")
 
     material_tags_by_ad: Dict[str, List[str]] = {}
+    risk_level_by_ad: Dict[str, str] = {}
     for it in analysis.get("results") or []:
         if not isinstance(it, dict):
             continue
@@ -828,6 +857,11 @@ def main() -> None:
         tags = it.get("material_tags")
         if k and isinstance(tags, list):
             material_tags_by_ad[k] = [str(x) for x in tags if x]
+        if k:
+            risk_level_by_ad[k] = normalize_risk_level_for_bitable(
+                it.get("risk_level"),
+                material_tags_by_ad.get(k),
+            )
 
     records: List[Dict[str, Any]] = []
     target_ms = to_ms_from_date_str(target_date)
@@ -897,6 +931,9 @@ def main() -> None:
                 ),
                 "AI分析结果": analysis_by_ad.get(ad_key, ""),
                 "核心卖点": effect_by_ad.get(ad_key, ""),
+                "Hook解析": hook_by_ad.get(ad_key, ""),
+                "脚本/口播": voiceover_by_ad.get(ad_key, ""),
+                "风险等级": risk_level_by_ad.get(ad_key, ""),
                 "视频时长": int(c.get("video_duration") or 0),
                 "接受情况": "待定",
                 "我方产品": own_product_line,

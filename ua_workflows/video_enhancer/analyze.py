@@ -327,7 +327,11 @@ def _arrow2_fixed_footer() -> str:
 def _ve_fixed_footer() -> str:
     """VE（视频增强）流程的 footer：核心卖点。"""
     return (
-        "\n7) 在全文最后**必须**追加两行（固定格式，便于系统解析，每行独立一行）：\n"
+        "\n7) 在全文最后**必须**追加五行（固定格式，便于系统解析，每行独立一行）：\n"
+        "【Hook解析】用一句中文（约20~40字）概括最前段抓人机制：先写画面/台词触发点，再写制造的悬念、痛点或承诺；"
+        "避免泛泛写「吸引用户注意」。若开头无明确 Hook，写「无明确强 Hook」。\n"
+        "【脚本口播】提炼视频中的旁白、口播、字幕或画中文字脚本；按出现顺序用短句串联，保留可借鉴的表达。"
+        "若没有可识别口播/字幕，写「无明确口播/字幕」。不要编造未出现的台词。\n"
         "【核心卖点】用一句中文（约10~20字）概括这条素材的核心卖点——用了什么特效、什么展现形式；"
         "参考风格：「真人照片一键变身奇幻恶魔特效」「AI多手化妆瞬间变身」「老照片修复转动态视频」"
         "「黑白线稿漫画滤镜」「巨型猫咪AR特效」「静态照片生成跳舞动画」"
@@ -337,18 +341,45 @@ def _ve_fixed_footer() -> str:
         "【风险标签】只从以下标签中选择，多个用顿号连接；若无则写「无明显风险」："
         "成人色情风险、擦边露肤风险、版权名人风险、产品不适配风险、低质素材风险、无明显风险。"
         "只有画面/文案实际存在色情、裸体、露点、明显性行为或成人视频导向时，才写「成人色情风险」；"
-        "普通泳装、健身、正常露肤或仅平台可能限流，不要写成人色情风险，可写「擦边露肤风险」或「无明显风险」。"
+        "普通泳装、健身、正常露肤或仅平台可能限流，不要写成人色情风险，可写「擦边露肤风险」或「无明显风险」。\n"
+        "【风险等级】只选一项：低风险、中风险、高风险。低风险=未观察到明显审核/版权/适配问题；"
+        "中风险=有露肤擦边、名人版权、产品适配或低质疑虑但不属于成人色情；"
+        "高风险=成人色情、明显露点/性行为导向、严重版权/品牌风险或明显不适合入库。"
     )
 
 
-def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str, str, str]:
+def _normalize_risk_level(text: str) -> str:
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    if "高" in s:
+        return "高风险"
+    if "中" in s:
+        return "中风险"
+    if "低" in s or "无明显" in s or "无风险" in s:
+        return "低风险"
+    return s[:20]
+
+
+def _infer_risk_level_from_tags(tags: list[str]) -> str:
+    joined = "、".join(str(t or "") for t in tags)
+    if any(x in joined for x in ("成人色情风险", "色情/成人风险", "成人风险", "露点", "裸体")):
+        return "高风险"
+    if any(x in joined for x in ("擦边露肤风险", "版权名人风险", "产品不适配风险", "低质素材风险")):
+        return "中风险"
+    if "无明显风险" in joined or "无风险" in joined:
+        return "低风险"
+    return ""
+
+
+def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str, str, str, str, str]:
     """从分析正文移除末段固定行；解析素材类型、一句话说明、特效玩法；旧版【游戏素材标签】仍兼容为 llm_tags。
 
-    返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner)。
+    返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner, voiceover_script, risk_level)。
     """
     raw = (text or "").strip()
     if not raw:
-        return "", [], "", "", ""
+        return "", [], "", "", "", "", "", "", ""
     lines = raw.splitlines()
     n = len(lines)
     legacy_tags: list[str] = []
@@ -358,6 +389,9 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
     effect_one_liner = ""
     play_one_liner = ""
     hook_one_liner = ""
+    voiceover_script = ""
+    risk_level = ""
+    risk_tag_seen = False
     remove_idx: set[int] = set()
 
     def _read_block(start: int, prefix: str) -> tuple[str, int]:
@@ -391,10 +425,27 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
             rest, i = _read_block(i, "【一句话说明】")
             one_liner = rest[:50]
             continue
-        if s.startswith("【Hook描述】") or s.startswith("【Hook 描述】"):
-            prefix = "【Hook描述】" if s.startswith("【Hook描述】") else "【Hook 描述】"
+        if s.startswith("【Hook描述】") or s.startswith("【Hook 描述】") or s.startswith("【Hook解析】") or s.startswith("【Hook 解析】"):
+            if s.startswith("【Hook描述】"):
+                prefix = "【Hook描述】"
+            elif s.startswith("【Hook 描述】"):
+                prefix = "【Hook 描述】"
+            elif s.startswith("【Hook解析】"):
+                prefix = "【Hook解析】"
+            else:
+                prefix = "【Hook 解析】"
             rest, i = _read_block(i, prefix)
-            hook_one_liner = rest[:60]
+            hook_one_liner = rest[:160]
+            continue
+        if s.startswith("【脚本口播】") or s.startswith("【口播脚本】") or s.startswith("【脚本/口播】"):
+            if s.startswith("【脚本口播】"):
+                prefix = "【脚本口播】"
+            elif s.startswith("【口播脚本】"):
+                prefix = "【口播脚本】"
+            else:
+                prefix = "【脚本/口播】"
+            rest, i = _read_block(i, prefix)
+            voiceover_script = rest[:800]
             continue
         if s.startswith("【玩法描述】") or s.startswith("【玩法 描述】"):
             prefix = "【玩法描述】" if s.startswith("【玩法描述】") else "【玩法 描述】"
@@ -411,10 +462,15 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
             continue
         if s.startswith("【风险标签】"):
             rest, i = _read_block(i, "【风险标签】")
+            risk_tag_seen = True
             for part in rest.replace("、", ",").split(","):
                 t = part.strip()
                 if t and t not in ("无", "无明显风险", "未分类"):
                     footer_tags.append(t[:40])
+            continue
+        if s.startswith("【风险等级】"):
+            rest, i = _read_block(i, "【风险等级】")
+            risk_level = _normalize_risk_level(rest)
             continue
         if s.startswith("【游戏素材标签】"):
             rest = s.replace("【游戏素材标签】", "", 1).strip()
@@ -448,6 +504,8 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
     for t in footer_tags:
         if t and t not in llm_tags:
             llm_tags.append(t)
+    if not risk_level and risk_tag_seen:
+        risk_level = _infer_risk_level_from_tags(footer_tags) or "低风险"
 
     out_lines = [lines[k] for k in range(n) if k not in remove_idx]
     return (
@@ -458,6 +516,8 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
         effect_one_liner.strip(),
         play_one_liner.strip(),
         hook_one_liner.strip(),
+        voiceover_script.strip(),
+        risk_level.strip(),
     )
 
 
@@ -590,6 +650,34 @@ def _format_pipeline_tags(creative: Dict[str, Any]) -> str:
     return "无"
 
 
+def _format_script_metadata(creative: Dict[str, Any]) -> str:
+    """Best-effort extraction for script/transcript fields if the source provides them."""
+    keys = (
+        "script",
+        "scripts",
+        "transcript",
+        "transcription",
+        "subtitle",
+        "subtitles",
+        "caption",
+        "captions",
+        "ocr_text",
+        "audio_text",
+        "voiceover",
+        "voice_over",
+    )
+    parts: list[str] = []
+    for key in keys:
+        v = creative.get(key)
+        if isinstance(v, str) and v.strip():
+            parts.append(f"{key}: {v.strip()[:1000]}")
+        elif isinstance(v, list) and v:
+            text = " / ".join(str(x.get("text") if isinstance(x, dict) else x).strip() for x in v[:10] if str(x).strip())
+            if text:
+                parts.append(f"{key}: {text[:1000]}")
+    return "\n".join(parts) if parts else "无"
+
+
 def _build_video_prompt(
     item: Dict[str, Any],
     creative: Dict[str, Any],
@@ -614,12 +702,13 @@ def _build_video_prompt(
 - 人气（字段 all_exposure_value）: {creative.get('all_exposure_value', 0)}
 - 热度: {creative.get('heat', 0)}
 - 素材标签（系统）: {_format_pipeline_tags(creative)}
+- 广大大脚本/字幕/口播提取（若有）: {_format_script_metadata(creative)}
 
-请输出：
-1) 广告创意拆解
-2) Hook（前几秒抓人点）
-3) 情感基调
-4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议）
+请输出，整体保持精炼，避免逐帧赘述：
+1) 广告创意拆解：2~3 句说明核心机制、画面结构和转化承诺
+2) Hook（前几秒抓人点）：重点解析开头 1~3 秒的画面/台词/字幕如何制造悬念、痛点、反差或结果承诺
+3) 脚本/口播提炼：若能识别旁白、字幕、画中文字或 CTA，请按顺序提炼成可复用文案短句；若无则写「无明确口播/字幕」
+4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议；最多 2 点）
 5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球、版权/名人肖像、产品功能不适配或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度、版权或产品适配），禁止色情细节描写
 6) 语言：全文仅使用汉字、英文字母与常规标点数字；遇外语口播/字幕/标题时用中文概括含义，勿整段保留阿拉伯文等非中英原文
 {foot}
@@ -650,11 +739,11 @@ def _build_image_prompt(
 - 热度: {creative.get('heat', 0)}
 - 素材标签（系统）: {_format_pipeline_tags(creative)}
 
-请结合图片画面与文案/标题，输出：
+请结合图片画面与文案/标题，精炼输出，避免细节堆砌：
 1) 广告创意拆解（构图、视觉焦点、Before/After 对比、文字排版等）
 2) 视觉钩子（第一眼抓人的核心元素）
-3) 情感基调
-4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议）
+3) 画面文案提炼：若能识别画中文字或 CTA，请按顺序提炼成可复用文案短句；若无则写「无明确画面文案」
+4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议；最多 2 点）
 5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球、版权/名人肖像、产品功能不适配或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度、版权或产品适配），禁止色情细节描写
 6) 语言：全文仅使用汉字、英文字母与常规标点数字；遇外语标题/画中字时用中文概括含义，勿整段保留阿拉伯文等非中英原文
 {foot}
@@ -965,6 +1054,8 @@ def _analyze_one_item(
     ad_one_liner = ""
     play_one_liner = ""
     hook_one_liner = ""
+    voiceover_script = ""
+    risk_level = ""
     ua_suggestion_single = ""
     effect_one_liner = ""
     inspiration_enrich: str = "none"
@@ -1039,14 +1130,28 @@ def _analyze_one_item(
                 _effect,
                 play_one_liner,
                 hook_one_liner,
+                voiceover_script,
+                _risk_level,
             ) = _strip_arrow2_footer_lines(raw_text)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
             # Arrow2 精简模式下 analysis 正文可能为空（只有 footer），用原始输出作为入库文本
             if not analysis.strip():
                 analysis = raw_text
         else:
-            analysis, llm_tags, _, ad_one_liner, effect_one_liner, _, _ = _strip_arrow2_footer_lines(analysis)
+            (
+                analysis,
+                llm_tags,
+                _,
+                ad_one_liner,
+                effect_one_liner,
+                _play_tmp,
+                hook_one_liner,
+                voiceover_script,
+                risk_level,
+            ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_ve(creative, llm_tags)
+            if not risk_level:
+                risk_level = _infer_risk_level_from_tags(material_tags)
         analysis, inspiration_enrich = _apply_empty_multimodal_enrichment(
             analysis,
             work,
@@ -1083,11 +1188,25 @@ def _analyze_one_item(
                 _effect,
                 play_one_liner,
                 hook_one_liner,
+                voiceover_script,
+                _risk_level,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
         if inspiration_enrich != "none" and not arrow2:
-            analysis, llm_tags, _, ad_one_liner, effect_one_liner, _, _ = _strip_arrow2_footer_lines(analysis)
+            (
+                analysis,
+                llm_tags,
+                _,
+                ad_one_liner,
+                effect_one_liner,
+                _play_tmp,
+                hook_one_liner,
+                voiceover_script,
+                risk_level,
+            ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_ve(creative, llm_tags)
+            if not risk_level:
+                risk_level = _infer_risk_level_from_tags(material_tags)
     else:
         analysis = work
 
@@ -1120,6 +1239,8 @@ def _analyze_one_item(
         "ad_one_liner": ad_one_liner,
         "play_one_liner": play_one_liner,
         "hook_one_liner": hook_one_liner,
+        "voiceover_script": voiceover_script,
+        "risk_level": risk_level,
         "effect_one_liner": effect_one_liner,
         "exclude_from_bitable": exclude_from_bitable,
         "exclude_from_cluster": exclude_from_cluster,
@@ -1175,6 +1296,7 @@ def _analyze_one_item(
                         "ad_one_liner": ad_one_liner,
                         "play_one_liner": play_one_liner,
                         "hook_one_liner": hook_one_liner,
+                        "risk_level": risk_level,
                     },
                 )
             if ok:
@@ -1246,6 +1368,8 @@ def _analyze_arrow2_playable_item(
         "ad_one_liner": "",
         "play_one_liner": "",
         "hook_one_liner": "",
+        "voiceover_script": "",
+        "risk_level": "",
         "effect_one_liner": "",
         "exclude_from_bitable": False,
         "exclude_from_cluster": False,

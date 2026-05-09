@@ -119,6 +119,7 @@ def apply_adult_content_filter(rows: List[Dict[str, Any]]) -> Tuple[int, List[Di
         was_excluded = bool(row.get("exclude_from_bitable"))
         row["exclude_from_bitable"] = True
         row["exclude_from_cluster"] = True
+        row["risk_level"] = "高风险"
         row["adult_content_filter_match"] = match
         _append_tag(row, ADULT_FILTER_TAG)
         if not was_excluded:
