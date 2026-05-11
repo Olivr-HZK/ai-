@@ -218,6 +218,46 @@ def init_db() -> None:
         cl_cols5 = {str(r["name"]) for r in cur.fetchall()}
         if "ad_one_liner" not in cl_cols5:
             cur.execute("ALTER TABLE creative_library ADD COLUMN ad_one_liner TEXT")
+        # play_fingerprint / differentiator: VE prompt separates human-facing
+        # selling point from machine-facing dedupe structure.
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols_play = {str(r["name"]) for r in cur.fetchall()}
+        if "play_fingerprint" not in dci_cols_play:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN play_fingerprint TEXT")
+        if "differentiator" not in dci_cols_play:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN differentiator TEXT")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols_play = {str(r["name"]) for r in cur.fetchall()}
+        if "play_fingerprint" not in cl_cols_play:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN play_fingerprint TEXT")
+        if "differentiator" not in cl_cols_play:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN differentiator TEXT")
+        # 玩法 embedding + duplicate evidence for VE dedupe calibration.
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols6 = {str(r["name"]) for r in cur.fetchall()}
+        if "effect_one_liner_embedding" not in cl_cols6:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN effect_one_liner_embedding BLOB")
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols6 = {str(r["name"]) for r in cur.fetchall()}
+        if "effect_embedding_duplicate_json" not in dci_cols6:
+            cur.execute(
+                "ALTER TABLE daily_creative_insights ADD COLUMN effect_embedding_duplicate_json TEXT"
+            )
+        if "embedding_duplicate_candidate_json" not in dci_cols6:
+            cur.execute(
+                "ALTER TABLE daily_creative_insights ADD COLUMN embedding_duplicate_candidate_json TEXT"
+            )
+        # Analysis-time filter metadata used by daily reports and sync replay.
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols_filter = {str(r["name"]) for r in cur.fetchall()}
+        if "material_tags" not in dci_cols_filter:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN material_tags TEXT")
+        if "exclude_from_bitable" not in dci_cols_filter:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN exclude_from_bitable INTEGER")
+        if "exclude_from_cluster" not in dci_cols_filter:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN exclude_from_cluster INTEGER")
+        if "launched_effect_match_json" not in dci_cols_filter:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN launched_effect_match_json TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -367,11 +407,15 @@ def upsert_creative_library(
                 ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
                 effect_one_liner = str(analysis_raw.get("effect_one_liner") or "")
                 ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
+                play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
+                differentiator = str(analysis_raw.get("differentiator") or "")
             else:
                 analysis = str(analysis_raw or "")
                 ua_single = ""
                 effect_one_liner = ""
                 ad_one_liner = ""
+                play_fingerprint = ""
+                differentiator = ""
             appid = str(item.get("appid") or "").strip()
             cs = item.get("cover_style")
             if isinstance(cs, dict):
@@ -419,6 +463,12 @@ def upsert_creative_library(
                          ad_one_liner = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE ad_one_liner END,
+                         play_fingerprint = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_fingerprint END,
+                         differentiator = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE differentiator END,
                          updated_at_local = datetime('now','localtime')
                        WHERE ad_key = ?""",
                     (target_date, inc, new_heat, new_imp, new_exp,
@@ -427,6 +477,8 @@ def upsert_creative_library(
                      cover_style_str, cover_style_str,
                      effect_one_liner, effect_one_liner,
                      ad_one_liner, ad_one_liner,
+                     play_fingerprint, play_fingerprint,
+                     differentiator, differentiator,
                      ad_key),
                 )
                 upserted += 1
@@ -514,6 +566,7 @@ def upsert_creative_library(
                      first_target_date, last_target_date, appearance_count,
                      insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
                      effect_one_liner, ad_one_liner,
+                     play_fingerprint, differentiator,
                      created_at_local, updated_at_local
                    ) VALUES (
                      ?, ?, ?, ?,
@@ -524,6 +577,7 @@ def upsert_creative_library(
                      ?, ?, ?,
                      ?, ?, 1,
                      ?, ?, ?, ?,
+                     ?, ?,
                      ?, ?,
                      datetime('now','localtime'), datetime('now','localtime')
                    )""",
@@ -538,6 +592,7 @@ def upsert_creative_library(
                     target_date, target_date,
                     analysis, ua_single, cover_style_str, dedup_reason,
                     effect_one_liner, ad_one_liner,
+                    play_fingerprint, differentiator,
                 ),
             )
             upserted += 1
@@ -619,6 +674,9 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           heat, all_exposure_value, impression,
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
           effect_one_liner, ad_one_liner,
+          play_fingerprint, differentiator,
+          effect_embedding_duplicate_json, embedding_duplicate_candidate_json,
+          material_tags, exclude_from_bitable, exclude_from_cluster, launched_effect_match_json,
           created_at_local, updated_at_local
         ) VALUES (
           ?, ?, ?, ?, ?,
@@ -627,6 +685,9 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?, ?,
           ?, ?, ?, ?,
           ?, ?,
+          ?, ?,
+          ?, ?,
+          ?, ?, ?, ?,
           datetime('now','localtime'), datetime('now','localtime')
         )
         ON CONFLICT(target_date, appid, ad_key) DO UPDATE SET
@@ -668,8 +729,51 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
             THEN excluded.ad_one_liner
             ELSE daily_creative_insights.ad_one_liner
           END,
+          play_fingerprint=CASE
+            WHEN COALESCE(TRIM(excluded.play_fingerprint), '') <> ''
+            THEN excluded.play_fingerprint
+            ELSE daily_creative_insights.play_fingerprint
+          END,
+          differentiator=CASE
+            WHEN COALESCE(TRIM(excluded.differentiator), '') <> ''
+            THEN excluded.differentiator
+            ELSE daily_creative_insights.differentiator
+          END,
+          effect_embedding_duplicate_json=excluded.effect_embedding_duplicate_json,
+          embedding_duplicate_candidate_json=excluded.embedding_duplicate_candidate_json,
+          material_tags=CASE
+            WHEN COALESCE(TRIM(excluded.material_tags), '') <> ''
+            THEN excluded.material_tags
+            ELSE daily_creative_insights.material_tags
+          END,
+          exclude_from_bitable=CASE
+            WHEN excluded.exclude_from_bitable IS NOT NULL
+            THEN excluded.exclude_from_bitable
+            ELSE daily_creative_insights.exclude_from_bitable
+          END,
+          exclude_from_cluster=CASE
+            WHEN excluded.exclude_from_cluster IS NOT NULL
+            THEN excluded.exclude_from_cluster
+            ELSE daily_creative_insights.exclude_from_cluster
+          END,
+          launched_effect_match_json=CASE
+            WHEN COALESCE(TRIM(excluded.launched_effect_match_json), '') <> ''
+            THEN excluded.launched_effect_match_json
+            ELSE daily_creative_insights.launched_effect_match_json
+          END,
           updated_at_local=datetime('now','localtime');
         """
+
+
+def _json_for_optional(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        if not value:
+            return ""
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    text = str(value).strip()
+    return text
 
 
 def _params_tuple_for_daily_creative_insight(
@@ -712,11 +816,36 @@ def _params_tuple_for_daily_creative_insight(
         ua_single = str(analysis_raw.get("ua_suggestion_single") or "")
         effect_one_liner = str(analysis_raw.get("effect_one_liner") or "")
         ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
+        play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
+        differentiator = str(analysis_raw.get("differentiator") or "")
+        effect_embedding_duplicate_json = _json_for_optional(
+            analysis_raw.get("effect_embedding_duplicate_match")
+            or analysis_raw.get("effect_embedding_duplicate")
+        )
+        embedding_duplicate_candidate_json = _json_for_optional(
+            analysis_raw.get("embedding_duplicate_candidate")
+        )
+        tags = analysis_raw.get("material_tags")
+        if isinstance(tags, list) and tags:
+            material_tags_json = json.dumps([str(t) for t in tags if str(t).strip()], ensure_ascii=False)
+        else:
+            material_tags_json = ""
+        exclude_from_bitable = 1 if bool(analysis_raw.get("exclude_from_bitable")) else 0
+        exclude_from_cluster = 1 if bool(analysis_raw.get("exclude_from_cluster")) else 0
+        launched_effect_match_json = _json_for_optional(analysis_raw.get("launched_effect_match"))
     else:
         insight = str(analysis_raw or "")
         ua_single = ""
         effect_one_liner = ""
         ad_one_liner = ""
+        play_fingerprint = ""
+        differentiator = ""
+        effect_embedding_duplicate_json = ""
+        embedding_duplicate_candidate_json = ""
+        material_tags_json = ""
+        exclude_from_bitable = None
+        exclude_from_cluster = None
+        launched_effect_match_json = ""
     cs = item.get("cover_style")
     if isinstance(cs, dict):
         cover_style_str = json.dumps(cs, ensure_ascii=False)
@@ -747,6 +876,14 @@ def _params_tuple_for_daily_creative_insight(
         cover_style_str,
         effect_one_liner,
         ad_one_liner,
+        play_fingerprint,
+        differentiator,
+        effect_embedding_duplicate_json,
+        embedding_duplicate_candidate_json,
+        material_tags_json,
+        exclude_from_bitable,
+        exclude_from_cluster,
+        launched_effect_match_json,
     )
 
 
@@ -1181,7 +1318,7 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
             SELECT
               category, product, appid, ad_key, platform,
               video_duration, video_url, raw_json, insight_analysis, insight_ua_suggestion,
-              effect_one_liner, ad_one_liner,
+              effect_one_liner, ad_one_liner, play_fingerprint, differentiator,
               updated_at_local, id
             FROM daily_creative_insights
             WHERE ad_key IN ({placeholders})
@@ -1236,6 +1373,8 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                     "ua_suggestion_single": str(row["insight_ua_suggestion"] or ""),
                     "effect_one_liner": str(row["effect_one_liner"] or ""),
                     "ad_one_liner": str(row["ad_one_liner"] or ""),
+                    "play_fingerprint": str(row["play_fingerprint"] or ""),
+                    "differentiator": str(row["differentiator"] or ""),
                 }
         return out
     finally:
@@ -1711,6 +1850,8 @@ def _row_from_item_and_patched_analysis(
         "arrow2_material_category": str(ex_meta.get("arrow2_material_category") or ""),
         "ad_one_liner": str(ex_meta.get("ad_one_liner") or ""),
         "effect_one_liner": str(ex_meta.get("effect_one_liner") or ""),
+        "play_fingerprint": str(ex_meta.get("play_fingerprint") or ""),
+        "differentiator": str(ex_meta.get("differentiator") or ""),
         "exclude_from_bitable": bool(ex_meta.get("exclude_from_bitable", False)),
         "exclude_from_cluster": bool(ex_meta.get("exclude_from_cluster", False)),
     }
@@ -1759,6 +1900,8 @@ def combined_analysis_results_for_pipeline(
                         "pipeline_tags": ex.get("pipeline_tags") or [],
                         "effect_one_liner": ex.get("effect_one_liner", ""),
                         "ad_one_liner": ex.get("ad_one_liner", ""),
+                        "play_fingerprint": ex.get("play_fingerprint", ""),
+                        "differentiator": ex.get("differentiator", ""),
                     },
                 )
             )
@@ -1801,6 +1944,8 @@ def combined_analysis_results_for_pipeline(
                         "pipeline_tags": ex0.get("pipeline_tags") or [],
                         "effect_one_liner": ex0.get("effect_one_liner", ""),
                         "ad_one_liner": ex0.get("ad_one_liner", ""),
+                        "play_fingerprint": ex0.get("play_fingerprint", ""),
+                        "differentiator": ex0.get("differentiator", ""),
                     },
                 )
             else:
@@ -1917,6 +2062,23 @@ def upsert_analysis_embedding(ad_key: str, embedding_blob: bytes) -> bool:
         cur = conn.cursor()
         cur.execute(
             "UPDATE creative_library SET analysis_embedding = ?, "
+            "updated_at_local = datetime('now','localtime') WHERE ad_key = ?",
+            (embedding_blob, ad_key),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def upsert_effect_one_liner_embedding(ad_key: str, embedding_blob: bytes) -> bool:
+    """将 effect_one_liner 的嵌入向量写入 creative_library。"""
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE creative_library SET effect_one_liner_embedding = ?, "
             "updated_at_local = datetime('now','localtime') WHERE ad_key = ?",
             (embedding_blob, ad_key),
         )
@@ -2215,9 +2377,13 @@ _EFFECT_SYNONYM_REPLACEMENTS = [
     ("艺人", "名人"),
     ("合照", "合影"),
     ("同框", "合影"),
+    ("姿态", "姿势"),
+    ("骑行", "骑乘"),
     ("修脸", "修图"),
     ("修复", "修图"),
+    ("美颜", "修图"),
     ("美化", "修图"),
+    ("动画", "视频"),
 ]
 
 
@@ -2248,12 +2414,12 @@ def _intraday_effect_similarity_threshold() -> float:
     raw = (
         os.getenv("INTRADAY_EFFECT_SIMILARITY_THRESHOLD")
         or os.getenv("EFFECT_ONE_LINER_SIMILARITY_THRESHOLD")
-        or "0.82"
+        or "0.94"
     ).strip()
     try:
         return max(0.5, min(1.0, float(raw)))
     except ValueError:
-        return 0.82
+        return 0.94
 
 
 def _old_effect_bitable_similarity_threshold() -> float:
@@ -2264,17 +2430,63 @@ def _old_effect_bitable_similarity_threshold() -> float:
         return 0.94
 
 
-def _embedding_duplicate_candidate_threshold() -> float:
-    raw = (os.getenv("EMBEDDING_DUP_CANDIDATE_THRESHOLD") or "0.92").strip()
+def _effect_embedding_intraday_hard_threshold() -> float:
+    raw = (os.getenv("EFFECT_EMBEDDING_INTRADAY_HARD_THRESHOLD") or "0.95").strip()
     try:
         return max(0.5, min(1.0, float(raw)))
     except ValueError:
-        return 0.92
+        return 0.95
+
+
+def _effect_embedding_crossday_hard_threshold() -> float:
+    raw = (os.getenv("EFFECT_EMBEDDING_CROSSDAY_HARD_THRESHOLD") or "0.96").strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.96
+
+
+def _embedding_duplicate_candidate_threshold() -> float:
+    raw = (os.getenv("EMBEDDING_DUP_CANDIDATE_THRESHOLD") or "0.90").strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.90
+
+
+def _daily_play_cluster_text_threshold() -> float:
+    raw = (
+        os.getenv("DAILY_PLAY_CLUSTER_TEXT_THRESHOLD")
+        or os.getenv("EFFECT_ONE_LINER_SIMILARITY_THRESHOLD")
+        or "0.82"
+    ).strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.82
+
+
+def _daily_play_cluster_embedding_threshold() -> float:
+    raw = (
+        os.getenv("DAILY_PLAY_CLUSTER_EMBEDDING_THRESHOLD")
+        or os.getenv("EMBEDDING_DUP_CANDIDATE_THRESHOLD")
+        or "0.90"
+    ).strip()
+    try:
+        return max(0.5, min(1.0, float(raw)))
+    except ValueError:
+        return 0.90
+
+
+def _daily_play_cluster_embedding_enabled() -> bool:
+    raw = os.getenv("DAILY_PLAY_CLUSTER_EMBEDDING_ENABLED", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 _EFFECT_SIGNATURES = [
-    ("名人宝丽来合影", ("名人", "宝丽来", "合影"), 0.92),
-    ("派对修图前后对比", ("派对", "修图", "前后对比"), 0.9),
+    ("名人宝丽来合影", ("名人", "宝丽来", "合影"), 0.95),
+    ("派对修图前后对比", ("派对", "修图", "前后对比"), 0.95),
+    ("母亲节手绘合影", ("母亲节", "手绘", "合影"), 0.95),
 ]
 
 
@@ -2302,6 +2514,84 @@ def _effect_text_similarity(a: str, b: str) -> float:
     if len(na) >= 5 and len(nb) >= 5 and (na in nb or nb in na):
         return 0.92
     return max(_effect_signature_similarity(na, nb), float(SequenceMatcher(None, na, nb).ratio()))
+
+
+def _play_dedupe_text_from_values(play_fingerprint: Any, effect_one_liner: Any) -> str:
+    fingerprint = str(play_fingerprint or "").strip()
+    if fingerprint and fingerprint not in ("None", "无"):
+        return fingerprint
+    effect = str(effect_one_liner or "").strip()
+    if effect and effect != "None":
+        return effect
+    return ""
+
+
+def _play_dedupe_text(row: Dict[str, Any]) -> str:
+    return _play_dedupe_text_from_values(
+        row.get("play_fingerprint"),
+        row.get("effect_one_liner"),
+    )
+
+
+def _contains_any(text: str, tokens: Tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _coarse_play_cluster_key(play_text: Any, display_text: Any = "") -> str:
+    """
+    Collapse detailed play fingerprints into product-level play families.
+
+    This is intentionally coarser than duplicate detection: scenes, props, holidays
+    and style adjectives should not become separate "new play" buckets by default.
+    """
+    raw = f"{play_text or ''} {display_text or ''}".strip()
+    if not raw:
+        return ""
+    compact = normalize_effect_one_liner(raw)
+    joined = raw + compact
+
+    def has(*tokens: str) -> bool:
+        return _contains_any(joined, tuple(tokens))
+
+    if has("贴纸", "sticker"):
+        return "照片生成贴纸包"
+    if has("诊断", "脸型", "妆容", "色彩分析", "发型红黑榜"):
+        return "照片生成发型妆容诊断"
+    if has("两张", "双人", "双照片", "母女", "母子", "亲人", "同框", "合影", "合照", "融合", "重逢"):
+        if has("合影", "合照", "融合", "重逢", "同框", "母女", "母子", "亲人", "拥抱"):
+            return "双人照片融合合影"
+    if has("老照片", "低清", "4k", "黑白照", "彩色动态", "画质增强"):
+        return "老照片修复增强动态化"
+    if has("手绘", "素描", "插画", "涂鸦", "蜡笔"):
+        return "照片转手绘插画风格"
+    if has("舞蹈", "跳舞", "dance"):
+        return "照片生成舞蹈视频"
+    if has("年龄", "变老", "衰老", "变龄", "性别", "变性"):
+        return "照片生成变龄性别视频"
+    if has("提示词", "剧情", "prompt", "冲突剧情", "故事"):
+        return "提示词生成剧情视频"
+    if has("机甲", "战甲", "装甲", "超级英雄", "火焰", "恶魔", "冰霜", "翅膀", "黄金铠甲", "神经网络"):
+        return "照片生成特效变身视频"
+    if has("罚单", "测速", "罚款", "交通"):
+        return "照片生成趣味证件票据场景"
+    if has("恐龙", "动物", "鲨鱼", "豹子", "珠宝豹", "巨虫", "骑乘", "骑行"):
+        return "人物动物融合奇幻视频"
+    if has("商品", "电商", "广告视频"):
+        return "商品图生成动态广告视频"
+    if has("写真", "肖像", "头像", "杂志封面", "生日", "商务", "CEO", "红毯", "影楼"):
+        return "自拍生成风格写真肖像"
+    if has("美颜", "美化", "面部优化", "自然修图", "人像精修", "ai修图", "AI修图", "修图前后"):
+        return "真人照片AI修图前后对比"
+    if has("动态视频", "生成视频", "视频输出", "照片生成", "照片输入", "静态照片", "自拍照片", "真人照片"):
+        return "照片生成动态视频"
+    return str(play_text or display_text or "").strip()
+
+
+def _play_cluster_text(row: Dict[str, Any]) -> str:
+    explicit = str(row.get("play_cluster_key") or row.get("daily_play_cluster_key") or "").strip()
+    if explicit and explicit not in ("None", "无"):
+        return explicit
+    return _coarse_play_cluster_key(_play_dedupe_text(row), row.get("effect_one_liner"))
 
 
 def _append_material_tag(row: Dict[str, Any], tag: str) -> None:
@@ -2351,8 +2641,8 @@ def apply_intraday_effect_bitable_filter(
         if row.get("exclude_from_bitable"):
             continue
         appid = str(row.get("appid") or "").strip()
-        effect = str(row.get("effect_one_liner") or "").strip()
-        if appid and effect and effect != "None" and normalize_effect_one_liner(effect):
+        effect = _play_dedupe_text(row)
+        if appid and effect and normalize_effect_one_liner(effect):
             by_app[appid].append(idx)
 
     details: List[Dict[str, Any]] = []
@@ -2361,11 +2651,11 @@ def apply_intraday_effect_bitable_filter(
         kept_indices: List[int] = []
         for idx in sorted(indices, key=lambda i: _effect_row_score(rows[i]), reverse=True):
             row = rows[idx]
-            effect = str(row.get("effect_one_liner") or "")
+            effect = _play_dedupe_text(row)
             best_keeper_idx: int | None = None
             best_sim = 0.0
             for kept_idx in kept_indices:
-                sim = _effect_text_similarity(effect, str(rows[kept_idx].get("effect_one_liner") or ""))
+                sim = _effect_text_similarity(effect, _play_dedupe_text(rows[kept_idx]))
                 if sim > best_sim:
                     best_sim = sim
                     best_keeper_idx = kept_idx
@@ -2374,13 +2664,14 @@ def apply_intraday_effect_bitable_filter(
                 continue
 
             keeper = rows[best_keeper_idx]
-            keeper_effect = str(keeper.get("effect_one_liner") or "")
+            keeper_effect = _play_dedupe_text(keeper)
             was_excluded = bool(row.get("exclude_from_bitable"))
             row["exclude_from_bitable"] = True
             row["exclude_from_cluster"] = True
             row["intraday_effect_match"] = {
                 "kept_ad_key": str(keeper.get("ad_key") or ""),
                 "kept_effect_one_liner": keeper_effect,
+                "kept_play_fingerprint": str(keeper.get("play_fingerprint") or ""),
                 "similarity": round(best_sim, 3),
                 "threshold": round(float(threshold), 3),
                 "match_type": "exact" if best_sim >= 0.999 else "similar",
@@ -2395,11 +2686,292 @@ def apply_intraday_effect_bitable_filter(
                     "effect_one_liner": effect,
                     "kept_ad_key": str(keeper.get("ad_key") or ""),
                     "kept_effect_one_liner": keeper_effect,
+                    "kept_play_fingerprint": str(keeper.get("play_fingerprint") or ""),
                     "similarity": round(best_sim, 3),
                     "match_type": "exact" if best_sim >= 0.999 else "similar",
                     "newly_marked": not was_excluded,
                 }
             )
+    return newly_marked, details
+
+
+def _load_effect_embedding_history_rows(
+    target_date: str,
+    lookback_days: int,
+) -> Dict[str, List[Dict[str, Any]]]:
+    from datetime import date, timedelta
+
+    try:
+        td = date.fromisoformat(target_date)
+    except ValueError:
+        return {}
+    start_date = (td - timedelta(days=lookback_days)).isoformat()
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT ad_key, appid, effect_one_liner, play_fingerprint, differentiator,
+                   effect_one_liner_embedding,
+                   first_target_date, last_target_date,
+                   best_impression, best_all_exposure_value
+            FROM creative_library
+            WHERE first_target_date >= ? AND first_target_date < ?
+              AND COALESCE(TRIM(effect_one_liner), '') != ''
+            """,
+            (start_date, target_date),
+        )
+        by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in cur.fetchall():
+            appid = str(row["appid"] or "").strip()
+            effect = _play_dedupe_text_from_values(row["play_fingerprint"], row["effect_one_liner"])
+            if not appid or not effect or effect == "None":
+                continue
+            blob = row["effect_one_liner_embedding"]
+            by_app[appid].append(
+                {
+                    "ad_key": str(row["ad_key"] or ""),
+                    "appid": appid,
+                    "effect_one_liner": effect,
+                    "display_effect_one_liner": str(row["effect_one_liner"] or ""),
+                    "play_fingerprint": str(row["play_fingerprint"] or ""),
+                    "differentiator": str(row["differentiator"] or ""),
+                    "effect_one_liner_embedding": bytes(blob) if blob else None,
+                    "first_target_date": str(row["first_target_date"] or ""),
+                    "last_target_date": str(row["last_target_date"] or ""),
+                    "best_impression": int(row["best_impression"] or 0),
+                    "best_all_exposure_value": int(row["best_all_exposure_value"] or 0),
+                }
+            )
+        return dict(by_app)
+    finally:
+        conn.close()
+
+
+def apply_effect_embedding_duplicate_filter(
+    target_date: str,
+    rows: List[Dict[str, Any]],
+    lookback_days: int = 7,
+    intraday_threshold: float | None = None,
+    crossday_threshold: float | None = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    Hard-exclude high-confidence duplicate plays using play fingerprint embeddings.
+
+    Text rules handle exact/normalized duplicates first. This layer catches short
+    paraphrases such as "AI restores an old photo" vs "turn blurred vintage photos
+    sharp again". It records the threshold and matched evidence on each row.
+    """
+    if not rows:
+        return 0, []
+    try:
+        lookback_days = int(os.getenv("EFFECT_EMBEDDING_LOOKBACK_DAYS") or lookback_days)
+    except ValueError:
+        lookback_days = 7
+    lookback_days = max(1, min(60, lookback_days))
+    if intraday_threshold is None:
+        intraday_threshold = _effect_embedding_intraday_hard_threshold()
+    if crossday_threshold is None:
+        crossday_threshold = _effect_embedding_crossday_hard_threshold()
+
+    try:
+        from ua_workflows.shared.llm.client import (
+            bytes_to_embedding,
+            call_embedding,
+            cosine_similarity,
+            embedding_to_bytes,
+        )
+    except Exception:
+        return 0, []
+
+    embed_cache: Dict[str, List[float]] = {}
+
+    def embed(text: str) -> Optional[List[float]]:
+        effect = str(text or "").strip()
+        if not effect or effect == "None":
+            return None
+        prompt_text = f"特效玩法：{effect[:300]}"
+        if prompt_text not in embed_cache:
+            try:
+                embed_cache[prompt_text] = call_embedding(prompt_text)
+            except Exception:
+                return None
+        return embed_cache.get(prompt_text)
+
+    hist_map = _load_effect_embedding_history_rows(target_date, lookback_days)
+
+    def hist_vec(hist: Dict[str, Any]) -> Optional[List[float]]:
+        blob = hist.get("effect_one_liner_embedding")
+        if blob:
+            try:
+                return bytes_to_embedding(blob)
+            except Exception:
+                pass
+        vec = embed(str(hist.get("effect_one_liner") or ""))
+        if vec is not None:
+            ad_key = str(hist.get("ad_key") or "")
+            if ad_key:
+                try:
+                    upsert_effect_one_liner_embedding(ad_key, embedding_to_bytes(vec))
+                except Exception:
+                    pass
+        return vec
+
+    row_vec_cache: Dict[int, List[float]] = {}
+
+    def row_vec(idx: int) -> Optional[List[float]]:
+        if idx in row_vec_cache:
+            return row_vec_cache[idx]
+        effect = _play_dedupe_text(rows[idx])
+        vec = embed(effect)
+        if vec is not None:
+            row_vec_cache[idx] = vec
+            ad_key = str(rows[idx].get("ad_key") or "")
+            if ad_key:
+                try:
+                    upsert_effect_one_liner_embedding(ad_key, embedding_to_bytes(vec))
+                except Exception:
+                    pass
+        return vec
+
+    def mark_duplicate(
+        row: Dict[str, Any],
+        *,
+        source: str,
+        similarity: float,
+        threshold: float,
+        match: Dict[str, Any],
+    ) -> bool:
+        was_excluded = bool(row.get("exclude_from_bitable"))
+        row["exclude_from_bitable"] = True
+        row["exclude_from_cluster"] = True
+        row["effect_embedding_duplicate_match"] = {
+            "source": source,
+            "similarity": round(float(similarity), 3),
+            "threshold": round(float(threshold), 3),
+            "scope": "play_fingerprint",
+            "action": "exclude_from_bitable",
+            "lookback_days": lookback_days,
+            **match,
+        }
+        _append_material_tag(row, "embedding玩法重复")
+        return not was_excluded
+
+    details: List[Dict[str, Any]] = []
+    newly_marked = 0
+
+    by_app: Dict[str, List[int]] = defaultdict(list)
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("exclude_from_bitable"):
+            continue
+        appid = str(row.get("appid") or "").strip()
+        effect = _play_dedupe_text(row)
+        if appid and effect:
+            by_app[appid].append(idx)
+
+    # Same-day high-confidence duplicate plays. Keep the strongest representative.
+    for indices in by_app.values():
+        kept_indices: List[int] = []
+        for idx in sorted(indices, key=lambda i: _effect_row_score(rows[i]), reverse=True):
+            vec = row_vec(idx)
+            if vec is None:
+                kept_indices.append(idx)
+                continue
+            best_keeper_idx: int | None = None
+            best_sim = 0.0
+            for kept_idx in kept_indices:
+                kvec = row_vec(kept_idx)
+                if kvec is None:
+                    continue
+                sim = float(cosine_similarity(vec, kvec))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_keeper_idx = kept_idx
+            if best_keeper_idx is not None and best_sim >= intraday_threshold:
+                keeper = rows[best_keeper_idx]
+                row = rows[idx]
+                match = {
+                    "matched_ad_key": str(keeper.get("ad_key") or ""),
+                    "matched_effect_one_liner": str(keeper.get("effect_one_liner") or ""),
+                    "matched_play_fingerprint": _play_dedupe_text(keeper),
+                    "matched_date": target_date,
+                }
+                is_new = mark_duplicate(
+                    row,
+                    source="same_day_effect_embedding",
+                    similarity=best_sim,
+                    threshold=intraday_threshold,
+                    match=match,
+                )
+                if is_new:
+                    newly_marked += 1
+                details.append(
+                    {
+                        "ad_key": str(row.get("ad_key") or ""),
+                        "product": str(row.get("product") or ""),
+                        "effect_one_liner": str(row.get("effect_one_liner") or ""),
+                        "play_fingerprint": _play_dedupe_text(row),
+                        "source": "same_day_effect_embedding",
+                        "similarity": round(float(best_sim), 3),
+                        "threshold": round(float(intraday_threshold), 3),
+                        "newly_marked": is_new,
+                        **match,
+                    }
+                )
+            else:
+                kept_indices.append(idx)
+
+    # Cross-day high-confidence duplicate plays against recent history.
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("exclude_from_bitable"):
+            continue
+        appid = str(row.get("appid") or "").strip()
+        vec = row_vec(idx)
+        if not appid or vec is None:
+            continue
+        best_hist: Optional[Dict[str, Any]] = None
+        best_sim = 0.0
+        for hist in hist_map.get(appid, []):
+            hvec = hist_vec(hist)
+            if hvec is None:
+                continue
+            sim = float(cosine_similarity(vec, hvec))
+            if sim > best_sim:
+                best_sim = sim
+                best_hist = hist
+        if best_hist is None or best_sim < crossday_threshold:
+            continue
+        match = {
+            "matched_ad_key": str(best_hist.get("ad_key") or ""),
+            "matched_effect_one_liner": str(best_hist.get("display_effect_one_liner") or best_hist.get("effect_one_liner") or ""),
+            "matched_play_fingerprint": str(best_hist.get("play_fingerprint") or best_hist.get("effect_one_liner") or ""),
+            "matched_first_seen_date": str(best_hist.get("first_target_date") or ""),
+            "matched_latest_seen_date": str(best_hist.get("last_target_date") or ""),
+        }
+        is_new = mark_duplicate(
+            row,
+            source="crossday_effect_embedding",
+            similarity=best_sim,
+            threshold=crossday_threshold,
+            match=match,
+        )
+        if is_new:
+            newly_marked += 1
+        details.append(
+            {
+                "ad_key": str(row.get("ad_key") or ""),
+                "product": str(row.get("product") or ""),
+                "effect_one_liner": str(row.get("effect_one_liner") or ""),
+                "play_fingerprint": _play_dedupe_text(row),
+                "source": "crossday_effect_embedding",
+                "similarity": round(float(best_sim), 3),
+                "threshold": round(float(crossday_threshold), 3),
+                "newly_marked": is_new,
+                **match,
+            }
+        )
+
     return newly_marked, details
 
 
@@ -2457,8 +3029,8 @@ def apply_embedding_duplicate_candidate_tags(
         if not isinstance(row, dict) or row.get("exclude_from_bitable"):
             continue
         appid = str(row.get("appid") or "").strip()
-        effect = str(row.get("effect_one_liner") or "").strip()
-        if appid and effect and effect != "None":
+        effect = _play_dedupe_text(row)
+        if appid and effect:
             by_app[appid].append(idx)
 
     # Same-day soft candidates: compare to kept representatives, ordered by strength.
@@ -2466,7 +3038,7 @@ def apply_embedding_duplicate_candidate_tags(
         kept_indices: List[int] = []
         for idx in sorted(indices, key=lambda i: _effect_row_score(rows[i]), reverse=True):
             row = rows[idx]
-            effect = str(row.get("effect_one_liner") or "")
+            effect = _play_dedupe_text(row)
             vec = embed(effect)
             if vec is None:
                 kept_indices.append(idx)
@@ -2474,7 +3046,7 @@ def apply_embedding_duplicate_candidate_tags(
             best_keeper_idx: int | None = None
             best_sim = 0.0
             for kept_idx in kept_indices:
-                kvec = embed(str(rows[kept_idx].get("effect_one_liner") or ""))
+                kvec = embed(_play_dedupe_text(rows[kept_idx]))
                 if kvec is None:
                     continue
                 sim = float(cosine_similarity(vec, kvec))
@@ -2490,6 +3062,7 @@ def apply_embedding_duplicate_candidate_tags(
                         {
                             "matched_ad_key": str(keeper.get("ad_key") or ""),
                             "matched_effect_one_liner": str(keeper.get("effect_one_liner") or ""),
+                            "matched_play_fingerprint": _play_dedupe_text(keeper),
                         },
                         best_sim,
                     )
@@ -2501,7 +3074,7 @@ def apply_embedding_duplicate_candidate_tags(
         if not isinstance(row, dict) or row.get("exclude_from_bitable"):
             continue
         appid = str(row.get("appid") or "").strip()
-        effect = str(row.get("effect_one_liner") or "").strip()
+        effect = _play_dedupe_text(row)
         vec = embed(effect)
         if not appid or vec is None:
             continue
@@ -2522,6 +3095,7 @@ def apply_embedding_duplicate_candidate_tags(
                     "crossday_effect_embedding",
                     {
                         "matched_effect_one_liner": str(best_hist.get("effect_one_liner") or ""),
+                        "matched_play_fingerprint": str(best_hist.get("play_fingerprint") or best_hist.get("effect_one_liner") or ""),
                         "matched_first_seen_date": str(best_hist.get("earliest_date") or ""),
                         "matched_latest_seen_date": str(best_hist.get("latest_date") or ""),
                     },
@@ -2542,7 +3116,7 @@ def apply_embedding_duplicate_candidate_tags(
             "source": source,
             "similarity": round(float(sim), 3),
             "threshold": round(float(threshold), 3),
-            "scope": "effect_one_liner",
+            "scope": "play_fingerprint",
             **match,
         }
         _append_material_tag(row, "embedding重复候选")
@@ -2551,6 +3125,7 @@ def apply_embedding_duplicate_candidate_tags(
                 "ad_key": str(row.get("ad_key") or ""),
                 "product": str(row.get("product") or ""),
                 "effect_one_liner": str(row.get("effect_one_liner") or ""),
+                "play_fingerprint": _play_dedupe_text(row),
                 "source": source,
                 "similarity": round(float(sim), 3),
                 **match,
@@ -2573,27 +3148,32 @@ def _load_effect_history_rows(
     start_date = (td - timedelta(days=lookback_days)).isoformat()
     cur.execute(
         """
-        SELECT appid, effect_one_liner,
+        SELECT appid,
+               COALESCE(NULLIF(TRIM(play_fingerprint), ''), effect_one_liner) AS dedupe_text,
+               MIN(effect_one_liner) AS display_effect_one_liner,
+               MIN(play_fingerprint) AS play_fingerprint,
                MIN(first_target_date) AS earliest_date,
                MAX(last_target_date) AS latest_date,
                COUNT(*) AS hist_count,
                MAX(best_impression) AS max_impression
         FROM creative_library
         WHERE first_target_date >= ? AND first_target_date < ?
-          AND COALESCE(TRIM(effect_one_liner), '') != ''
-        GROUP BY appid, effect_one_liner
+          AND COALESCE(NULLIF(TRIM(play_fingerprint), ''), TRIM(effect_one_liner), '') != ''
+        GROUP BY appid, dedupe_text
         """,
         (start_date, target_date),
-    )
+        )
     by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for row in cur.fetchall():
         appid = str(row["appid"] or "").strip()
-        eff = str(row["effect_one_liner"] or "").strip()
+        eff = str(row["dedupe_text"] or "").strip()
         if not appid or not eff or eff == "None":
             continue
         by_app[appid].append(
             {
                 "effect_one_liner": eff,
+                "display_effect_one_liner": str(row["display_effect_one_liner"] or ""),
+                "play_fingerprint": str(row["play_fingerprint"] or ""),
                 "normalized_effect": normalize_effect_one_liner(eff),
                 "earliest_date": str(row["earliest_date"] or ""),
                 "latest_date": str(row["latest_date"] or ""),
@@ -2601,6 +3181,80 @@ def _load_effect_history_rows(
                 "max_impression": int(row["max_impression"] or 0),
             }
         )
+    return dict(by_app)
+
+
+def _load_play_cluster_history_rows(
+    cur: sqlite3.Cursor,
+    target_date: str,
+    lookback_days: int,
+) -> Dict[str, List[Dict[str, Any]]]:
+    from datetime import date, timedelta
+
+    try:
+        td = date.fromisoformat(target_date)
+    except ValueError:
+        return {}
+    start_date = (td - timedelta(days=lookback_days)).isoformat()
+    cur.execute(
+        """
+        SELECT cl.ad_key, cl.appid, cl.effect_one_liner, cl.play_fingerprint,
+               cl.first_target_date, cl.last_target_date, cl.best_impression
+        FROM creative_library cl
+        WHERE cl.first_target_date >= ? AND cl.first_target_date < ?
+          AND COALESCE(NULLIF(TRIM(cl.play_fingerprint), ''), TRIM(cl.effect_one_liner), '') != ''
+          AND NOT EXISTS (
+            SELECT 1
+            FROM daily_creative_insights d
+            WHERE d.target_date = cl.first_target_date
+              AND COALESCE(d.exclude_from_bitable, 0) = 1
+              AND (
+                d.ad_key = cl.ad_key
+                OR d.ad_key LIKE SUBSTR(cl.ad_key, 1, 16) || '%'
+                OR cl.ad_key LIKE SUBSTR(d.ad_key, 1, 16) || '%'
+              )
+          )
+        """,
+        (start_date, target_date),
+    )
+
+    buckets: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for row in cur.fetchall():
+        appid = str(row["appid"] or "").strip()
+        if not appid:
+            continue
+        cluster_key = _coarse_play_cluster_key(row["play_fingerprint"], row["effect_one_liner"])
+        if not cluster_key or cluster_key == "None":
+            continue
+        key = (appid, cluster_key)
+        bucket = buckets.get(key)
+        first_date = str(row["first_target_date"] or "")
+        latest_date = str(row["last_target_date"] or first_date)
+        impression = int(row["best_impression"] or 0)
+        if bucket is None:
+            buckets[key] = {
+                "effect_one_liner": cluster_key,
+                "display_effect_one_liner": str(row["effect_one_liner"] or ""),
+                "play_fingerprint": cluster_key,
+                "normalized_effect": normalize_effect_one_liner(cluster_key),
+                "earliest_date": first_date,
+                "latest_date": latest_date,
+                "history_count": 1,
+                "max_impression": impression,
+            }
+            continue
+        if first_date and (not bucket.get("earliest_date") or first_date < str(bucket.get("earliest_date"))):
+            bucket["earliest_date"] = first_date
+        if latest_date and latest_date > str(bucket.get("latest_date") or ""):
+            bucket["latest_date"] = latest_date
+        bucket["history_count"] = int(bucket.get("history_count") or 0) + 1
+        if impression > int(bucket.get("max_impression") or 0):
+            bucket["max_impression"] = impression
+            bucket["display_effect_one_liner"] = str(row["effect_one_liner"] or "")
+
+    by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for (appid, _cluster_key), row in buckets.items():
+        by_app[appid].append(row)
     return dict(by_app)
 
 
@@ -2659,8 +3313,8 @@ def apply_old_effect_bitable_filter(
         if not isinstance(row, dict):
             continue
         appid = str(row.get("appid") or "").strip()
-        effect = str(row.get("effect_one_liner") or "").strip()
-        if not appid or not effect or effect == "None":
+        effect = _play_dedupe_text(row)
+        if not appid or not effect:
             continue
         hit = _best_effect_history_match(effect, hist_map.get(appid, []), threshold)
         if not hit:
@@ -2670,7 +3324,8 @@ def apply_old_effect_bitable_filter(
         row["exclude_from_bitable"] = True
         row["exclude_from_cluster"] = True
         row["old_effect_match"] = {
-            "matched_effect_one_liner": str(hit.get("effect_one_liner") or ""),
+            "matched_effect_one_liner": str(hit.get("display_effect_one_liner") or hit.get("effect_one_liner") or ""),
+            "matched_play_fingerprint": str(hit.get("play_fingerprint") or hit.get("effect_one_liner") or ""),
             "first_seen_date": str(hit.get("earliest_date") or ""),
             "latest_seen_date": str(hit.get("latest_date") or ""),
             "history_count": int(hit.get("history_count") or 0),
@@ -2691,7 +3346,8 @@ def apply_old_effect_bitable_filter(
                 "ad_key": str(row.get("ad_key") or ""),
                 "product": str(row.get("product") or ""),
                 "effect_one_liner": effect,
-                "matched_effect_one_liner": str(hit.get("effect_one_liner") or ""),
+                "matched_effect_one_liner": str(hit.get("display_effect_one_liner") or hit.get("effect_one_liner") or ""),
+                "matched_play_fingerprint": str(hit.get("play_fingerprint") or hit.get("effect_one_liner") or ""),
                 "first_seen_date": str(hit.get("earliest_date") or ""),
                 "similarity": float(hit.get("similarity") or 0.0),
                 "match_type": str(hit.get("match_type") or ""),
@@ -2754,12 +3410,18 @@ def effect_based_crossday_dedup(
         if not isinstance(c, dict):
             c = {}
         appid = str(item2.get("appid") or "").strip()
-        eff = str(c.get("effect_one_liner") or item2.get("effect_one_liner") or "").strip()
+        eff = _play_dedupe_text_from_values(
+            c.get("play_fingerprint") or item2.get("play_fingerprint"),
+            c.get("effect_one_liner") or item2.get("effect_one_liner"),
+        )
 
         # 查 analysis_by_ad 中的 effect_one_liner
         analysis_raw = item2.get("analysis_raw")
         if not eff and isinstance(analysis_raw, dict):
-            eff = str(analysis_raw.get("effect_one_liner") or "").strip()
+            eff = _play_dedupe_text_from_values(
+                analysis_raw.get("play_fingerprint"),
+                analysis_raw.get("effect_one_liner"),
+            )
 
         is_new = True
         first_date = target_date
@@ -3081,8 +3743,8 @@ def load_new_creatives_for_date(
     target_date: str,
 ) -> List[Dict[str, Any]]:
     """
-    返回指定日期的「新素材」—— creative_library.first_target_date = target_date 的素材，
-    即历史上首次在这一天出现。用于每日飞书推送。
+    返回指定日期首次出现的素材候选—— creative_library.first_target_date = target_date。
+    日报里的严格「新素材」还会在 load_daily_material_report 中继续要求玩法也为新。
     """
     init_db()
     conn = _get_conn()
@@ -3092,13 +3754,25 @@ def load_new_creatives_for_date(
             """
             SELECT cl.ad_key, cl.product, cl.appid, cl.platform, cl.creative_type,
                    cl.title, cl.best_heat, cl.best_impression, cl.best_all_exposure_value,
-                   cl.effect_one_liner, cl.first_target_date, cl.dedup_group_id,
+                   cl.effect_one_liner, cl.play_fingerprint, cl.differentiator,
+                   cl.first_target_date, cl.dedup_group_id,
                    cl.preview_img_url, cl.video_url, cl.video_duration
             FROM creative_library cl
             WHERE cl.first_target_date = ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM daily_creative_insights d
+                WHERE d.target_date = ?
+                  AND COALESCE(d.exclude_from_bitable, 0) = 1
+                  AND (
+                    d.ad_key = cl.ad_key
+                    OR d.ad_key LIKE SUBSTR(cl.ad_key, 1, 16) || '%'
+                    OR cl.ad_key LIKE SUBSTR(d.ad_key, 1, 16) || '%'
+                  )
+              )
             ORDER BY cl.best_impression DESC
             """,
-            (target_date,),
+            (target_date, target_date),
         )
         return [dict(r) for r in cur.fetchall()]
     finally:
@@ -3153,17 +3827,57 @@ def _append_sustained_display_item(
     bucket[product].append(out)
 
 
+def _excluded_ad_key_prefixes_for_date(target_date: str) -> set[str]:
+    if not target_date:
+        return set()
+    init_db()
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT ad_key
+            FROM daily_creative_insights
+            WHERE target_date = ?
+              AND COALESCE(exclude_from_bitable, 0) = 1
+            """,
+            (target_date,),
+        )
+        return {str(r["ad_key"] or "")[:16] for r in cur.fetchall() if str(r["ad_key"] or "").strip()}
+    finally:
+        conn.close()
+
+
+def _sustained_item_is_excluded(item: Dict[str, Any], excluded_prefixes: set[str]) -> bool:
+    if not excluded_prefixes:
+        return False
+    for key in (
+        "ad_key",
+        "matched_ad_key",
+        "kept_ad_key",
+        "top_ad_key",
+        "canonical_ad_key",
+    ):
+        prefix = str(item.get(key) or "")[:16]
+        if prefix and prefix in excluded_prefixes:
+            return True
+    return False
+
+
 def _sustained_display_by_product(
     signals: Dict[str, Any],
     per_product_limit: int = 3,
 ) -> Dict[str, List[Dict[str, Any]]]:
     by_product: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     seen: set[str] = set()
+    excluded_prefixes = _excluded_ad_key_prefixes_for_date(str(signals.get("target_date") or ""))
 
     for row in signals.get("effect_crossday") or []:
         if not isinstance(row, dict):
             continue
         item = dict(row)
+        if _sustained_item_is_excluded(item, excluded_prefixes):
+            continue
         item["signal_type"] = "effect"
         item["signal_label"] = "玩法跨天"
         item["product"] = str(row.get("top_product") or row.get("product") or "")
@@ -3176,6 +3890,8 @@ def _sustained_display_by_product(
         if not isinstance(row, dict):
             continue
         item = dict(row)
+        if _sustained_item_is_excluded(item, excluded_prefixes):
+            continue
         item["signal_type"] = "ahash"
         item["signal_label"] = "同画面换素材"
         item["product"] = str(row.get("canonical_product") or row.get("products") or "")
@@ -3189,6 +3905,8 @@ def _sustained_display_by_product(
         if not isinstance(row, dict):
             continue
         item = dict(row)
+        if _sustained_item_is_excluded(item, excluded_prefixes):
+            continue
         item["signal_type"] = str(row.get("source") or "cover")
         item["signal_label"] = "同画面/URL复投"
         item["product"] = str(row.get("matched_product") or row.get("product") or "")
@@ -3212,6 +3930,249 @@ def _sustained_display_by_product(
     return limited
 
 
+def _cluster_daily_new_play_items(
+    target_date: str,
+    items: List[Dict[str, Any]],
+    *,
+    text_threshold: float | None = None,
+    embedding_threshold: float | None = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Cluster same-day new play materials by product without forcing a fixed count.
+
+    The report should count "new play" as clusters of similar play fingerprints,
+    not raw material rows. This keeps multiple captures of the same idea together
+    while still allowing a product to have more than two plays when the data says so.
+    """
+    if not items:
+        return [], []
+
+    text_threshold = (
+        _daily_play_cluster_text_threshold()
+        if text_threshold is None
+        else max(0.5, min(1.0, float(text_threshold)))
+    )
+    embedding_threshold = (
+        _daily_play_cluster_embedding_threshold()
+        if embedding_threshold is None
+        else max(0.5, min(1.0, float(embedding_threshold)))
+    )
+
+    cosine_similarity = None
+    call_embedding = None
+    if _daily_play_cluster_embedding_enabled():
+        try:
+            from ua_workflows.shared.llm.client import call_embedding as _call_embedding
+            from ua_workflows.shared.llm.client import cosine_similarity as _cosine_similarity
+
+            call_embedding = _call_embedding
+            cosine_similarity = _cosine_similarity
+        except Exception:
+            call_embedding = None
+            cosine_similarity = None
+
+    embed_cache: Dict[str, Optional[List[float]]] = {}
+
+    def embed(text: str) -> Optional[List[float]]:
+        if call_embedding is None:
+            return None
+        effect = str(text or "").strip()
+        if not effect or effect == "None":
+            return None
+        prompt_text = f"特效玩法：{effect[:300]}"
+        if prompt_text not in embed_cache:
+            try:
+                embed_cache[prompt_text] = call_embedding(prompt_text)
+            except Exception:
+                embed_cache[prompt_text] = None
+        return embed_cache.get(prompt_text)
+
+    by_app: Dict[str, List[int]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        appid = str(item.get("appid") or "").strip()
+        effect = _play_cluster_text(item)
+        if appid and effect and effect != "None":
+            by_app[appid].append(idx)
+
+    representatives: List[Dict[str, Any]] = []
+    clusters: List[Dict[str, Any]] = []
+
+    for appid, indices in by_app.items():
+        parent = {idx: idx for idx in indices}
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        edge_map: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        for pos, idx_a in enumerate(indices):
+            text_a = _play_cluster_text(items[idx_a])
+            for idx_b in indices[pos + 1 :]:
+                text_b = _play_cluster_text(items[idx_b])
+                text_sim = _effect_text_similarity(text_a, text_b)
+                match_reason = ""
+                match_score = 0.0
+                embedding_sim: Optional[float] = None
+                if text_sim >= text_threshold:
+                    match_reason = "text"
+                    match_score = text_sim
+                elif cosine_similarity is not None:
+                    vec_a = embed(text_a)
+                    vec_b = embed(text_b)
+                    if vec_a is not None and vec_b is not None:
+                        embedding_sim = float(cosine_similarity(vec_a, vec_b))
+                        if embedding_sim >= embedding_threshold:
+                            match_reason = "embedding"
+                            match_score = embedding_sim
+
+                if not match_reason:
+                    continue
+                union(idx_a, idx_b)
+                a, b = sorted((idx_a, idx_b))
+                edge_map[(a, b)] = {
+                    "a": str(items[a].get("ad_key") or ""),
+                    "b": str(items[b].get("ad_key") or ""),
+                    "reason": match_reason,
+                    "similarity": round(float(match_score), 3),
+                    "text_similarity": round(float(text_sim), 3),
+                    "embedding_similarity": round(float(embedding_sim), 3) if embedding_sim is not None else None,
+                    "a_fingerprint": _play_dedupe_text(items[a]),
+                    "b_fingerprint": _play_dedupe_text(items[b]),
+                    "a_cluster_key": _play_cluster_text(items[a]),
+                    "b_cluster_key": _play_cluster_text(items[b]),
+                }
+
+        grouped: Dict[int, List[int]] = defaultdict(list)
+        for idx in indices:
+            grouped[find(idx)].append(idx)
+
+        for group_indices in grouped.values():
+            rep_idx = max(group_indices, key=lambda i: _effect_row_score(items[i]))
+            rep = items[rep_idx]
+            rep_key = str(rep.get("ad_key") or f"cluster_{len(clusters) + 1}")
+            cluster_id = f"{target_date}:{appid}:{rep_key[:12]}"
+
+            member_edges = [
+                edge
+                for (a, b), edge in edge_map.items()
+                if a in group_indices and b in group_indices
+            ]
+            member_edges = sorted(
+                member_edges,
+                key=lambda e: float(e.get("similarity") or 0.0),
+                reverse=True,
+            )
+            members = []
+            for idx in sorted(group_indices, key=lambda i: _effect_row_score(items[i]), reverse=True):
+                item = items[idx]
+                is_rep = idx == rep_idx
+                item["daily_play_cluster_id"] = cluster_id
+                item["daily_play_cluster_key"] = _play_cluster_text(rep)
+                item["daily_play_cluster_representative_ad_key"] = rep_key
+                item["daily_play_cluster_size"] = len(group_indices)
+                item["is_daily_play_representative"] = is_rep
+                if not is_rep:
+                    item["daily_play_cluster_matched_effect_one_liner"] = str(rep.get("effect_one_liner") or "")
+                    item["daily_play_cluster_matched_play_fingerprint"] = _play_dedupe_text(rep)
+                members.append(
+                    {
+                        "ad_key": str(item.get("ad_key") or ""),
+                        "effect_one_liner": str(item.get("effect_one_liner") or ""),
+                        "play_fingerprint": _play_dedupe_text(item),
+                        "play_cluster_key": _play_cluster_text(item),
+                        "differentiator": str(item.get("differentiator") or ""),
+                        "best_impression": int(item.get("best_impression") or 0),
+                        "best_all_exposure_value": int(item.get("best_all_exposure_value") or 0),
+                        "is_representative": is_rep,
+                    }
+                )
+
+            rep["daily_play_cluster_id"] = cluster_id
+            rep["daily_play_cluster_key"] = _play_cluster_text(rep)
+            rep["daily_play_cluster_size"] = len(group_indices)
+            rep["cluster_material_count"] = len(group_indices)
+            rep["daily_play_cluster_members"] = members
+            rep["daily_play_cluster_edges"] = member_edges[:12]
+            representatives.append(rep)
+            clusters.append(
+                {
+                    "cluster_id": cluster_id,
+                    "appid": appid,
+                    "product": str(rep.get("product") or ""),
+                    "representative_ad_key": rep_key,
+                    "effect_one_liner": str(rep.get("effect_one_liner") or ""),
+                    "play_fingerprint": _play_dedupe_text(rep),
+                    "play_cluster_key": _play_cluster_text(rep),
+                    "differentiator": str(rep.get("differentiator") or ""),
+                    "material_count": len(group_indices),
+                    "members": members,
+                    "edges": member_edges[:12],
+                }
+            )
+
+    # Items without usable appid/effect remain singleton representatives.
+    clustered_indices = {idx for indices in by_app.values() for idx in indices}
+    for idx, item in enumerate(items):
+        if idx in clustered_indices:
+            continue
+        rep_key = str(item.get("ad_key") or f"cluster_{len(clusters) + 1}")
+        cluster_id = f"{target_date}:unknown:{rep_key[:12]}"
+        item["daily_play_cluster_id"] = cluster_id
+        item["daily_play_cluster_key"] = _play_cluster_text(item)
+        item["daily_play_cluster_representative_ad_key"] = rep_key
+        item["daily_play_cluster_size"] = 1
+        item["is_daily_play_representative"] = True
+        item["cluster_material_count"] = 1
+        representatives.append(item)
+        clusters.append(
+            {
+                "cluster_id": cluster_id,
+                "appid": str(item.get("appid") or ""),
+                "product": str(item.get("product") or ""),
+                "representative_ad_key": rep_key,
+                "effect_one_liner": str(item.get("effect_one_liner") or ""),
+                "play_fingerprint": _play_dedupe_text(item),
+                "play_cluster_key": _play_cluster_text(item),
+                "differentiator": str(item.get("differentiator") or ""),
+                "material_count": 1,
+                "members": [
+                    {
+                        "ad_key": rep_key,
+                        "effect_one_liner": str(item.get("effect_one_liner") or ""),
+                        "play_fingerprint": _play_dedupe_text(item),
+                        "play_cluster_key": _play_cluster_text(item),
+                        "differentiator": str(item.get("differentiator") or ""),
+                        "best_impression": int(item.get("best_impression") or 0),
+                        "best_all_exposure_value": int(item.get("best_all_exposure_value") or 0),
+                        "is_representative": True,
+                    }
+                ],
+                "edges": [],
+            }
+        )
+
+    representatives.sort(key=_effect_row_score, reverse=True)
+    clusters.sort(
+        key=lambda c: _effect_row_score(
+            {
+                "all_exposure_value": max((m.get("best_all_exposure_value") or 0) for m in c.get("members", [])),
+                "impression": max((m.get("best_impression") or 0) for m in c.get("members", [])),
+                "heat": 0,
+                "ad_key": str(c.get("representative_ad_key") or ""),
+            }
+        ),
+        reverse=True,
+    )
+    return representatives, clusters
+
+
 def load_daily_material_report(
     target_date: str,
     lookback_days: int = 7,
@@ -3221,35 +4182,40 @@ def load_daily_material_report(
     Build the daily material report used by push channels and acceptance.
 
     Definitions:
-      - new material: creative_library.first_target_date == target_date
-      - new play: this material's effect_one_liner is not exact/similar to the same
-        appid's effect_one_liner in the lookback window
+      - candidate material: creative_library.first_target_date == target_date
+      - new material: candidate material whose play fingerprint is also new for
+        the same appid within the lookback window
+      - new play: same-day clusters of new materials by play fingerprint
+      - old-play material: first seen today, but the play/effect has appeared before
       - sustained effort: cross-day visual/url/hash/effect signals, grouped for display
     """
     init_db()
     threshold = _effect_similarity_threshold()
-    new_items = load_new_creatives_for_date(target_date)
+    candidate_items = load_new_creatives_for_date(target_date)
 
     conn = _get_conn()
     try:
         cur = conn.cursor()
-        hist_by_app = _load_effect_history_rows(cur, target_date, lookback_days)
-        for item in new_items:
+        hist_by_app = _load_play_cluster_history_rows(cur, target_date, lookback_days)
+        for item in candidate_items:
             ad_key = str(item.get("ad_key") or "")
-            effect = str(item.get("effect_one_liner") or "")
+            effect = _play_cluster_text(item)
             if (not effect or effect == "None") and ad_key:
                 cur.execute(
-                    "SELECT insight_analysis, effect_one_liner FROM daily_creative_insights "
+                    "SELECT insight_analysis, effect_one_liner, play_fingerprint FROM daily_creative_insights "
                     "WHERE ad_key LIKE ? AND target_date = ? LIMIT 1",
                     (ad_key[:16] + "%", target_date),
                 )
                 row = cur.fetchone()
                 if row:
-                    effect = str(row["effect_one_liner"] or "")
+                    effect = _coarse_play_cluster_key(row["play_fingerprint"], row["effect_one_liner"])
                     item["_analysis_one_liner"] = str(row["insight_analysis"] or "")
             if effect == "None":
                 effect = ""
-            item["effect_one_liner"] = effect
+            item["daily_play_cluster_key"] = effect
+            item["play_fingerprint"] = str(item.get("play_fingerprint") or effect)
+            if not str(item.get("effect_one_liner") or "").strip():
+                item["effect_one_liner"] = effect
 
             appid = str(item.get("appid") or "")
             match = _best_effect_history_match(effect, hist_by_app.get(appid, []), threshold) if effect else None
@@ -3276,24 +4242,42 @@ def load_daily_material_report(
         per_product_limit=sustained_per_product_limit,
     )
 
-    effect_present_count = sum(1 for x in new_items if str(x.get("effect_one_liner") or "").strip())
-    new_effect_count = sum(1 for x in new_items if x.get("effect_is_new") is True)
-    old_effect_new_material_count = sum(1 for x in new_items if x.get("effect_is_new") is False)
     sustained_display_count = sum(len(v) for v in sustained_by_product.values())
+    new_material_items = [x for x in candidate_items if x.get("effect_is_new") is True]
+    new_play_items, new_play_clusters = _cluster_daily_new_play_items(target_date, new_material_items)
+    old_play_items = [x for x in candidate_items if x.get("effect_is_new") is False]
+    unknown_play_items = [x for x in candidate_items if x.get("effect_is_new") is None]
+    candidate_effect_present_count = sum(1 for x in candidate_items if str(x.get("effect_one_liner") or "").strip())
+    new_effect_present_count = sum(1 for x in new_material_items if str(x.get("effect_one_liner") or "").strip())
 
     return {
         "target_date": target_date,
         "lookback_days": lookback_days,
         "effect_similarity_threshold": threshold,
-        "new_items": new_items,
+        "daily_play_cluster_text_threshold": _daily_play_cluster_text_threshold(),
+        "daily_play_cluster_embedding_threshold": _daily_play_cluster_embedding_threshold(),
+        "daily_play_cluster_embedding_enabled": _daily_play_cluster_embedding_enabled(),
+        "candidate_items": candidate_items,
+        "new_items": new_material_items,
+        "new_play_items": new_play_items,
+        "new_play_clusters": new_play_clusters,
+        "old_play_items": old_play_items,
+        "unknown_play_items": unknown_play_items,
         "sustained_by_product": sustained_by_product,
         "sustained_signals": sustained_signals,
         "summary": {
-            "new_material_count": len(new_items),
-            "new_effect_count": new_effect_count,
-            "old_effect_new_material_count": old_effect_new_material_count,
-            "effect_one_liner_present_count": effect_present_count,
-            "effect_one_liner_coverage": round(effect_present_count / len(new_items), 4) if new_items else 1.0,
+            "candidate_material_count": len(candidate_items),
+            "new_material_count": len(new_material_items),
+            "new_effect_count": len(new_play_clusters),
+            "new_play_cluster_count": len(new_play_clusters),
+            "new_play_representative_count": len(new_play_items),
+            "new_play_duplicate_material_count": max(0, len(new_material_items) - len(new_play_clusters)),
+            "old_effect_new_material_count": len(old_play_items),
+            "unknown_effect_new_material_count": len(unknown_play_items),
+            "effect_one_liner_present_count": new_effect_present_count,
+            "effect_one_liner_coverage": round(new_effect_present_count / len(new_material_items), 4) if new_material_items else 1.0,
+            "candidate_effect_one_liner_present_count": candidate_effect_present_count,
+            "candidate_effect_one_liner_coverage": round(candidate_effect_present_count / len(candidate_items), 4) if candidate_items else 1.0,
             "sustained_display_count": sustained_display_count,
             "sustained_signal_count": int((sustained_signals.get("summary") or {}).get("total_sustained_signals") or 0),
         },

@@ -64,6 +64,7 @@ from ua_workflows.shared.db.ua_crawl import format_video_enhancer_usage_log_line
 
 from ua_workflows.shared.db.video_enhancer import (
     apply_embedding_duplicate_candidate_tags,
+    apply_effect_embedding_duplicate_filter,
     apply_intraday_effect_bitable_filter,
     apply_old_effect_bitable_filter,
     build_inspiration_dedup_redirect_map,
@@ -74,6 +75,7 @@ from ua_workflows.shared.db.video_enhancer import (
     resolve_inspiration_crossday_lookback_days,
     should_persist_suggestion_to_push_table,
     upsert_analysis_embedding,
+    upsert_effect_one_liner_embedding,
     upsert_creative_library,
     upsert_daily_creative_insights,
     upsert_daily_push_content,
@@ -105,6 +107,37 @@ def _store_analysis_embeddings(analysis_by_ad: dict[str, dict]) -> None:
         print(f"[embedding] 已为 {stored} 条素材写入分析嵌入向量。")
     if failed:
         print(f"[embedding] {failed} 条 embedding 失败（不影响主流程）。")
+
+
+def _store_effect_one_liner_embeddings(analysis_by_ad: dict[str, dict]) -> None:
+    """对玩法一句话计算嵌入向量并写入 creative_library.effect_one_liner_embedding。"""
+    try:
+        from ua_workflows.shared.llm import client as llm_client
+    except ImportError:
+        return
+    stored = 0
+    failed = 0
+    seen_texts: dict[str, list[float]] = {}
+    for ad_key, info in analysis_by_ad.items():
+        if not isinstance(info, dict):
+            continue
+        effect = str(info.get("play_fingerprint") or info.get("effect_one_liner") or "").strip()
+        if not effect or effect == "None":
+            continue
+        prompt_text = f"特效玩法：{effect[:300]}"
+        try:
+            if prompt_text not in seen_texts:
+                seen_texts[prompt_text] = llm_client.call_embedding(prompt_text)
+            blob = llm_client.embedding_to_bytes(seen_texts[prompt_text])
+            upsert_effect_one_liner_embedding(ad_key, blob)
+            stored += 1
+        except Exception as e:
+            failed += 1
+            print(f"[effect-embedding] failed ad_key={ad_key[:12]}: {e}")
+    if stored:
+        print(f"[effect-embedding] 已为 {stored} 条素材写入玩法一句话嵌入向量。")
+    if failed:
+        print(f"[effect-embedding] {failed} 条玩法 embedding 失败（不影响主流程）。")
 
 
 def _apply_semantic_dedup(target_date: str, combined_results: list[dict]) -> int:
@@ -687,7 +720,35 @@ def main() -> None:
     else:
         print("[old-effect-filter] 已关闭（OLD_EFFECT_BITABLE_FILTER_ENABLED=0），跳过老玩法同步前筛选。")
 
-    # 2.8e) embedding 重复候选：只打标签，不排除主表/方向卡片，用于后续人工校准
+    # 2.8e) 玩法 embedding 硬拦截：高置信同义玩法不进主表/方向卡片，并记录阈值证据
+    effect_embedding_dup_details: list[dict] = []
+    n_effect_embedding_dup = 0
+    effect_embedding_dup_enabled = (os.getenv("EFFECT_EMBEDDING_DUP_FILTER_ENABLED") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+        "",
+    )
+    if effect_embedding_dup_enabled:
+        try:
+            n_effect_embedding_dup, effect_embedding_dup_details = apply_effect_embedding_duplicate_filter(
+                target_date,
+                combined_results,
+            )
+            if n_effect_embedding_dup:
+                print(
+                    f"[effect-embedding-filter] 标记 {n_effect_embedding_dup} 条高置信 embedding 玩法重复素材"
+                    "（主表不同步；不进入方向卡片）"
+                )
+        except Exception as e:
+            print(f"[effect-embedding-filter] skipped: {e}")
+            effect_embedding_dup_details = []
+            n_effect_embedding_dup = 0
+    else:
+        print("[effect-embedding-filter] 已关闭（EFFECT_EMBEDDING_DUP_FILTER_ENABLED=0），跳过玩法 embedding 硬拦截。")
+
+    # 2.8f) embedding 重复候选：只打标签，不排除主表/方向卡片，用于后续人工校准
     embedding_dup_details: list[dict] = []
     n_embedding_dup = 0
     embedding_dup_enabled = (os.getenv("EMBEDDING_DUP_CANDIDATE_ENABLED") or "1").strip().lower() not in (
@@ -748,12 +809,15 @@ def main() -> None:
     if old_effect_details:
         sample = old_effect_details[:3]
         print(f"[old-effect-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+    if effect_embedding_dup_details:
+        sample = effect_embedding_dup_details[:3]
+        print(f"[effect-embedding-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
     if embedding_dup_details:
         sample = embedding_dup_details[:3]
         print(f"[embedding-dup-candidate] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
 
     # 如有 2.8/2.9 标记，回写 analysis JSON
-    if n_sem or n_adult or n_intraday_effect or n_old_effect or n_embedding_dup or n_le:
+    if n_sem or n_adult or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
         analysis_payload["results"] = combined_results
         analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -775,6 +839,10 @@ def main() -> None:
                     "style_filter_match_summary": str(it.get("style_filter_match_summary") or ""),
                     "launched_effect_match": it.get("launched_effect_match"),
                     "effect_one_liner": str(it.get("effect_one_liner") or ""),
+                    "play_fingerprint": str(it.get("play_fingerprint") or ""),
+                    "differentiator": str(it.get("differentiator") or ""),
+                    "effect_embedding_duplicate_match": it.get("effect_embedding_duplicate_match"),
+                    "embedding_duplicate_candidate": it.get("embedding_duplicate_candidate"),
                 }
     n_insights = upsert_daily_creative_insights(target_date, raw_payload, analysis_by_ad)
     n_filter_logs = upsert_daily_video_enhancer_filter_log(
@@ -791,6 +859,7 @@ def main() -> None:
 
     # 2.7) 语义嵌入：对有分析文本的素材计算 embedding 并存入 creative_library
     _store_analysis_embeddings(analysis_by_ad)
+    _store_effect_one_liner_embeddings(analysis_by_ad)
 
     # 有失败时：成功率 ≥ 90% 则继续推送，否则停止后续 UA 建议/推送入库
     total_analyzed = len(new_success_by_ad) + len(failed_analysis)

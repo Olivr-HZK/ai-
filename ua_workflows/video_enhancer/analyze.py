@@ -327,17 +327,23 @@ def _arrow2_fixed_footer() -> str:
 def _ve_fixed_footer() -> str:
     """VE（视频增强）流程的 footer：核心卖点。"""
     return (
-        "\n7) 在全文最后**必须**追加五行（固定格式，便于系统解析，每行独立一行）：\n"
+        "\n7) 在全文最后**必须**追加七行（固定格式，便于系统解析，每行独立一行）：\n"
         "【Hook解析】用一句中文（约20~40字）概括最前段抓人机制：先写画面/台词触发点，再写制造的悬念、痛点或承诺；"
         "避免泛泛写「吸引用户注意」。若开头无明确 Hook，写「无明确强 Hook」。\n"
         "【脚本口播】提炼视频中的旁白、口播、字幕或画中文字脚本；按出现顺序用短句串联，保留可借鉴的表达。"
         "若没有可识别口播/字幕，写「无明确口播/字幕」。不要编造未出现的台词。\n"
-        "【核心卖点】用一句中文（约10~20字）概括这条素材的核心卖点——用了什么特效、什么展现形式；"
+        "【核心卖点】给人看的卖点句，用一句中文（约10~24字）概括这条素材最值得借鉴的效果——用了什么特效、什么展现形式；"
         "参考风格：「真人照片一键变身奇幻恶魔特效」「AI多手化妆瞬间变身」「老照片修复转动态视频」"
         "「黑白线稿漫画滤镜」「巨型猫咪AR特效」「静态照片生成跳舞动画」"
         "等——先写具体特效/玩法，必要时加展现形式；如果是常见修图/美颜/前后对比，必须补充可区分的场景、"
         "对象、风格或呈现方式（如派对、泳装、商务头像、分屏滑动、宝丽来名人合影），避免只写「AI修图」「AI美颜」"
         "这类过泛描述；禁止写投放建议，只描述素材本身做了什么。\n"
+        "【玩法指纹】给机器去重用，用一句中文（约8~18字）写「输入对象 + 关键变换 + 输出形态 + 不可省略视觉元素」；"
+        "不要写一键、AI、免费、好看、震撼、抓眼等营销词；不要写投放建议、Hook、脚本。"
+        "如果不同视觉元素会让玩法明显不同，必须保留该元素，例如：透明足球、母亲节、逝者纪念、宝丽来名人合影、手绘素描、涂鸦、骑恐龙、火焰变身。"
+        "示例：「双人照片融合生成温馨合影」「静态照片生成透明足球动态视频」「真人照片生成手绘素描头像」「老照片修复生成动态视频」。\n"
+        "【差异点】写这条素材相对同类玩法不可省略的差异点，多个用顿号连接；没有明显差异写「无」。"
+        "例如：亲属感、母亲节、逝者纪念、透明足球容器、手绘素描、涂鸦风、宝丽来名人合影、分屏滑动、派对场景。\n"
         "【风险标签】只从以下标签中选择，多个用顿号连接；若无则写「无明显风险」："
         "成人色情风险、擦边露肤风险、版权名人风险、产品不适配风险、低质素材风险、无明显风险。"
         "只有画面/文案实际存在色情、裸体、露点、明显性行为或成人视频导向时，才写「成人色情风险」；"
@@ -372,10 +378,11 @@ def _infer_risk_level_from_tags(tags: list[str]) -> str:
     return ""
 
 
-def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str, str, str, str, str]:
+def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str, str, str, str, str, str, str]:
     """从分析正文移除末段固定行；解析素材类型、一句话说明、特效玩法；旧版【游戏素材标签】仍兼容为 llm_tags。
 
-    返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner, voiceover_script, risk_level)。
+    返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner,
+    voiceover_script, risk_level, play_fingerprint, differentiator)。
     """
     raw = (text or "").strip()
     if not raw:
@@ -391,6 +398,8 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
     hook_one_liner = ""
     voiceover_script = ""
     risk_level = ""
+    play_fingerprint = ""
+    differentiator = ""
     risk_tag_seen = False
     remove_idx: set[int] = set()
 
@@ -460,6 +469,16 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
             rest, i = _read_block(i, "【核心卖点】")
             effect_one_liner = rest[:60]
             continue
+        if s.startswith("【玩法指纹】") or s.startswith("【玩法 指纹】"):
+            prefix = "【玩法指纹】" if s.startswith("【玩法指纹】") else "【玩法 指纹】"
+            rest, i = _read_block(i, prefix)
+            play_fingerprint = rest[:80]
+            continue
+        if s.startswith("【差异点】") or s.startswith("【差异 点】"):
+            prefix = "【差异点】" if s.startswith("【差异点】") else "【差异 点】"
+            rest, i = _read_block(i, prefix)
+            differentiator = rest[:160]
+            continue
         if s.startswith("【风险标签】"):
             rest, i = _read_block(i, "【风险标签】")
             risk_tag_seen = True
@@ -518,6 +537,8 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
         hook_one_liner.strip(),
         voiceover_script.strip(),
         risk_level.strip(),
+        play_fingerprint.strip(),
+        differentiator.strip(),
     )
 
 
@@ -1058,6 +1079,8 @@ def _analyze_one_item(
     risk_level = ""
     ua_suggestion_single = ""
     effect_one_liner = ""
+    play_fingerprint = ""
+    differentiator = ""
     inspiration_enrich: str = "none"
     json_repair_applied = False
     work: str = str(raw_out or "")
@@ -1132,6 +1155,8 @@ def _analyze_one_item(
                 hook_one_liner,
                 voiceover_script,
                 _risk_level,
+                _play_fingerprint,
+                _differentiator,
             ) = _strip_arrow2_footer_lines(raw_text)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
             # Arrow2 精简模式下 analysis 正文可能为空（只有 footer），用原始输出作为入库文本
@@ -1148,6 +1173,8 @@ def _analyze_one_item(
                 hook_one_liner,
                 voiceover_script,
                 risk_level,
+                play_fingerprint,
+                differentiator,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_ve(creative, llm_tags)
             if not risk_level:
@@ -1190,6 +1217,8 @@ def _analyze_one_item(
                 hook_one_liner,
                 voiceover_script,
                 _risk_level,
+                _play_fingerprint,
+                _differentiator,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
         if inspiration_enrich != "none" and not arrow2:
@@ -1203,6 +1232,8 @@ def _analyze_one_item(
                 hook_one_liner,
                 voiceover_script,
                 risk_level,
+                play_fingerprint,
+                differentiator,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_ve(creative, llm_tags)
             if not risk_level:
@@ -1242,6 +1273,8 @@ def _analyze_one_item(
         "voiceover_script": voiceover_script,
         "risk_level": risk_level,
         "effect_one_liner": effect_one_liner,
+        "play_fingerprint": play_fingerprint,
+        "differentiator": differentiator,
         "exclude_from_bitable": exclude_from_bitable,
         "exclude_from_cluster": exclude_from_cluster,
         "_orig_idx": idx,
@@ -1268,6 +1301,8 @@ def _analyze_one_item(
                         "exclude_from_cluster": exclude_from_cluster,
                         "style_filter_match_summary": style_filter_match_summary,
                         "effect_one_liner": effect_one_liner,
+                        "play_fingerprint": play_fingerprint,
+                        "differentiator": differentiator,
                     },
                 )
             if ok:

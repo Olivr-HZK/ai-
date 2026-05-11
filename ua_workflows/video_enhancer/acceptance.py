@@ -399,7 +399,7 @@ def _collect_issues(
 
     new_material_count = int(material_summary.get("new_material_count") or 0)
     if raw.get("exists") and not partial and new_material_count == 0:
-        _issue(issues, "soft", "no_new_materials", "当日 creative_library 中没有 first_target_date=target_date 的新素材。")
+        _issue(issues, "soft", "no_new_materials", "当日没有「首次出现且玩法也新」的新素材。")
 
     min_effect_cov = _env_float("ACCEPTANCE_MIN_EFFECT_COVERAGE", "0.9")
     effect_cov = float(material_summary.get("effect_one_liner_coverage") or 0.0)

@@ -2,6 +2,22 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-05-11
+
+### [VE] 核心卖点与玩法指纹拆分
+
+- `ua_workflows/video_enhancer/analyze.py`：VE prompt 在「核心卖点」之外新增固定 `【玩法指纹】` 与 `【差异点】` 行；核心卖点继续面向人工阅读和推送展示，玩法指纹专门面向机器去重，要求写清输入对象、关键转换、输出形态和不可省略视觉元素，减少「AI修图/AI美颜」这类泛化描述对去重的干扰。
+- `ua_workflows/shared/db/video_enhancer.py` / `pipeline.py`：`daily_creative_insights` 与 `creative_library` 自动迁移新增 `play_fingerprint`、`differentiator`；日内玩法、老玩法、embedding 硬拦截、embedding 候选和日报新玩法判断均优先使用 `play_fingerprint`，缺失时回退 `effect_one_liner`。
+- `ua_workflows/shared/db/video_enhancer.py` / `push_feishu.py`：日报「新玩法」不再等于素材条数，也不做每产品固定数量截断；先排除 `exclude_from_bitable` 硬拦截素材，再把 `play_fingerprint` 折成粗粒度玩法族并结合文本/embedding 做同产品聚类，`new_effect_count` 统计聚类簇数，`new_material_count` 统计这些新玩法簇内素材数，推送展示每个簇的代表素材并标注同玩法素材数。可用 `DAILY_PLAY_CLUSTER_TEXT_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_ENABLED=0` 调整。
+- 已清空本地 SQLite 中 2026-05-09、2026-05-10 VE 原有分析字段后重新跑分析与去重回写，生成校准报告：`data/ve_play_fingerprint_dedupe_2026-05-09_2026-05-10.json`、`reports/ve_play_fingerprint_dedupe_2026-05-09_2026-05-10.md`。
+
+### [VE] 玩法 embedding 硬拦截与历史回填校准
+
+- `ua_workflows/shared/db/video_enhancer.py`：新增 `creative_library.effect_one_liner_embedding` 与 `daily_creative_insights` 中的 embedding 重复证据 JSON 字段；新增 `apply_effect_embedding_duplicate_filter`，默认只对高置信玩法 embedding 重复做硬拦截（日内 0.95、跨日 0.96），并记录命中来源、相似度、阈值、匹配素材。
+- `ua_workflows/shared/db/video_enhancer.py`：日内文本硬拦截默认阈值调到 0.94，老玩法文本阈值仍为 0.94；同义归一补充姿态/姿势、骑行/骑乘、美颜/修图、动画/视频，并保留少量明确签名（名人宝丽来合影、派对修图前后对比、母亲节手绘合影）。
+- `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：一键流程与独立同步都会在老玩法文本筛选后补跑 embedding 硬拦截，再做 `embedding重复候选` soft tag；新增 `EFFECT_EMBEDDING_DUP_FILTER_ENABLED=0` 可关闭。
+- 已回填 2026-05-07～2026-05-10 历史 VE 分析 JSON 与本地 SQLite 证据字段，生成校准报告：`data/ve_effect_embedding_backfill_2026-05-07_2026-05-10.json`、`reports/ve_effect_embedding_backfill_2026-05-07_2026-05-10.md`。
+
 ## 2026-05-09
 
 ### [Arrow2] 企业微信周报：新玩法 / 新 Hook
@@ -14,17 +30,17 @@
 ### [VE] 同步前老玩法/成人风险拦截 + 单产品硬截断默认关闭
 
 - `ua_workflows/video_enhancer/content_filters.py`：新增成人/色情风险文本拦截，综合 `analysis`、标题、正文、标签、`effect_one_liner` 等字段判断；命中后设置 `exclude_from_bitable` / `exclude_from_cluster`，避免仅因「核心卖点」没写出风险而漏筛。
-- `ua_workflows/shared/db/video_enhancer.py`：新增 `apply_old_effect_bitable_filter` 与 `apply_intraday_effect_bitable_filter`；同步前按同 `appid` 近 7 日历史玩法标记「老玩法重复」（主表拦截阈值默认 `OLD_EFFECT_SIMILARITY_THRESHOLD=0.94`，比日报新玩法口径更保守），同日同批次相似玩法仅保留展示估值更高的代表素材并标记「日内玩法重复」。`normalize_effect_one_liner` 补入少量同义词归一（如 名人/明星、合照/合影、宝丽来/拍立得、修脸/修图/修复）。
-- `ua_workflows/shared/db/video_enhancer.py`：新增 `apply_embedding_duplicate_candidate_tags`，对未被硬拦截的素材做 `effect_one_liner` embedding 相似候选标记；默认阈值 `EMBEDDING_DUP_CANDIDATE_THRESHOLD=0.92`，只加 `embedding重复候选` 标签和 `embedding_duplicate_candidate` 详情，不改 `exclude_from_bitable` / `exclude_from_cluster`。
-- `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：一键流程与单独同步均补跑成人风险、日内玩法、老玩法、embedding 候选、已投放等标记，保证独立同步不绕过筛选；可用 `INTRADAY_EFFECT_FILTER_ENABLED=0` / `OLD_EFFECT_BITABLE_FILTER_ENABLED=0` / `EMBEDDING_DUP_CANDIDATE_ENABLED=0` 分别关闭；`sync.py` 同步主表时会把 analysis `material_tags` 合并进「素材标签」字段。
+- `ua_workflows/shared/db/video_enhancer.py`：新增 `apply_old_effect_bitable_filter` 与 `apply_intraday_effect_bitable_filter`；同步前按同 `appid` 近 7 日历史玩法标记「老玩法重复」（主表拦截阈值默认 `OLD_EFFECT_SIMILARITY_THRESHOLD=0.94`，比日报新玩法口径更保守），同日同批次相似玩法仅保留展示估值更高的代表素材并标记「日内玩法重复」（默认 `INTRADAY_EFFECT_SIMILARITY_THRESHOLD=0.94`）。`normalize_effect_one_liner` 补入少量同义词归一（如 名人/明星、合照/合影、宝丽来/拍立得、姿态/姿势、骑行/骑乘、修脸/修图/修复/美颜、动画/视频）。
+- `ua_workflows/shared/db/video_enhancer.py`：新增 `effect_one_liner_embedding` 存储与 `apply_effect_embedding_duplicate_filter`，对高置信同义玩法做硬拦截并记录阈值证据（默认日内 `EFFECT_EMBEDDING_INTRADAY_HARD_THRESHOLD=0.95`，跨日 `EFFECT_EMBEDDING_CROSSDAY_HARD_THRESHOLD=0.96`）；`apply_embedding_duplicate_candidate_tags` 对未被硬拦截的素材做 soft candidate 标记，默认 `EMBEDDING_DUP_CANDIDATE_THRESHOLD=0.90`，只加 `embedding重复候选` 标签和 `embedding_duplicate_candidate` 详情。
+- `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：一键流程与单独同步均补跑成人风险、日内玩法、老玩法、embedding 硬拦截、embedding 候选、已投放等标记，保证独立同步不绕过筛选；可用 `INTRADAY_EFFECT_FILTER_ENABLED=0` / `OLD_EFFECT_BITABLE_FILTER_ENABLED=0` / `EFFECT_EMBEDDING_DUP_FILTER_ENABLED=0` / `EMBEDDING_DUP_CANDIDATE_ENABLED=0` 分别关闭；`sync.py` 同步主表时会把 analysis `material_tags` 合并进「素材标签」字段。
 - `ua_workflows/video_enhancer/analyze.py`：复核并收紧 VE prompt：`核心卖点` 要求补充可区分场景/对象/风格/呈现方式，避免「AI修图/AI美颜」过泛导致误去重；新增固定 `【风险标签】` 行（成人色情/擦边露肤/版权名人/产品不适配/低质/无明显风险）和 `【风险等级】` 行（低/中/高），标签解析进 `material_tags` 供多维表「素材标签」复核，等级写入单独「风险等级」列，其中成人色情仍由内容过滤硬拦。
 - `ua_workflows/video_enhancer/analyze.py` / `sync.py`：VE prompt 新增固定 `【Hook解析】` 与 `【脚本口播】` 输出，分析正文要求更侧重前 1~3 秒 Hook 与脚本/字幕/口播提炼，减少逐帧冗余；若广大大 raw/detail 后续带 `script` / `transcript` / `subtitle` / `ocr_text` 等字段，会一并喂给模型。同步主表自动新增并写入「Hook解析」「脚本/口播」「风险等级」三列。
 - `ua_workflows/video_enhancer/crawl.py`：单产品 `>10` 只保留 Top10 的硬截断默认关闭，改为保留日期命中素材，后续交给封面去重/玩法筛选/同步前排除处理；如需临时恢复可设 `VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_ENABLED=1`。
 
 ### [VE] 新素材 / 新玩法 / 持续发力日报口径落地
 
-- `ua_workflows/shared/db/video_enhancer.py`：新增 `load_daily_material_report` 公共聚合口径，仅用于 **Video Enhancer**：新素材仍以 `creative_library.first_target_date = target_date` 判断；新玩法以同 `appid` 下 `effect_one_liner` 过去 N 日（默认 7）精确或相似匹配判断；持续发力聚合 VE 封面/URL/ahash/玩法跨日信号，并按产品限制展示条数，不读取 Arrow2 报告。
-- `ua_workflows/video_enhancer/push_feishu.py` / `push_multichannel.py`：日报标题改为「新素材 / 新玩法 / 持续发力」三指标；新素材中若是老玩法会标注首次玩法日期；持续发力小节开始展示跨日重复素材/玩法。
+- `ua_workflows/shared/db/video_enhancer.py`：新增 `load_daily_material_report` 公共聚合口径，仅用于 **Video Enhancer**：新素材要求 `creative_library.first_target_date = target_date` 且同 `appid` 下 `effect_one_liner` 过去 N 日（默认 7）无精确或相似命中；老玩法换素材仅进 `old_play_items` 复核，不计入新素材；持续发力聚合 VE 封面/URL/ahash/玩法跨日信号，并按产品限制展示条数，不读取 Arrow2 报告。
+- `ua_workflows/video_enhancer/push_feishu.py` / `push_multichannel.py`：日报标题改为「新素材 / 新玩法 / 持续发力」三指标；老玩法换素材在标题中展示「未计入新素材」数量，不再混入新素材列表；持续发力小节开始展示跨日重复素材/玩法。
 - `ua_workflows/video_enhancer/acceptance.py`：验收新增日报素材报告摘要，检查新素材数、`effect_one_liner` 覆盖率（`ACCEPTANCE_MIN_EFFECT_COVERAGE`，默认 0.9）和持续发力信号生成情况。
 
 ## 2026-05-08
@@ -796,7 +812,7 @@ python scripts/arrow2_weekly_trend.py --workflow 展示估值
 
 #### 3) 新素材与持续发力
 
-- **新素材**：`creative_library.first_target_date = target_date`（首次出现于目标日期）
+- **新素材**：`creative_library.first_target_date = target_date` 且 `effect_one_liner` 在同 `appid` 近 7 日无精确/相似命中；老玩法换素材不计入新素材，仅作为 `old_play_items` 复核。
 - **持续发力**：基于去重流程中被去掉的素材，汇总三个来源的持续发力信号（`compute_sustained_effort_signals`）：
   - **来源 1：封面跨日去掉**（`cover_style_intraday.json` 的 `cross_day_fingerprint_removed` + CLIP `vs_yesterday`）→ 同画面/URL 跨天重复
   - **来源 2：ahash 去重组跨天**（`creative_library` 查询）→ 同一画面换了 ad_key
@@ -929,7 +945,7 @@ daily_ua_job.sh（可选）
 
 ### 新素材判定
 
-`creative_library.first_target_date = target_date`（该 ad_key 在素材主库的首次出现日期为目标日期）。
+`creative_library.first_target_date = target_date` 且 `effect_one_liner` 在同 `appid` 近 7 日无精确/相似命中；仅 ad_key 首次出现但玩法已出现过，不计入新素材。
 
 ### 飞书多维表字段（当前）
 

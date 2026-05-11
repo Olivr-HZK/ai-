@@ -2,8 +2,8 @@
 把 raw + 灵感分析写入指定飞书多维表，并把统一 UA 建议推送到飞书卡片。
 
 主表同步：仅写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]），
-且 exclude_from_bitable 不为真（命中老玩法、成人风险或「我方已经投过」的素材不同步主表）。
-同步前会补跑老玩法/成人风险/已投放匹配，为结果补全 exclude 与补标。
+且 exclude_from_bitable 不为真（命中老玩法、embedding 玩法重复、成人风险或「我方已经投过」的素材不同步主表）。
+同步前会补跑老玩法/embedding 玩法重复/成人风险/已投放匹配，为结果补全 exclude 与补标。
 封面图、**视频**均尽量下载为附件上传（`VIDEO_BITABLE_MAX_MB` 限制大小；
 `VIDEO_BITABLE_UPLOAD=0` 可关视频上传）。
 不写入 raw 中仅入库、未分析或分析失败的条目。聚类表逻辑不变。
@@ -44,6 +44,7 @@ from lark_oapi.api.drive.v1.model import (
 from ua_workflows.shared.config import DATA_DIR
 from ua_workflows.shared.db.video_enhancer import (
     apply_embedding_duplicate_candidate_tags,
+    apply_effect_embedding_duplicate_filter,
     apply_intraday_effect_bitable_filter,
     apply_old_effect_bitable_filter,
     init_db as init_pipeline_db,
@@ -820,6 +821,21 @@ def main() -> None:
                         print(f"[sync] 老玩法重复处理 {n_old} 条（排除/补标）")
                 except Exception as e:
                     print(f"[sync] old_effect_filter 跳过: {e}")
+
+            effect_embedding_dup_on = (os.getenv("EFFECT_EMBEDDING_DUP_FILTER_ENABLED") or "1").strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
+                "",
+            )
+            if effect_embedding_dup_on and target_date:
+                try:
+                    n_effect_emb, _ = apply_effect_embedding_duplicate_filter(target_date, res_list)
+                    if n_effect_emb:
+                        print(f"[sync] embedding 玩法重复处理 {n_effect_emb} 条（排除/补标）")
+                except Exception as e:
+                    print(f"[sync] effect_embedding_duplicate_filter 跳过: {e}")
 
             embedding_dup_on = (os.getenv("EMBEDDING_DUP_CANDIDATE_ENABLED") or "1").strip().lower() not in (
                 "0",

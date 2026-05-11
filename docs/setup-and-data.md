@@ -23,7 +23,7 @@ playwright install chromium
 | 广大大           | `GUANGDADA_EMAIL`、`GUANGDADA_PASSWORD`                               |
 | LLM           | `OPENROUTER_API_KEY` 等                                               |
 | VE 多维表        | `VIDEO_ENHANCER_BITABLE_URL`、可选 `VIDEO_ENHANCER_CLUSTER_BITABLE_URL` |
-| VE 筛选口径       | `INTRADAY_EFFECT_FILTER_ENABLED`、`INTRADAY_EFFECT_SIMILARITY_THRESHOLD`、`OLD_EFFECT_BITABLE_FILTER_ENABLED`、`OLD_EFFECT_SIMILARITY_THRESHOLD`、`OLD_EFFECT_LOOKBACK_DAYS`、`EMBEDDING_DUP_CANDIDATE_ENABLED`、`EMBEDDING_DUP_CANDIDATE_THRESHOLD`、`VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_ENABLED` |
+| VE 筛选口径       | `INTRADAY_EFFECT_FILTER_ENABLED`、`INTRADAY_EFFECT_SIMILARITY_THRESHOLD`、`OLD_EFFECT_BITABLE_FILTER_ENABLED`、`OLD_EFFECT_SIMILARITY_THRESHOLD`、`OLD_EFFECT_LOOKBACK_DAYS`、`EFFECT_EMBEDDING_DUP_FILTER_ENABLED`、`EFFECT_EMBEDDING_INTRADAY_HARD_THRESHOLD`、`EFFECT_EMBEDDING_CROSSDAY_HARD_THRESHOLD`、`EFFECT_EMBEDDING_LOOKBACK_DAYS`、`EMBEDDING_DUP_CANDIDATE_ENABLED`、`EMBEDDING_DUP_CANDIDATE_THRESHOLD`、`DAILY_PLAY_CLUSTER_TEXT_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_ENABLED`、`VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_ENABLED` |
 | 飞书写入          | `FEISHU_APP_ID`、`FEISHU_APP_SECRET`                                  |
 | Arrow2 SQLite | `ARROW2_SQLITE_PATH`（可选，默认 `data/arrow2_pipeline.db`）                |
 
@@ -45,7 +45,7 @@ playwright install chromium
 
 ## 换机迁移历史库（SQLite）
 
-封面跨日、`effect_one_liner` 等逻辑依赖 `**creative_library` / `daily_*` / arrow2 表** 中已有数据。
+封面跨日、`play_fingerprint` / `effect_one_liner` 等逻辑依赖 `**creative_library` / `daily_*` / arrow2 表** 中已有数据。
 
 1. **停掉**旧机与新机正在访问同一 `.db` 的 Python / cron。
 2. 将旧机 `**data/video_enhancer_pipeline.db`、`data/arrow2_pipeline.db`**（及你在用的其它 `data/*.db`）**整文件拷贝**到新机同名路径覆盖。

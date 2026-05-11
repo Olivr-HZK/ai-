@@ -2,7 +2,7 @@
 推送飞书「VE竞品素材日报」卡片——新素材 + 持续发力，按产品分组，一句话摘要 + 链接。
 
 替代旧版方向卡片格式，改为更紧凑的日报形式：
-- 新素材：creative_library.first_target_date = target_date
+- 新素材：creative_library.first_target_date = target_date 且玩法也为新玩法
 - 持续发力：封面跨日指纹去重中被去掉的素材（换了ad_key但视频/封面和之前一样）
 """
 
@@ -137,8 +137,12 @@ def _load_sustained_effort(target_date: str, lookback_days: int = 7) -> Dict[str
 
 
 # ── 卡片渲染 ──────────────────────────────────────────
-def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]],
-                                 sustained_by_product: Dict[str, List[Dict[str, Any]]]) -> str:
+def _render_daily_card_markdown(
+    target_date: str,
+    new_items: List[Dict[str, Any]],
+    sustained_by_product: Dict[str, List[Dict[str, Any]]],
+    summary: Dict[str, Any] | None = None,
+) -> str:
     """渲染日报卡片 Markdown。
 
     格式：按竞品分组，每条素材用一句话说明（effect_one_liner）做可点击链接跳转到视频/图片。
@@ -147,15 +151,20 @@ def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]
     for item in new_items:
         by_product[item["product"]].append(item)
 
-    total_new = len(new_items)
-    new_effect = sum(1 for item in new_items if item.get("effect_is_new"))
+    summary = summary or {}
+    total_new = int(summary.get("new_material_count") or len(new_items))
+    new_effect = int(summary.get("new_effect_count") or sum(1 for item in new_items if item.get("effect_is_new")))
+    old_play = int(summary.get("old_effect_new_material_count") or 0)
     total_sustained = sum(len(v) for v in sustained_by_product.values())
 
     lines: List[str] = []
-    lines.append(
+    headline = (
         f"**{target_date}** | 新素材 **{total_new}** 条 | "
         f"新玩法 **{new_effect}** 条 | 持续发力 **{total_sustained}** 条"
     )
+    if old_play:
+        headline += f" | 老玩法换素材 **{old_play}** 条（未计入新素材）"
+    lines.append(headline)
     lines.append("")
 
     for product in by_product:
@@ -182,11 +191,6 @@ def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]
             if not effect:
                 imp = item.get("best_impression", 0)
                 effect = f"展示{imp:,}"
-            if item.get("effect_is_new") is False:
-                first_date = str(item.get("effect_first_seen_date") or "")
-                if first_date:
-                    effect = f"{effect}（老玩法 {first_date}）"
-
             if is_video and item.get("video_url"):
                 link = item["video_url"]
             elif item.get("preview_img_url"):
@@ -195,10 +199,12 @@ def _render_daily_card_markdown(target_date: str, new_items: List[Dict[str, Any]
                 link = ""
 
             icon = "🎬" if is_video else "🖼"
+            cluster_count = int(item.get("cluster_material_count") or item.get("daily_play_cluster_size") or 1)
+            suffix = f"（同玩法{cluster_count}条素材）" if cluster_count > 1 else ""
             if link:
-                lines.append(f"{icon} [{effect}]({link})")
+                lines.append(f"{icon} [{effect}]({link}){suffix}")
             else:
-                lines.append(f"{icon} {effect}")
+                lines.append(f"{icon} {effect}{suffix}")
 
         lines.append("")
 
@@ -269,7 +275,7 @@ def main() -> None:
     target_date = args.date
 
     report = load_daily_material_report(target_date, lookback_days=args.lookback)
-    new_items = report.get("new_items") or []
+    new_items = report.get("new_play_items") or report.get("new_items") or []
     sustained = report.get("sustained_by_product") or {}
 
     if not new_items and not any(sustained.values()):
@@ -277,7 +283,7 @@ def main() -> None:
         return
 
     # ── 渲染并推送 ──
-    card_md = _render_daily_card_markdown(target_date, new_items, sustained)
+    card_md = _render_daily_card_markdown(target_date, new_items, sustained, report.get("summary") or {})
 
     webhook = (args.feishu_webhook or "").strip()
     if not webhook:
