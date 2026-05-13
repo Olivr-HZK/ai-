@@ -48,9 +48,13 @@ from ua_workflows.shared.db.video_enhancer import (
     apply_intraday_effect_bitable_filter,
     apply_old_effect_bitable_filter,
     init_db as init_pipeline_db,
+    load_daily_material_report,
     update_push_status,
 )
-from ua_workflows.video_enhancer.content_filters import apply_adult_content_filter
+from ua_workflows.video_enhancer.content_filters import (
+    apply_adult_content_filter,
+    apply_low_fit_theme_filter,
+)
 
 load_dotenv()
 
@@ -700,6 +704,227 @@ def normalize_risk_level_for_bitable(value: Any, tags: List[str] | None = None) 
     return ""
 
 
+def _env_enabled(name: str, default: str = "1") -> bool:
+    raw = (os.getenv(name) or default).strip().lower()
+    return raw not in ("0", "false", "no", "off", "")
+
+
+def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int = 60) -> int:
+    try:
+        value = int(os.getenv(name) or default)
+    except ValueError:
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _short_tag_text(value: Any, max_chars: int = 36) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if len(text) <= max_chars:
+        return text
+    return text[: max(1, max_chars - 1)].rstrip() + "…"
+
+
+def _add_tags(
+    tag_map: Dict[str, List[str]],
+    ad_key: Any,
+    tags: List[str],
+) -> None:
+    key = str(ad_key or "").strip()
+    if not key:
+        return
+    bucket = tag_map.setdefault(key, [])
+    for tag in tags:
+        t = str(tag or "").strip()
+        if t and t not in bucket:
+            bucket.append(t)
+
+
+def build_daily_bitable_tag_map(target_date: str) -> Dict[str, List[str]]:
+    """
+    Build creation-time labels for Bitable rows from the same daily report logic
+    used by Feishu pushes. This deliberately writes into the existing `素材标签`
+    text field, so tomorrow's new rows can be distinguished without requiring
+    record-update or schema permissions.
+    """
+    if not target_date or not _env_enabled("BITABLE_DAILY_PLAY_TAGS_ENABLED", "1"):
+        return {}
+
+    lookback = _env_int(
+        "BITABLE_DAILY_PLAY_TAG_LOOKBACK_DAYS",
+        _env_int("OLD_EFFECT_LOOKBACK_DAYS", 7),
+    )
+    report = load_daily_material_report(target_date, lookback_days=lookback)
+    tag_map: Dict[str, List[str]] = {}
+
+    for cluster in report.get("new_play_clusters") or []:
+        if not isinstance(cluster, dict):
+            continue
+        cluster_key = _short_tag_text(
+            cluster.get("play_cluster_key")
+            or cluster.get("effect_one_liner")
+            or cluster.get("play_fingerprint")
+        )
+        count = int(cluster.get("material_count") or 1)
+        rep_ad_key = str(cluster.get("representative_ad_key") or "").strip()
+        base_tags = ["日报:新玩法"]
+        if cluster_key:
+            base_tags.append(f"玩法族:{cluster_key}")
+        if count > 1:
+            base_tags.append(f"同玩法素材数:{count}")
+
+        members = cluster.get("members") or []
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            member_ad_key = str(member.get("ad_key") or "").strip()
+            member_tags = list(base_tags)
+            if member_ad_key and member_ad_key == rep_ad_key:
+                member_tags.insert(0, "日报:新玩法代表")
+            else:
+                member_tags.append("日报:同玩法素材")
+            _add_tags(tag_map, member_ad_key, member_tags)
+
+        if rep_ad_key:
+            _add_tags(tag_map, rep_ad_key, ["日报:新玩法代表", *base_tags])
+
+    for item in report.get("old_play_items") or []:
+        if not isinstance(item, dict):
+            continue
+        tags = ["日报:老玩法换素材"]
+        first_seen = str(item.get("effect_first_seen_date") or "").strip()
+        if first_seen:
+            tags.append(f"玩法首次:{first_seen}")
+        matched = _short_tag_text(
+            item.get("effect_matched_one_liner")
+            or item.get("daily_play_cluster_key")
+            or item.get("effect_one_liner")
+        )
+        if matched:
+            tags.append(f"匹配玩法:{matched}")
+        _add_tags(tag_map, item.get("ad_key"), tags)
+
+    for item in report.get("unknown_play_items") or []:
+        if isinstance(item, dict):
+            _add_tags(tag_map, item.get("ad_key"), ["日报:玩法待复核"])
+
+    return tag_map
+
+
+def lookup_daily_bitable_tags(
+    tag_map: Dict[str, List[str]],
+    ad_key: str,
+) -> List[str]:
+    key = str(ad_key or "").strip()
+    if not key or not tag_map:
+        return []
+    if key in tag_map:
+        return tag_map[key]
+    prefix = key[:16]
+    if not prefix:
+        return []
+    for k, tags in tag_map.items():
+        if k[:16] == prefix:
+            return tags
+    return []
+
+
+def should_skip_bitable_same_play_member(
+    daily_tags: List[str],
+) -> bool:
+    """
+    Keep Bitable review focused on one representative per same-day new-play
+    cluster. The Feishu push already shows representatives only; syncing all
+    same-play members creates review noise and is commonly marked as duplicate.
+    """
+    if not _env_enabled("BITABLE_SYNC_DAILY_PLAY_REPRESENTATIVES_ONLY", "1"):
+        return False
+    tag_set = {str(t or "").strip() for t in daily_tags}
+    return "日报:同玩法素材" in tag_set and "日报:新玩法代表" not in tag_set
+
+
+_HIGH_ACCEPTANCE_THEME_PATTERNS: List[tuple[str, str, int]] = [
+    ("球赛抓拍", r"球赛|球场|足球|棒球|赛场|体育场|球迷|观众视角|看台|cowboy|牛仔", 4),
+    ("机甲科幻变身", r"机甲|战甲|装甲|科幻|超级英雄|变身|奇幻|火焰翅膀|战斗特效|电影级", 3),
+    ("手绘漫画", r"漫画|手绘|素描|涂鸦|卡通|贴纸|泡泡贴纸", 3),
+    ("亲情合影", r"母亲节|母女|亲人|逝者|重逢|拥抱|温馨合影", 3),
+    ("热门模板同款", r"模板|同款|热门趋势|viral|流行模板|trend|套用", 3),
+    ("人物形象替换", r"性别|换性别|外貌|造型转换|形象替换|变老变性|任意性别", 3),
+    ("生日写真", r"生日|影楼|生日写真|birthday", 3),
+    ("明星合影红毯", r"明星|名人合影|名人同款|红毯|走红毯|已故巨星", 3),
+    ("剧情短片", r"剧情短片|连续剧情|末日剧情|爽剧|故事短片", 2),
+    ("年龄变化", r"年龄|幼年|老年|多年龄段|年龄过渡", 2),
+    ("求职商务照", r"求职|商务头像|职业头像|证件照", 2),
+]
+
+
+def acceptance_priority_tags(
+    *,
+    creative: Dict[str, Any],
+    analysis_text: str,
+    effect_text: str,
+    hook_text: str,
+    voiceover_text: str,
+    material_tags: List[str],
+    daily_tags: List[str],
+    risk_level: str,
+) -> tuple[int, List[str]]:
+    text = " ".join(
+        str(x or "")
+        for x in [
+            creative.get("title"),
+            creative.get("body"),
+            analysis_text,
+            effect_text,
+            hook_text,
+            voiceover_text,
+            " ".join(material_tags),
+            " ".join(daily_tags),
+            risk_level,
+        ]
+    )
+    score = 0
+    tags: List[str] = []
+    tag_set = {str(t or "").strip() for t in daily_tags}
+
+    if "日报:新玩法代表" in tag_set:
+        score += 3
+        tags.append("采纳优先:新玩法代表")
+    if "日报:老玩法换素材" in tag_set:
+        score -= 1
+
+    for name, pattern, weight in _HIGH_ACCEPTANCE_THEME_PATTERNS:
+        if re.search(pattern, text, flags=re.I):
+            score += weight
+            tags.append(f"高采纳主题:{name}")
+
+    if str(risk_level or "").strip() == "高风险" and not any(t.startswith("高采纳主题:") for t in tags):
+        score -= 2
+    if any("embedding重复候选" == str(t).strip() for t in material_tags):
+        score -= 1
+
+    return score, tags
+
+
+def should_skip_low_acceptance_candidate(
+    *,
+    score: int,
+    daily_tags: List[str],
+) -> bool:
+    if not _env_enabled("BITABLE_ACCEPTANCE_PRIORITY_SYNC_ENABLED", "1"):
+        return False
+    tag_set = {str(t or "").strip() for t in daily_tags}
+    # New-play representatives are already sparse and useful for calibration.
+    if "日报:新玩法代表" in tag_set:
+        return False
+    threshold = _env_int(
+        "BITABLE_ACCEPTANCE_PRIORITY_MIN_SCORE",
+        3,
+        min_value=-10,
+        max_value=10,
+    )
+    return score < threshold
+
+
 def sync_cluster_cards_to_bitable(
     access_token: str,
     cluster_url: str,
@@ -792,6 +1017,18 @@ def main() -> None:
             if n_adult:
                 print(f"[sync] 成人/色情风险处理 {n_adult} 条（排除/补标）")
 
+            low_fit_on = (os.getenv("LOW_FIT_THEME_FILTER_ENABLED") or "1").strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
+                "",
+            )
+            if low_fit_on:
+                n_low_fit, _ = apply_low_fit_theme_filter(res_list)
+                if n_low_fit:
+                    print(f"[sync] 低采纳主题处理 {n_low_fit} 条（排除/补标）")
+
             intraday_effect_on = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "1").strip().lower() not in (
                 "0",
                 "false",
@@ -879,6 +1116,17 @@ def main() -> None:
                 material_tags_by_ad.get(k),
             )
 
+    daily_tags_by_ad: Dict[str, List[str]] = {}
+    if need_raw_sync and target_date:
+        try:
+            daily_tags_by_ad = build_daily_bitable_tag_map(target_date)
+            if daily_tags_by_ad:
+                print(
+                    f"[sync] 已生成日报玩法标签 {len(daily_tags_by_ad)} 条（写入素材标签字段）。"
+                )
+        except Exception as e:
+            print(f"[sync] 日报玩法标签生成失败，已跳过: {e}")
+
     records: List[Dict[str, Any]] = []
     target_ms = to_ms_from_date_str(target_date)
     # 卡片前置信息：仅保留日期（不展示筛选规则/计数/产品分布）
@@ -929,6 +1177,28 @@ def main() -> None:
             if not isinstance(c, dict):
                 continue
             ad_key = str(c.get("ad_key") or "")
+            daily_tag_list = lookup_daily_bitable_tags(daily_tags_by_ad, ad_key)
+            if should_skip_bitable_same_play_member(daily_tag_list):
+                print(f"[sync] 跳过同玩法非代表素材 ad_key={ad_key[:12]}（仅同步玩法代表）。")
+                continue
+            base_material_tags = material_tags_by_ad.get(ad_key, [])
+            risk_level = risk_level_by_ad.get(ad_key, "")
+            priority_score, priority_tags = acceptance_priority_tags(
+                creative=c,
+                analysis_text=analysis_by_ad.get(ad_key, ""),
+                effect_text=effect_by_ad.get(ad_key, ""),
+                hook_text=hook_by_ad.get(ad_key, ""),
+                voiceover_text=voiceover_by_ad.get(ad_key, ""),
+                material_tags=base_material_tags,
+                daily_tags=daily_tag_list,
+                risk_level=risk_level,
+            )
+            if should_skip_low_acceptance_candidate(score=priority_score, daily_tags=daily_tag_list):
+                print(
+                    f"[sync] 跳过低采纳优先级素材 ad_key={ad_key[:12]} "
+                    f"score={priority_score} tags={'/'.join(priority_tags) or '-'}"
+                )
+                continue
             category = str(item.get("category") or "").strip()
             if category:
                 own_product_line = f"{category}产品线"
@@ -949,7 +1219,7 @@ def main() -> None:
                 "核心卖点": effect_by_ad.get(ad_key, ""),
                 "Hook解析": hook_by_ad.get(ad_key, ""),
                 "脚本/口播": voiceover_by_ad.get(ad_key, ""),
-                "风险等级": risk_level_by_ad.get(ad_key, ""),
+                "风险等级": risk_level,
                 "视频时长": int(c.get("video_duration") or 0),
                 "接受情况": "待定",
                 "我方产品": own_product_line,
@@ -961,7 +1231,9 @@ def main() -> None:
             pt = c.get("pipeline_tags")
             if isinstance(pt, list):
                 tag_list.extend(str(x) for x in pt if x)
-            tag_list.extend(material_tags_by_ad.get(ad_key, []))
+            tag_list.extend(base_material_tags)
+            tag_list.extend(daily_tag_list)
+            tag_list.extend(priority_tags)
             fields["素材标签"] = "、".join(dict.fromkeys(tag_list))
             created_ms = to_ms_from_unix_sec(c.get("created_at"))
             first_seen_ms = to_ms_from_unix_sec(c.get("first_seen"))

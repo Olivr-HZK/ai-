@@ -7,12 +7,14 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 
 ADULT_FILTER_TAG = "色情/成人风险"
+LOW_FIT_THEME_FILTER_TAG = "低采纳主题"
 
 _ADULT_PATTERNS = [
     r"黄片",
     r"色情",
     r"成人视频",
     r"成人影片",
+    r"成人视频聊天",
     r"低俗色情",
     r"淫秽",
     r"裸体",
@@ -26,9 +28,27 @@ _ADULT_PATTERNS = [
     r"\bnude\w*\b",
     r"\bnaked\b",
     r"\bsexual\s+content\b",
+    r"\bvideo\s*chat\b",
+    r"\bvideochat\b",
+    r"\bchat\s+for\s+free\b",
+    r"\bno\s+ghosting\b",
+    r"\bdating\b",
+    r"\bbusty\b",
+    r"免费聊天",
+    r"视频聊天",
+    r"附近.{0,8}(嫂子|美女|女性)",
+    r"交友.{0,12}(下载|聊天|约会|附近|视频)",
+    r"约会.{0,12}(下载|聊天|附近|视频)",
 ]
 
 _SOFT_ADULT_PATTERNS: list[str] = []
+
+_LOW_FIT_THEME_PATTERNS = [
+    (
+        "家居装修",
+        r"空房间|豪华装修|装修风格|家居设计|室内设计|房间照片.{0,12}装修|interior\s+design|home\s+decor",
+    ),
+]
 
 _NEGATION_RE = re.compile(r"(未|无|不|非|不是|没有|并无|并非|未发现|未涉及|未观察到|不涉及).{0,10}$")
 _AFTER_NEGATION_RE = re.compile(r"^.{0,8}(未|无|不|非|不是|没有|并无|并非|未发现|未涉及|未观察到|不涉及).{0,14}(风险|高风险|内容|明显)")
@@ -128,6 +148,51 @@ def apply_adult_content_filter(rows: List[Dict[str, Any]]) -> Tuple[int, List[Di
             {
                 "ad_key": str(row.get("ad_key") or ""),
                 "product": str(row.get("product") or ""),
+                "pattern": match.get("pattern"),
+                "snippet": match.get("snippet"),
+                "newly_marked": not was_excluded,
+            }
+        )
+    return newly_marked, details
+
+
+def low_fit_theme_match(row: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Return a product-fit/theme match that should not enter VE review."""
+    text = "\n".join(_iter_text_parts(row))
+    if not text.strip():
+        return None
+    lowered = text.lower()
+    for name, pattern in _LOW_FIT_THEME_PATTERNS:
+        m = re.search(pattern, lowered, flags=re.I)
+        if not m:
+            continue
+        snippet = text[max(0, m.start() - 24):min(len(text), m.end() + 24)].replace("\n", " ")
+        return {"theme": name, "pattern": pattern, "snippet": snippet.strip()}
+    return None
+
+
+def apply_low_fit_theme_filter(rows: List[Dict[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+    """Hard-exclude low-fit themes learned from Bitable review feedback."""
+    details: List[Dict[str, Any]] = []
+    newly_marked = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        match = low_fit_theme_match(row)
+        if not match:
+            continue
+        was_excluded = bool(row.get("exclude_from_bitable"))
+        row["exclude_from_bitable"] = True
+        row["exclude_from_cluster"] = True
+        row["low_fit_theme_filter_match"] = match
+        _append_tag(row, f"{LOW_FIT_THEME_FILTER_TAG}:{match.get('theme')}")
+        if not was_excluded:
+            newly_marked += 1
+        details.append(
+            {
+                "ad_key": str(row.get("ad_key") or ""),
+                "product": str(row.get("product") or ""),
+                "theme": match.get("theme"),
                 "pattern": match.get("pattern"),
                 "snippet": match.get("snippet"),
                 "newly_marked": not was_excluded,

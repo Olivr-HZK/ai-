@@ -1,13 +1,15 @@
 """
 Video Enhancer 全流程工作流（一键）：
-1) 抓取（按日期 + 指定产品）
+1) 抓取前一天素材（按日期 + 指定产品）
 2) 可选封面日内去重（可用 --skip-cover-dedupe 跳过；与抓取拆分请用 workflow_video_enhancer_steps crawl_store --crawl-only + cover_store）
 2.0) DOM 详情补全（广大大登录，对无 video_url 的条目补 source_url 等；需 .env 账号；可用 --skip-dom-enrich 跳过）
 2.0b) 统计灵感分析准入（不删 raw；不符准入的不进分析）
 3) 视频灵感分析（基于 raw JSON）
-4) 生成统一 UA 建议（方向卡片）
-5) 同步 raw + 分析 到多维表
-6) 推送 UA 建议飞书卡片
+4) 成人/色情、日内重复、历史老玩法、embedding 重复等去重/拦截
+5) 同步去重后的可复核素材到多维表
+6) 推送「新素材 / 新玩法 / 持续发力」日报
+
+旧的 UA 方向卡片仍会尽量生成作兼容产物，但不再阻塞主表同步和新玩法日报推送。
 
 示例：
 python scripts/workflow_video_enhancer_full_pipeline.py \
@@ -49,7 +51,10 @@ from ua_workflows.video_enhancer.filter_reports import (
     write_cover_filter_step_json_skipped,
     write_launched_filter_step_json,
 )
-from ua_workflows.video_enhancer.content_filters import apply_adult_content_filter
+from ua_workflows.video_enhancer.content_filters import (
+    apply_adult_content_filter,
+    apply_low_fit_theme_filter,
+)
 
 from ua_workflows.video_enhancer.analyze import is_creative_analyzable
 
@@ -676,7 +681,24 @@ def main() -> None:
     if n_adult:
         print(f"[content-filter] 标记 {n_adult} 条成人/色情风险素材（主表不同步；不进入方向卡片）")
 
-    # 2.8c) 日内玩法去重：同 appid 同批次相似玩法仅保留展示估值更高的代表素材
+    # 2.8c) 低采纳主题拦截：基于多维表人工反馈剔除明显不适合 VE 复核的主题
+    low_fit_details: list[dict] = []
+    n_low_fit = 0
+    low_fit_enabled = (os.getenv("LOW_FIT_THEME_FILTER_ENABLED") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+        "",
+    )
+    if low_fit_enabled:
+        n_low_fit, low_fit_details = apply_low_fit_theme_filter(combined_results)
+        if n_low_fit:
+            print(f"[low-fit-filter] 标记 {n_low_fit} 条低采纳主题素材（主表不同步；不进入方向卡片）")
+    else:
+        print("[low-fit-filter] 已关闭（LOW_FIT_THEME_FILTER_ENABLED=0），跳过低采纳主题筛选。")
+
+    # 2.8d) 日内玩法去重：同 appid 同批次相似玩法仅保留展示估值更高的代表素材
     intraday_effect_details: list[dict] = []
     n_intraday_effect = 0
     intraday_effect_enabled = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "1").strip().lower() not in (
@@ -698,7 +720,7 @@ def main() -> None:
     else:
         print("[intraday-effect-filter] 已关闭（INTRADAY_EFFECT_FILTER_ENABLED=0），跳过日内玩法筛选。")
 
-    # 2.8d) 老玩法拦截：同 appid 近 N 天已出现过的 effect_one_liner 不同步主表
+    # 2.8e) 老玩法拦截：同 appid 近 N 天已出现过的 effect_one_liner 不同步主表
     old_effect_details: list[dict] = []
     n_old_effect = 0
     old_effect_enabled = (os.getenv("OLD_EFFECT_BITABLE_FILTER_ENABLED") or "1").strip().lower() not in (
@@ -720,7 +742,7 @@ def main() -> None:
     else:
         print("[old-effect-filter] 已关闭（OLD_EFFECT_BITABLE_FILTER_ENABLED=0），跳过老玩法同步前筛选。")
 
-    # 2.8e) 玩法 embedding 硬拦截：高置信同义玩法不进主表/方向卡片，并记录阈值证据
+    # 2.8f) 玩法 embedding 硬拦截：高置信同义玩法不进主表/方向卡片，并记录阈值证据
     effect_embedding_dup_details: list[dict] = []
     n_effect_embedding_dup = 0
     effect_embedding_dup_enabled = (os.getenv("EFFECT_EMBEDDING_DUP_FILTER_ENABLED") or "1").strip().lower() not in (
@@ -748,7 +770,7 @@ def main() -> None:
     else:
         print("[effect-embedding-filter] 已关闭（EFFECT_EMBEDDING_DUP_FILTER_ENABLED=0），跳过玩法 embedding 硬拦截。")
 
-    # 2.8f) embedding 重复候选：只打标签，不排除主表/方向卡片，用于后续人工校准
+    # 2.8g) embedding 重复候选：只打标签，不排除主表/方向卡片，用于后续人工校准
     embedding_dup_details: list[dict] = []
     n_embedding_dup = 0
     embedding_dup_enabled = (os.getenv("EMBEDDING_DUP_CANDIDATE_ENABLED") or "1").strip().lower() not in (
@@ -803,6 +825,9 @@ def main() -> None:
     if adult_details:
         sample = adult_details[:3]
         print(f"[content-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+    if low_fit_details:
+        sample = low_fit_details[:3]
+        print(f"[low-fit-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
     if intraday_effect_details:
         sample = intraday_effect_details[:3]
         print(f"[intraday-effect-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
@@ -817,7 +842,7 @@ def main() -> None:
         print(f"[embedding-dup-candidate] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
 
     # 如有 2.8/2.9 标记，回写 analysis JSON
-    if n_sem or n_adult or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
+    if n_sem or n_adult or n_low_fit or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
         analysis_payload["results"] = combined_results
         analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -885,22 +910,28 @@ def main() -> None:
         else:
             print("[workflow] 成功率 ≥ 90%，继续执行后续步骤。")
 
-    # 3) 统一 UA 建议（方向卡片）
-    _run(
-        [
-            py,
-            "-m",
-            "ua_workflows.video_enhancer.suggestions",
-            "--input",
-            str(analysis_path),
-            "--output-json",
-            str(sugg_json_path),
-            "--output-md",
-            str(sugg_md_path),
-        ]
-    )
+    # 3) 兼容生成旧 UA 建议（方向卡片）。失败不阻塞主表同步和新玩法日报推送。
+    try:
+        _run(
+            [
+                py,
+                "-m",
+                "ua_workflows.video_enhancer.suggestions",
+                "--input",
+                str(analysis_path),
+                "--output-json",
+                str(sugg_json_path),
+                "--output-md",
+                str(sugg_md_path),
+            ]
+        )
+    except subprocess.CalledProcessError as e:
+        print(
+            f"[workflow] 方向卡片生成失败（exit={e.returncode}），"
+            "继续执行主表同步和新玩法日报推送。"
+        )
 
-    # 检查聚类结果：若 skipped_llm=True 或无方向卡片，视为聚类失败，阻止后续推送/同步
+    # 检查兼容聚类结果：仅用于决定是否同步旧聚类表，不阻塞主表/日报。
     cluster_ok = True
     if sugg_json_path.exists():
         try:
@@ -911,7 +942,7 @@ def main() -> None:
             cluster_ok = False
             print(
                 "[workflow] 方向卡片生成失败（skipped_llm=True），"
-                "跳过后续多维表同步/飞书卡片/企微推送。"
+                "仅跳过旧聚类表同步，继续主表同步/日报推送。"
             )
         else:
             _cards = ((_sugg_check.get("suggestion") or {}).get("方向卡片") or [])
@@ -921,24 +952,17 @@ def main() -> None:
                 cluster_ok = False
                 print(
                     "[workflow] 方向卡片为空（无有效方向），"
-                    "跳过后续多维表同步/飞书卡片/企微推送。"
+                    "仅跳过旧聚类表同步，继续主表同步/日报推送。"
                 )
     else:
         cluster_ok = False
-        print("[workflow] 方向卡片 JSON 不存在，跳过后续推送。")
-
-    if not cluster_ok:
-        try:
-            from ua_workflows.video_enhancer.acceptance import run_acceptance_after_workflow
-            run_acceptance_after_workflow(target_date, partial=True)
-        except SystemExit:
-            raise
-        except Exception as e:
-            print(f"[acceptance] {e}")
-        return
+        print("[workflow] 方向卡片 JSON 不存在，仅跳过旧聚类表同步。")
 
     # 4) 同步多维表（与飞书卡片推送解耦）
     if not args.no_bitable_sync:
+        sync_target = "both" if cluster_bitable_url and cluster_ok else "raw"
+        if cluster_bitable_url and not cluster_ok:
+            print("[sync] 聚类表链接已配置，但方向卡片不可用，本次仅同步主表。")
         sync_cmd = [
             py,
             "-m",
@@ -954,10 +978,10 @@ def main() -> None:
             "--suggestion-md",
             str(sugg_md_path),
             "--sync-target",
-            "both" if cluster_bitable_url else "raw",
+            sync_target,
             "--no-card",
         ]
-        if cluster_bitable_url:
+        if cluster_bitable_url and cluster_ok:
             sync_cmd.extend(["--cluster-url", cluster_bitable_url])
         _run(sync_cmd)
     else:

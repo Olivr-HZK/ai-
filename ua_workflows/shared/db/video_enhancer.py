@@ -2483,6 +2483,11 @@ def _daily_play_cluster_embedding_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+def _daily_play_global_history_enabled() -> bool:
+    raw = os.getenv("DAILY_PLAY_GLOBAL_HISTORY_ENABLED", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 _EFFECT_SIGNATURES = [
     ("名人宝丽来合影", ("名人", "宝丽来", "合影"), 0.95),
     ("派对修图前后对比", ("派对", "修图", "前后对比"), 0.95),
@@ -3276,6 +3281,32 @@ def _best_effect_history_match(
     out["similarity"] = round(best_sim, 3)
     out["match_type"] = "exact" if best_sim >= 0.999 else "similar"
     return out
+
+
+def _global_play_history_rows(
+    hist_by_app: Dict[str, List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for rows in hist_by_app.values():
+        for row in rows:
+            effect = str(row.get("effect_one_liner") or "").strip()
+            if not effect:
+                continue
+            bucket = buckets.get(effect)
+            if bucket is None:
+                buckets[effect] = dict(row)
+                continue
+            earliest = str(row.get("earliest_date") or "")
+            latest = str(row.get("latest_date") or "")
+            if earliest and (not bucket.get("earliest_date") or earliest < str(bucket.get("earliest_date"))):
+                bucket["earliest_date"] = earliest
+            if latest and latest > str(bucket.get("latest_date") or ""):
+                bucket["latest_date"] = latest
+            bucket["history_count"] = int(bucket.get("history_count") or 0) + int(row.get("history_count") or 0)
+            if int(row.get("max_impression") or 0) > int(bucket.get("max_impression") or 0):
+                bucket["max_impression"] = int(row.get("max_impression") or 0)
+                bucket["display_effect_one_liner"] = str(row.get("display_effect_one_liner") or "")
+    return list(buckets.values())
 
 
 def apply_old_effect_bitable_filter(
@@ -4183,8 +4214,9 @@ def load_daily_material_report(
 
     Definitions:
       - candidate material: creative_library.first_target_date == target_date
-      - new material: candidate material whose play fingerprint is also new for
-        the same appid within the lookback window
+      - new material: candidate material whose play fingerprint is new within
+        the VE lookback window; by default this checks global VE play history,
+        not only the same appid, so "new play" means genuinely new idea.
       - new play: same-day clusters of new materials by play fingerprint
       - old-play material: first seen today, but the play/effect has appeared before
       - sustained effort: cross-day visual/url/hash/effect signals, grouped for display
@@ -4197,6 +4229,7 @@ def load_daily_material_report(
     try:
         cur = conn.cursor()
         hist_by_app = _load_play_cluster_history_rows(cur, target_date, lookback_days)
+        global_hist = _global_play_history_rows(hist_by_app) if _daily_play_global_history_enabled() else []
         for item in candidate_items:
             ad_key = str(item.get("ad_key") or "")
             effect = _play_cluster_text(item)
@@ -4218,7 +4251,14 @@ def load_daily_material_report(
                 item["effect_one_liner"] = effect
 
             appid = str(item.get("appid") or "")
+            match_scope = ""
             match = _best_effect_history_match(effect, hist_by_app.get(appid, []), threshold) if effect else None
+            if match:
+                match_scope = "appid"
+            elif effect and global_hist:
+                match = _best_effect_history_match(effect, global_hist, threshold)
+                if match:
+                    match_scope = "global"
             item["material_is_new"] = True
             item["effect_is_new"] = (match is None) if effect else None
             if effect and match is None:
@@ -4233,6 +4273,7 @@ def load_daily_material_report(
                 item["effect_matched_one_liner"] = str(match.get("effect_one_liner") or "")
                 item["effect_match_similarity"] = float(match.get("similarity") or 0)
                 item["effect_match_type"] = str(match.get("match_type") or "")
+                item["effect_match_scope"] = match_scope
     finally:
         conn.close()
 
@@ -4257,6 +4298,7 @@ def load_daily_material_report(
         "daily_play_cluster_text_threshold": _daily_play_cluster_text_threshold(),
         "daily_play_cluster_embedding_threshold": _daily_play_cluster_embedding_threshold(),
         "daily_play_cluster_embedding_enabled": _daily_play_cluster_embedding_enabled(),
+        "daily_play_global_history_enabled": _daily_play_global_history_enabled(),
         "candidate_items": candidate_items,
         "new_items": new_material_items,
         "new_play_items": new_play_items,

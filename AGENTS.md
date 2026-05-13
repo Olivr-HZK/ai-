@@ -8,7 +8,11 @@
 
 - `ua_workflows/video_enhancer/analyze.py`：VE prompt 在「核心卖点」之外新增固定 `【玩法指纹】` 与 `【差异点】` 行；核心卖点继续面向人工阅读和推送展示，玩法指纹专门面向机器去重，要求写清输入对象、关键转换、输出形态和不可省略视觉元素，减少「AI修图/AI美颜」这类泛化描述对去重的干扰。
 - `ua_workflows/shared/db/video_enhancer.py` / `pipeline.py`：`daily_creative_insights` 与 `creative_library` 自动迁移新增 `play_fingerprint`、`differentiator`；日内玩法、老玩法、embedding 硬拦截、embedding 候选和日报新玩法判断均优先使用 `play_fingerprint`，缺失时回退 `effect_one_liner`。
-- `ua_workflows/shared/db/video_enhancer.py` / `push_feishu.py`：日报「新玩法」不再等于素材条数，也不做每产品固定数量截断；先排除 `exclude_from_bitable` 硬拦截素材，再把 `play_fingerprint` 折成粗粒度玩法族并结合文本/embedding 做同产品聚类，`new_effect_count` 统计聚类簇数，`new_material_count` 统计这些新玩法簇内素材数，推送展示每个簇的代表素材并标注同玩法素材数。可用 `DAILY_PLAY_CLUSTER_TEXT_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_ENABLED=0` 调整。
+- `ua_workflows/shared/db/video_enhancer.py` / `push_feishu.py`：日报「新玩法」不再等于素材条数，也不做每产品固定数量截断；先排除 `exclude_from_bitable` 硬拦截素材，再把 `play_fingerprint` 折成粗粒度玩法族并结合文本/embedding 做聚类，且默认会参考全 VE 近 7 日历史玩法族（不只同 appid）判断是否“完全新玩法”，`new_effect_count` 统计聚类簇数，`new_material_count` 统计这些新玩法簇内素材数，推送展示每个簇的代表素材并标注同玩法素材数。可用 `DAILY_PLAY_CLUSTER_TEXT_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_ENABLED=0`、`DAILY_PLAY_GLOBAL_HISTORY_ENABLED=0` 调整。
+- `ua_workflows/video_enhancer/sync.py`：主表创建新行时复用日报新玩法聚类结果，把 `日报:新玩法代表`、`日报:新玩法`、`玩法族:...`、`同玩法素材数:N`、`日报:老玩法换素材` 等写入现有「素材标签」字段；不需要更新历史行或新增字段权限。可用 `BITABLE_DAILY_PLAY_TAGS_ENABLED=0` 关闭，`BITABLE_DAILY_PLAY_TAG_LOOKBACK_DAYS` 调整历史窗口。
+- `ua_workflows/video_enhancer/pipeline.py`：主流程口径收敛为「前一天全量抓取 → 分析/去重 → 同步去重后的主表素材 → 推送新玩法日报」；旧 UA 方向卡片生成失败不再阻塞主表同步和日报推送，仅跳过旧聚类表同步。
+- `ua_workflows/video_enhancer/content_filters.py` / `sync.py`：根据 2026-05-09～2026-05-11 多维表人工反馈校准：将 dating / 免费聊天 / videochat / busty / 附近嫂子等成人交友导流素材纳入硬拦截；将空房间/豪华装修/家居设计等低采纳主题纳入硬拦截（`LOW_FIT_THEME_FILTER_ENABLED=0` 可关）；主表同步默认只写入同日新玩法簇代表，跳过 `日报:同玩法素材` 非代表行，减少同玩法重复抓取噪声。可用 `BITABLE_SYNC_DAILY_PLAY_REPRESENTATIVES_ONLY=0` 临时恢复全量同玩法同步。
+- `ua_workflows/video_enhancer/sync.py`：新增采纳率优先同步评分（默认开启，`BITABLE_ACCEPTANCE_PRIORITY_SYNC_ENABLED=1`）：新玩法代表保留；老玩法换素材需命中高采纳主题（球赛抓拍、机甲科幻、手绘漫画、亲情合影、热门模板、人物形象替换、生日写真、明星合影红毯、剧情短片、年龄变化、求职商务照等）才进主表，并写入 `高采纳主题:...` 标签；默认阈值 `BITABLE_ACCEPTANCE_PRIORITY_MIN_SCORE=3`，偏“少而精”。
 - 已清空本地 SQLite 中 2026-05-09、2026-05-10 VE 原有分析字段后重新跑分析与去重回写，生成校准报告：`data/ve_play_fingerprint_dedupe_2026-05-09_2026-05-10.json`、`reports/ve_play_fingerprint_dedupe_2026-05-09_2026-05-10.md`。
 
 ### [VE] 玩法 embedding 硬拦截与历史回填校准
