@@ -8,3 +8,20 @@ data/*.db
 guangdada_auth.json
 credentials.json
 .worktrees/
+
+# Generated workflow outputs
+reports/assets/
+reports/ve_cover_dedupe_clusters_*.html
+reports/ve_filter_review_*.html
+reports/*_acceptance.md
+data/ua_suggestion_workflow_video_enhancer_*.md
+
+# Local crawl/debug captures
+*_debug.png
+guangdada_after_login.png
+search_debug.png
+captured_apis.json
+creative_data.json
+keyword_result.json
+workflow_result.json
+session_log.json

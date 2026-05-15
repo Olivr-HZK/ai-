@@ -45,6 +45,7 @@ from ua_workflows.shared.llm.client import print_openrouter_key_meter
 
 from ua_workflows.shared.media.cover_embedding import maybe_run_cover_embedding_after_library
 from ua_workflows.video_enhancer.cover_dedupe import apply_intraday_cover_style_dedupe, is_cover_style_intraday_enabled
+from ua_workflows.video_enhancer.review_dashboard import write_filter_review_dashboard
 
 from ua_workflows.video_enhancer.filter_reports import (
     write_cover_filter_step_json,
@@ -79,39 +80,12 @@ from ua_workflows.shared.db.video_enhancer import (
     load_existing_success_analysis_by_ad_keys,
     resolve_inspiration_crossday_lookback_days,
     should_persist_suggestion_to_push_table,
-    upsert_analysis_embedding,
     upsert_effect_one_liner_embedding,
     upsert_creative_library,
     upsert_daily_creative_insights,
     upsert_daily_push_content,
     upsert_daily_video_enhancer_filter_log,
 )
-
-
-def _store_analysis_embeddings(analysis_by_ad: dict[str, dict]) -> None:
-    """对有分析文本的素材计算嵌入向量并写入 creative_library.analysis_embedding。"""
-    try:
-        from ua_workflows.shared.llm import client as llm_client
-    except ImportError:
-        return
-    stored = 0
-    failed = 0
-    for ad_key, info in analysis_by_ad.items():
-        text = str(info.get("analysis") or "") if isinstance(info, dict) else str(info or "")
-        if not text or text.startswith("[ERROR]") or len(text) < 20:
-            continue
-        try:
-            vec = llm_client.call_embedding(text[:2000])
-            blob = llm_client.embedding_to_bytes(vec)
-            upsert_analysis_embedding(ad_key, blob)
-            stored += 1
-        except Exception as e:
-            failed += 1
-            print(f"[embedding] failed ad_key={ad_key[:12]}: {e}")
-    if stored:
-        print(f"[embedding] 已为 {stored} 条素材写入分析嵌入向量。")
-    if failed:
-        print(f"[embedding] {failed} 条 embedding 失败（不影响主流程）。")
 
 
 def _store_effect_one_liner_embeddings(analysis_by_ad: dict[str, dict]) -> None:
@@ -143,61 +117,6 @@ def _store_effect_one_liner_embeddings(analysis_by_ad: dict[str, dict]) -> None:
         print(f"[effect-embedding] 已为 {stored} 条素材写入玩法一句话嵌入向量。")
     if failed:
         print(f"[effect-embedding] {failed} 条玩法 embedding 失败（不影响主流程）。")
-
-
-def _apply_semantic_dedup(target_date: str, combined_results: list[dict]) -> int:
-    """对 combined_results 中有分析文本的素材与历史嵌入做语义比对。
-    命中则设 exclude_from_cluster=True，返回标记数。"""
-    try:
-        from ua_workflows.shared.llm import client as llm_client
-        from ua_workflows.shared.db.video_enhancer import SEMANTIC_DEDUP_THRESHOLD, load_embeddings_for_crossday
-    except ImportError:
-        return 0
-
-    all_hist = load_embeddings_for_crossday(target_date)
-    if not all_hist:
-        return 0
-
-    from collections import defaultdict
-    hist_by_app: dict[str, list] = defaultdict(list)
-    for h in all_hist:
-        aid = str(h.get("appid") or "")
-        hist_by_app[aid].append(h)
-
-    marked = 0
-    for r in combined_results:
-        if not isinstance(r, dict) or r.get("exclude_from_cluster"):
-            continue
-        analysis = str(r.get("analysis") or "")
-        if not analysis or len(analysis) < 20 or analysis.startswith("[ERROR]"):
-            continue
-        appid = str(r.get("appid") or "")
-        bucket = hist_by_app.get(appid, [])
-        if not bucket:
-            continue
-        try:
-            vec = llm_client.call_embedding(analysis[:2000])
-        except Exception:
-            continue
-
-        best_sim = 0.0
-        best_ak = ""
-        for h in bucket:
-            h_vec = llm_client.bytes_to_embedding(h["analysis_embedding"])
-            sim = llm_client.cosine_similarity(vec, h_vec)
-            if sim > best_sim:
-                best_sim = sim
-                best_ak = h["ad_key"]
-
-        if best_sim >= SEMANTIC_DEDUP_THRESHOLD:
-            r["exclude_from_cluster"] = True
-            r["semantic_dedup_matched"] = best_ak
-            r["semantic_dedup_similarity"] = round(float(best_sim), 3)
-            ad_key = str(r.get("ad_key") or "")[:12]
-            print(f"[semantic-dedup] {ad_key} ≈ {best_ak[:12]} (sim={best_sim:.3f}) → exclude_from_cluster")
-            marked += 1
-
-    return marked
 
 
 def parse_args() -> argparse.Namespace:
@@ -671,17 +590,12 @@ def main() -> None:
     analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[analysis] 合并分析结果 {len(combined_results)} 条，输出 {analysis_path}")
 
-    # 2.8) 语义去重：对 combined_results 中的素材与历史嵌入比对，命中则排除出方向卡片
-    n_sem = _apply_semantic_dedup(target_date, combined_results)
-    if n_sem:
-        print(f"[semantic-dedup] 标记 {n_sem} 条语义重复素材（exclude_from_cluster）")
-
-    # 2.8b) 成人/色情素材拦截：不依赖 effect_one_liner，综合分析正文/标题/正文/标签判断
+    # 2.8) 成人/色情素材拦截：不依赖 effect_one_liner，综合结构化字段/标题/正文/标签判断
     n_adult, adult_details = apply_adult_content_filter(combined_results)
     if n_adult:
         print(f"[content-filter] 标记 {n_adult} 条成人/色情风险素材（主表不同步；不进入方向卡片）")
 
-    # 2.8c) 低采纳主题拦截：基于多维表人工反馈剔除明显不适合 VE 复核的主题
+    # 2.8b) 低采纳主题拦截：基于多维表人工反馈剔除明显不适合 VE 复核的主题
     low_fit_details: list[dict] = []
     n_low_fit = 0
     low_fit_enabled = (os.getenv("LOW_FIT_THEME_FILTER_ENABLED") or "1").strip().lower() not in (
@@ -698,10 +612,10 @@ def main() -> None:
     else:
         print("[low-fit-filter] 已关闭（LOW_FIT_THEME_FILTER_ENABLED=0），跳过低采纳主题筛选。")
 
-    # 2.8d) 日内玩法去重：同 appid 同批次相似玩法仅保留展示估值更高的代表素材
+    # 2.8d) 日内玩法硬去重（默认关闭）：同 appid 同批次相似玩法仅保留展示估值更高的代表素材
     intraday_effect_details: list[dict] = []
     n_intraday_effect = 0
-    intraday_effect_enabled = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "1").strip().lower() not in (
+    intraday_effect_enabled = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "0").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -720,10 +634,10 @@ def main() -> None:
     else:
         print("[intraday-effect-filter] 已关闭（INTRADAY_EFFECT_FILTER_ENABLED=0），跳过日内玩法筛选。")
 
-    # 2.8e) 老玩法拦截：同 appid 近 N 天已出现过的 effect_one_liner 不同步主表
+    # 2.8e) 老玩法硬拦截（默认关闭）：同 appid 近 N 天已出现过的玩法不进主表
     old_effect_details: list[dict] = []
     n_old_effect = 0
-    old_effect_enabled = (os.getenv("OLD_EFFECT_BITABLE_FILTER_ENABLED") or "1").strip().lower() not in (
+    old_effect_enabled = (os.getenv("OLD_EFFECT_BITABLE_FILTER_ENABLED") or "0").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -742,10 +656,10 @@ def main() -> None:
     else:
         print("[old-effect-filter] 已关闭（OLD_EFFECT_BITABLE_FILTER_ENABLED=0），跳过老玩法同步前筛选。")
 
-    # 2.8f) 玩法 embedding 硬拦截：高置信同义玩法不进主表/方向卡片，并记录阈值证据
+    # 2.8f) 玩法 embedding 硬拦截（默认关闭）：高置信同义玩法不进主表/方向卡片
     effect_embedding_dup_details: list[dict] = []
     n_effect_embedding_dup = 0
-    effect_embedding_dup_enabled = (os.getenv("EFFECT_EMBEDDING_DUP_FILTER_ENABLED") or "1").strip().lower() not in (
+    effect_embedding_dup_enabled = (os.getenv("EFFECT_EMBEDDING_DUP_FILTER_ENABLED") or "0").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -842,7 +756,7 @@ def main() -> None:
         print(f"[embedding-dup-candidate] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
 
     # 如有 2.8/2.9 标记，回写 analysis JSON
-    if n_sem or n_adult or n_low_fit or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
+    if n_adult or n_low_fit or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
         analysis_payload["results"] = combined_results
         analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -882,9 +796,14 @@ def main() -> None:
     _, _ = upsert_creative_library(target_date, raw_payload, analysis_by_ad)
     print(f"[DB] creative_library 分析结果已同步。")
 
-    # 2.7) 语义嵌入：对有分析文本的素材计算 embedding 并存入 creative_library
-    _store_analysis_embeddings(analysis_by_ad)
+    # 2.7) 玩法嵌入：仅对结构化玩法指纹/核心卖点计算 embedding，供玩法重复候选使用。
     _store_effect_one_liner_embeddings(analysis_by_ad)
+
+    try:
+        review_dashboard_path = write_filter_review_dashboard(target_date)
+        print(f"[review-dashboard] 已写筛选复核看板：{review_dashboard_path}")
+    except Exception as e:
+        print(f"[review-dashboard] 生成失败（不影响主流程）：{e}")
 
     # 有失败时：成功率 ≥ 90% 则继续推送，否则停止后续 UA 建议/推送入库
     total_analyzed = len(new_success_by_ad) + len(failed_analysis)

@@ -2,6 +2,64 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-05-15
+
+### [VE] 视频分析结构化收敛与 analysis embedding 去重下线
+
+- `ua_workflows/video_enhancer/analyze.py`：VE 多模态分析 prompt 取消原有 1～6 段正文分析，只要求模型输出 7 个固定结构化字段：`Hook解析`、`脚本口播`、`核心卖点`、`玩法指纹`、`差异点`、`风险标签`、`风险等级`。`analysis` 老字段不再承载长正文，仅由这些结构化字段拼出兼容短摘要，保证旧同步成功判定与多维表 `AI分析结果` 不为空。
+- `ua_workflows/video_enhancer/pipeline.py` / `ua_workflows/shared/db/video_enhancer.py`：下线旧 `analysis_embedding` 语义跨日去重链路，不再创建、写入或读取 `creative_library.analysis_embedding`，也不再跑 `_apply_semantic_dedup`。后续玩法相似判断只保留 `play_fingerprint` / `effect_one_liner` 文本与 `effect_one_liner_embedding` 相关链路，避免正文随机性继续影响去重。
+- `.gitignore`：补充忽略筛选看板 HTML、`reports/assets/` 封面缓存、验收报告、方向卡片 md 与本地抓取调试文件，避免自动产物继续进入 git status；已发现仓库中仍有旧的 tracked 报告/调试文件，后续可单独做一次 git rm 清理。
+- 项目安全清理：删除已废弃且无代码引用的 tracked 调试/报告/旧配置产物，包括根目录抓包 HTML/PNG/JSON、`config/style_filters.json`、`config/twitter_input.*`、旧 `data/ua_suggestion_workflow_video_enhancer_*.md`、旧 `reports/workflow_video_enhancer_*_acceptance.md`。未删除当前筛选看板 HTML 与 `reports/assets/` 封面缓存，避免影响正在浏览的复核页面。
+
+### [VE] 内部特效上线记录合并到玩法资产库
+
+- `config/ve_play_assets.json`：通过 Chrome/Computer Use 从 Google Sheet `AI产品热点排期表 / 特效上线记录`（2025-11-17～2026-05-14，364 条）复制解析内部上线主题，并入 VE 玩法资产库。资产数从 25 扩到 27，子标签从约 100 扩到 144；新增稳定基类「照片生成直播间/主播 PK 场景」和「照片生成密集场景寻人/找自己」。
+- `config/ve_play_assets.json`：把 Stadium/Stands Cam、Soccer Minis、Pet Dance、Warm Reunion/Alive Again/Still Here、Find Me/Where’s Me、Go Live/Live Queen/Live Battle、Chibi Emojis/Chibi Doll、Hairstyle Lookbook、Best Mom/Mother’s Day、Floral/Chinese/Graduation 等内部上线主题沉到现有玩法的 aliases、关键词、example_effects 和 subtags，作为新变种判断依据，而不是在代码里补产品特判。
+- `ua_workflows/video_enhancer/play_asset_doc_sync.py` / `docs/ve-play-assets.md`：云文档渲染头部新增内部上线记录来源、记录数、日期范围和 Google Sheet 入口；本地文档补充该 Google Sheet 是玩法资产库的内部上线主题来源。
+- 已验证 `config/ve_play_assets.json` JSON 合法，`match_play_asset` 可正确命中 Stadium Cam、Find Me/Where’s Me、Go Live/Live Battle、Pet Dance、Warm Reunion、Chibi Emojis 等代表样例；已渲染云文档 Markdown 预览 `/tmp/ve_play_assets_doc.md`。
+
+### [VE] 视频分析阶段直接输出玩法资产判断
+
+- `ua_workflows/video_enhancer/analyze.py` / `play_assets.py`：VE 视频/图片分析 prompt 现在会注入压缩后的玩法资产库候选清单，要求模型额外输出 `【玩法资产ID】`、`【玩法资产名称】`、`【玩法变种ID】`、`【玩法变种名称】`、`【玩法归类】`、`【玩法判断理由】`；其中已有玩法必须引用资产库 ID，不匹配时写 `new_play`，已有资产但新变种写 `new_variant`。分析子进程启动时会先尝试从飞书云文档拉取最新资产库，失败则使用本地 JSON。
+- `ua_workflows/shared/db/video_enhancer.py`：`daily_creative_insights` 与 `creative_library` 自动迁移新增 AI 玩法判断字段（资产 ID/名称、变种 ID/名称、新旧、来源、理由），单条分析入库和素材库回写都会保留这些字段，历史缓存复用时也不丢失。
+- `ua_workflows/video_enhancer/play_asset_report.py` / `sync.py`：玩法归类改为「AI 主判 + 规则兜底」。日报/同步优先使用分析阶段的 AI 资产判断；若 AI 缺失、ID 无效或不确定，再走关键词/别名/案例匹配。多维表新增「玩法判断来源」「玩法判断理由」字段，并在素材标签里写 `玩法判断:AI`，但「新玩法 / 新变种 / 已沉淀」仍会结合历史库重新计算，避免只相信单条素材自报。
+- `README.md` / `docs/workflows.md` / `docs/setup-and-data.md` / `docs/ve-play-assets.md`：补充 VE 玩法资产库、AI 玩法判断、主表新增字段、内部上线记录来源和本地/云文档兜底关系，方便后续按文档接手维护。
+- 已验证 prompt 中包含 `photoshoot_noir_vintage` 等变种 ID，解析器能正确抽取 AI 玩法字段，临时 SQLite upsert/readback 可保留 `play_asset_id`，`git diff --check` 通过。
+
+## 2026-05-14
+
+### [VE] 2026-05-13 筛选复核看板刷新与 CLIP 日内展示修正
+
+- `ua_workflows/video_enhancer/review_dashboard.py`：刷新 2026-05-13 复核看板；CLIP 指标改为「CLIP 封面命中」，并在统计备注中拆分跨日 / 日内，避免把 `cover_style_cluster` 日内簇误读成跨日命中。
+- `ua_workflows/video_enhancer/review_dashboard.py`：修复统计值为 `0` 时被空字符串吞掉的问题；旧报告中缺失被剔除素材封面的 CLIP 日内簇，会用「同簇代表封面」兜底展示，避免页面出现 `无本地封面`。
+- `ua_workflows/video_enhancer/review_dashboard.py`：一句话 / 玩法筛选板块前置到封面去重板块之前，每个玩法簇先展示封面卡片，再展示文字证据，避免复核时需要翻过大量 CLIP 簇才能看到一句话筛掉的素材。
+- `ua_workflows/video_enhancer/review_dashboard.py`：一句话 / 玩法筛选板块改为「被剔除素材 vs 对比对象」成对封面展示；日内玩法、embedding、语义重复直接取命中 ad_key，老玩法仅有文案证据时会按 appid + 玩法指纹从本地库反查历史代表素材补封面。
+- `ua_workflows/video_enhancer/review_dashboard.py`：一句话对比卡新增两张封面的 CLIP 相似度与阈值解释；看板新增「未筛掉 / 当前看板保留素材」与「日报推送筛选逻辑」板块，展示 5/13 当前保留 46 条、日报新素材推送段 5 条，以及 5 条 `exclude_from_cluster=1` 但未写 `exclude_from_bitable=1` 的口径差异素材。
+- `ua_workflows/video_enhancer/analyze.py`：收紧 VE `玩法指纹` 生成原则，要求模型先归纳稳定的「输入对象 + 关键变换 + 输出大类」，把热点话题、运动项目、节日、发型、服装、名人同款、画面文案等易变元素放到「差异点」，减少靠不断补硬编码规则来合并玩法。
+- `config/ve_play_assets.json` / `ua_workflows/video_enhancer/play_assets.py`：新增人工沉淀的 VE 玩法资产库与通用关键词匹配 helper，默认读取可版本化的 `config/ve_play_assets.json`（兼容旧 `data/ve_play_assets.json`）。当前版本基于本地库 2026-03-18～2026-05-13 的 526 条历史已分析素材沉淀，共 25 个资产，历史覆盖率 100%；其中 2026-05-05～2026-05-13 的 466 条五月已分析素材也 100% 覆盖。资产包含体育赛事现场转播、写真/杂志封面、双人融合、美颜前后对比、照片动态化、机甲奇幻、跳舞动画、模板换脸、老照片修复、游戏角色皮肤、路人消除、成人交友导流拦截等稳定玩法资产。
+- `config/ve_play_assets.json` / `ua_workflows/video_enhancer/play_assets.py`：玩法资产新增 `subtags` 子标签机制，一个素材先命中稳定基类，再可多选变体标签；当前 25 个基类中 23 个已配置 100 个子标签，覆盖 F1/赛车、棒球、足球/世界杯、观众席/球迷、直播/转播包装、生日主题、杂志封面、红毯/奢华生活、名人宝丽来合影、病毒/热门 trend、换脸主角、机甲/战甲、恶魔/僵尸、老照片上色、文本提示词、成人导流风险 hook 等变体。2026-05-05～2026-05-13 五月素材中 400/466 条已命中至少一个子标签。
+- `ua_workflows/video_enhancer/review_dashboard.py`：复核看板读取玩法资产库，统计「玩法资产命中 / 待沉淀」，并新增「玩法资产库（历史沉淀）」与「未筛掉素材 · 按玩法资产归类」板块，方便每天把新类目继续沉淀为资产，而不是在代码里继续补产品特判。
+- `ua_workflows/video_enhancer/play_asset_report.py` / `push_feishu.py` / `push_multichannel.py`：新增「新玩法 / 新玩法变种」日报口径。日报先给当日候选素材命中玩法资产与子标签，再与历史全量素材比对：玩法基类历史没见过算「新玩法」，基类已见过但子标签组合没见过算「新玩法变种」；飞书/企微日报默认只推这两类代表素材，不再把持续发力或普通老玩法换素材混入推送。2026-05-13 当前口径为新玩法 0 个、新玩法变种 13 个、代表素材 13 条。
+- `ua_workflows/video_enhancer/sync.py`：主表新增「玩法资产」「玩法变种」「玩法新旧」「玩法资产ID」「玩法变种ID」「玩法指纹」「差异点」字段，并把玩法资产/变种/新旧标签写入「素材标签」，方便在多维表格里按稳定玩法和 trend 变体筛选复核。
+- `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：主表同步默认放宽，日内玩法重复、老玩法重复、embedding 玩法重复不再默认作为 `exclude_from_bitable` 硬拦截；`BITABLE_SYNC_DAILY_PLAY_REPRESENTATIVES_ONLY` 与 `BITABLE_ACCEPTANCE_PRIORITY_SYNC_ENABLED` 默认改为关闭，主表尽可能同步更多成功分析素材。成人/色情、低适配主题、已投放等硬风险仍保留拦截；如需恢复旧的窄同步，可显式打开对应环境变量。
+- `ua_workflows/video_enhancer/review_dashboard.py`：筛选复核看板的「日报推送筛选逻辑」切换到新玩法资产/变种口径，新增「日报新玩法 / 新变种推送段」和「日报新口径未推送素材」板块；未推送素材会标注「同资产变种非代表」或「已沉淀玩法/变种」，并展示封面、玩法资产、子标签、变种 ID，方便复核为什么没有进入每日推送。
+- `ua_workflows/video_enhancer/play_asset_doc_sync.py` / `scripts/sync_ve_play_assets_doc.py` / `docs/ve-play-assets.md`：将飞书云文档 `https://www.feishu.cn/docx/HrxAdmiN6o7S4BxSNpXcT8h2n1n` 升级为「人可编辑、机器可解析」的玩法资产库源。文档中每个玩法块含 YAML 字段；项目默认尝试从云文档拉取并覆盖 `config/ve_play_assets.json`，失败则使用本地 JSON 兜底。支持 `pull-doc`、`push-doc`、`render`、`append-drafts --date YYYY-MM-DD`；5/13 当前无待沉淀草稿需要追加。
+- `ua_workflows/video_enhancer/cover_dedupe.py`：未来 CLIP 日内剔除明细也会写入 `product`、`all_exposure_value`、`cover_url`，后续看板不再需要同簇代表图兜底。
+- 已生成并在 in-app browser 打开 2026-05-13 看板：`reports/ve_cover_dedupe_clusters_2026-05-13.html` / `reports/ve_filter_review_2026-05-13.html`。当前统计：CLIP 50 条 / 30 簇（跨日 12、日内 38），指纹跨日 3 条 / 3 簇，一句话命中 8 个素材 / 8 簇 / 8 条证据，其中封面已覆盖 0 个，玩法兜底 8 个；保留素材 46 条均已命中 25 个玩法资产之一；浏览器验证无 `无本地封面` 占位。
+
+## 2026-05-13
+
+### [VE] CLIP 封面跨日去重硬拦截
+
+- `ua_workflows/video_enhancer/cover_dedupe.py`：修正 CLIP 封面向量跨日去重口径。过去实现虽然把近 7 日历史封面向量加入聚类，但同簇按展示估值最高者胜出，导致“今日估值更高”的跨日相似封面会被保留；现改为只要今日封面命中历史 CLIP 簇（同 appid、cosine ≥ `COVER_VISUAL_DEDUP_THRESHOLD`，默认 0.8），即按 `cover_style_cluster_vs_yesterday` 剔除今日素材，只有纯日内簇才按展示估值保留当日代表。
+- `ua_workflows/shared/db/video_enhancer.py`：`load_cover_style_rows_for_dates_grouped_by_appid` 返回历史 `target_date`，供 CLIP 跨日命中证据记录 `matched_date` 与相似度。
+- `ua_workflows/video_enhancer/review_dashboard.py`：新增本地 HTML 筛选复核看板，统一展示 CLIP 跨日封面、ahash/url 指纹跨日封面，以及「一句话 / 玩法筛选剔除」明细；同簇聚合展示，支持搜索，封面会缓存到 `reports/assets/ve_filter_review_日期/`，并兼容旧的 `ve_cover_dedupe_clusters_日期.html` 地址。
+- `ua_workflows/video_enhancer/review_dashboard.py`：一句话 / 玩法筛选剔除板块现在也会在每个玩法簇内展示被筛掉素材的封面卡片，再展示文字证据明细，便于直接按图复核误杀。
+- `ua_workflows/video_enhancer/review_dashboard.py`：一句话板块新增筛选归因拆分：按当前封面规则已会被 CLIP/指纹提前剔除的素材标为「封面已覆盖」，不再计作一句话筛选能力；剩余标为「玩法兜底」。同时展示粗粒度「玩法族」，降低自由一句话随机性对人工量化的影响。
+- `ua_workflows/video_enhancer/pipeline.py`：主流程在分析筛选与 embedding 写库后自动刷新复核看板，默认写 `reports/ve_filter_review_日期.html`，同时覆盖 `reports/ve_cover_dedupe_clusters_日期.html`，便于日常直接打开固定地址复核。
+- 已生成 2026-05-12 封面去重人工复核 HTML：`reports/ve_cover_dedupe_clusters_2026-05-12.html`，上半部分展示按新规则识别出的 CLIP 跨日命中（17 条 / 9 簇），下半部分展示原流程已剔除的 ahash/url 指纹跨日命中（20 条 / 18 簇）；封面缓存于 `reports/assets/ve_cover_dedupe_2026-05-12/`。
+- 已刷新 2026-05-12 筛选复核 HTML：`reports/ve_filter_review_2026-05-12.html` 与 `reports/ve_cover_dedupe_clusters_2026-05-12.html`，当前统计为 CLIP 跨日 17 条 / 9 簇、指纹跨日 20 条 / 18 簇、一句话命中 33 个素材 / 26 簇 / 39 条证据，其中按当前封面规则已覆盖 12 个、真正玩法兜底 21 个；浏览器验证无「无本地封面」占位。
+
 ## 2026-05-11
 
 ### [VE] 核心卖点与玩法指纹拆分
@@ -304,6 +362,8 @@
 
 #### 3) 语义嵌入去重
 
+**当前状态（2026-05-15）**：本节所述 `analysis_embedding` / `semantic_crossday_filter` 已下线，代码不再创建、写入或读取 `creative_library.analysis_embedding`；玩法相似判断改由 `play_fingerprint` / `effect_one_liner` 文本与 `effect_one_liner_embedding` 链路承担。以下内容仅作历史背景。
+
 **背景**：现有跨日去重仅靠 ad_key / URL / ahash，无法捕获「同一创意思路、不同素材资产」的重复。
 
 **变更**：
@@ -349,6 +409,8 @@
 - **修复**：在 `workflow_video_enhancer_full_pipeline.py` Step 4 的 `sync_cmd` 中补齐：有 `cluster_bitable_url` 时传 `--cluster-url` 和 `--sync-target both`，无时传 `--sync-target raw`。
 
 **Fix 4 — `semantic_crossday_filter` 接入主链路（中优先级）**
+
+> 2026-05-15 已下线旧 `analysis_embedding` 语义去重，保留此段仅作历史记录。
 
 - **原因**：`semantic_crossday_filter()` 仅定义未调用，文档描述与实际行为不一致。
 - **修复**：在全流程 Step 2.7（嵌入存储）之后新增 Step 2.8：对 `combined_results` 做语义比对，同 appid 内 cosine similarity ≥ 0.92 的素材设 `exclude_from_cluster=True`，下游 `generate_video_enhancer_ua_suggestions_from_analysis.py` 自动跳过（复用已有排除机制）。标记数和匹配详情会打印到终端并回写 analysis JSON。
@@ -903,10 +965,9 @@ daily_ua_job.sh（可选）
            │     └─ 二轮统一重试（仍有失败条目时）
            │
            ├─ Step 7  后处理 + 回写 DB
-           │     ├─ 语义去重：_apply_semantic_dedup → exclude_from_cluster
            │     ├─ 已投放特效库：apply_launched_effects_filter → exclude_* / material_tags
            │     ├─ 回写 daily_creative_insights + creative_library（含 analysis + effect_one_liner）
-           │     └─ 语义嵌入：call_embedding（本地 BAAI/bge-small-zh-v1.5 优先）→ analysis_embedding
+           │     └─ 玩法嵌入：play_fingerprint / effect_one_liner → effect_one_liner_embedding
            │
            ├─ （若分析成功率 < 90%）提前 return；可跑验收（partial）
            │

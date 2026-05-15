@@ -191,11 +191,6 @@ def init_db() -> None:
             )
         if "insight_cover_style" not in cl_cols:
             cur.execute("ALTER TABLE creative_library ADD COLUMN insight_cover_style TEXT")
-        # 语义嵌入去重
-        cur.execute("PRAGMA table_info(creative_library)")
-        cl_cols2 = {str(r["name"]) for r in cur.fetchall()}
-        if "analysis_embedding" not in cl_cols2:
-            cur.execute("ALTER TABLE creative_library ADD COLUMN analysis_embedding BLOB")
         cur.execute("PRAGMA table_info(creative_library)")
         cl_cols3 = {str(r["name"]) for r in cur.fetchall()}
         if "cover_embedding" not in cl_cols3:
@@ -232,6 +227,25 @@ def init_db() -> None:
             cur.execute("ALTER TABLE creative_library ADD COLUMN play_fingerprint TEXT")
         if "differentiator" not in cl_cols_play:
             cur.execute("ALTER TABLE creative_library ADD COLUMN differentiator TEXT")
+        play_asset_columns = {
+            "play_asset_id": "TEXT",
+            "play_asset_name": "TEXT",
+            "play_asset_subtag_ids": "TEXT",
+            "play_asset_subtag_names": "TEXT",
+            "play_asset_novelty_label": "TEXT",
+            "play_asset_match_source": "TEXT",
+            "play_asset_classification_reason": "TEXT",
+        }
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols_asset = {str(r["name"]) for r in cur.fetchall()}
+        for col, typ in play_asset_columns.items():
+            if col not in dci_cols_asset:
+                cur.execute(f"ALTER TABLE daily_creative_insights ADD COLUMN {col} {typ}")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols_asset = {str(r["name"]) for r in cur.fetchall()}
+        for col, typ in play_asset_columns.items():
+            if col not in cl_cols_asset:
+                cur.execute(f"ALTER TABLE creative_library ADD COLUMN {col} {typ}")
         # 玩法 embedding + duplicate evidence for VE dedupe calibration.
         cur.execute("PRAGMA table_info(creative_library)")
         cl_cols6 = {str(r["name"]) for r in cur.fetchall()}
@@ -409,6 +423,13 @@ def upsert_creative_library(
                 ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
                 play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
                 differentiator = str(analysis_raw.get("differentiator") or "")
+                play_asset_id = str(analysis_raw.get("play_asset_id") or "")
+                play_asset_name = str(analysis_raw.get("play_asset_name") or "")
+                play_asset_subtag_ids = str(analysis_raw.get("play_asset_subtag_ids") or "")
+                play_asset_subtag_names = str(analysis_raw.get("play_asset_subtag_names") or "")
+                play_asset_novelty_label = str(analysis_raw.get("play_asset_novelty_label") or "")
+                play_asset_match_source = str(analysis_raw.get("play_asset_match_source") or "")
+                play_asset_classification_reason = str(analysis_raw.get("play_asset_classification_reason") or "")
             else:
                 analysis = str(analysis_raw or "")
                 ua_single = ""
@@ -416,6 +437,13 @@ def upsert_creative_library(
                 ad_one_liner = ""
                 play_fingerprint = ""
                 differentiator = ""
+                play_asset_id = ""
+                play_asset_name = ""
+                play_asset_subtag_ids = ""
+                play_asset_subtag_names = ""
+                play_asset_novelty_label = ""
+                play_asset_match_source = ""
+                play_asset_classification_reason = ""
             appid = str(item.get("appid") or "").strip()
             cs = item.get("cover_style")
             if isinstance(cs, dict):
@@ -469,6 +497,27 @@ def upsert_creative_library(
                          differentiator = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE differentiator END,
+                         play_asset_id = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_id END,
+                         play_asset_name = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_name END,
+                         play_asset_subtag_ids = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_subtag_ids END,
+                         play_asset_subtag_names = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_subtag_names END,
+                         play_asset_novelty_label = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_novelty_label END,
+                         play_asset_match_source = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_match_source END,
+                         play_asset_classification_reason = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_classification_reason END,
                          updated_at_local = datetime('now','localtime')
                        WHERE ad_key = ?""",
                     (target_date, inc, new_heat, new_imp, new_exp,
@@ -479,6 +528,13 @@ def upsert_creative_library(
                      ad_one_liner, ad_one_liner,
                      play_fingerprint, play_fingerprint,
                      differentiator, differentiator,
+                     play_asset_id, play_asset_id,
+                     play_asset_name, play_asset_name,
+                     play_asset_subtag_ids, play_asset_subtag_ids,
+                     play_asset_subtag_names, play_asset_subtag_names,
+                     play_asset_novelty_label, play_asset_novelty_label,
+                     play_asset_match_source, play_asset_match_source,
+                     play_asset_classification_reason, play_asset_classification_reason,
                      ad_key),
                 )
                 upserted += 1
@@ -567,6 +623,8 @@ def upsert_creative_library(
                      insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
                      effect_one_liner, ad_one_liner,
                      play_fingerprint, differentiator,
+                     play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+                     play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
                      created_at_local, updated_at_local
                    ) VALUES (
                      ?, ?, ?, ?,
@@ -579,6 +637,8 @@ def upsert_creative_library(
                      ?, ?, ?, ?,
                      ?, ?,
                      ?, ?,
+                     ?, ?, ?, ?,
+                     ?, ?, ?,
                      datetime('now','localtime'), datetime('now','localtime')
                    )""",
                 (
@@ -593,6 +653,8 @@ def upsert_creative_library(
                     analysis, ua_single, cover_style_str, dedup_reason,
                     effect_one_liner, ad_one_liner,
                     play_fingerprint, differentiator,
+                    play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+                    play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
                 ),
             )
             upserted += 1
@@ -675,6 +737,8 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
           effect_one_liner, ad_one_liner,
           play_fingerprint, differentiator,
+          play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+          play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
           effect_embedding_duplicate_json, embedding_duplicate_candidate_json,
           material_tags, exclude_from_bitable, exclude_from_cluster, launched_effect_match_json,
           created_at_local, updated_at_local
@@ -686,6 +750,8 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?, ?, ?,
           ?, ?,
           ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?,
           ?, ?,
           ?, ?, ?, ?,
           datetime('now','localtime'), datetime('now','localtime')
@@ -738,6 +804,41 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
             WHEN COALESCE(TRIM(excluded.differentiator), '') <> ''
             THEN excluded.differentiator
             ELSE daily_creative_insights.differentiator
+          END,
+          play_asset_id=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_id), '') <> ''
+            THEN excluded.play_asset_id
+            ELSE daily_creative_insights.play_asset_id
+          END,
+          play_asset_name=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_name), '') <> ''
+            THEN excluded.play_asset_name
+            ELSE daily_creative_insights.play_asset_name
+          END,
+          play_asset_subtag_ids=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_subtag_ids), '') <> ''
+            THEN excluded.play_asset_subtag_ids
+            ELSE daily_creative_insights.play_asset_subtag_ids
+          END,
+          play_asset_subtag_names=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_subtag_names), '') <> ''
+            THEN excluded.play_asset_subtag_names
+            ELSE daily_creative_insights.play_asset_subtag_names
+          END,
+          play_asset_novelty_label=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_novelty_label), '') <> ''
+            THEN excluded.play_asset_novelty_label
+            ELSE daily_creative_insights.play_asset_novelty_label
+          END,
+          play_asset_match_source=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_match_source), '') <> ''
+            THEN excluded.play_asset_match_source
+            ELSE daily_creative_insights.play_asset_match_source
+          END,
+          play_asset_classification_reason=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_classification_reason), '') <> ''
+            THEN excluded.play_asset_classification_reason
+            ELSE daily_creative_insights.play_asset_classification_reason
           END,
           effect_embedding_duplicate_json=excluded.effect_embedding_duplicate_json,
           embedding_duplicate_candidate_json=excluded.embedding_duplicate_candidate_json,
@@ -818,6 +919,13 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
         play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
         differentiator = str(analysis_raw.get("differentiator") or "")
+        play_asset_id = str(analysis_raw.get("play_asset_id") or "")
+        play_asset_name = str(analysis_raw.get("play_asset_name") or "")
+        play_asset_subtag_ids = str(analysis_raw.get("play_asset_subtag_ids") or "")
+        play_asset_subtag_names = str(analysis_raw.get("play_asset_subtag_names") or "")
+        play_asset_novelty_label = str(analysis_raw.get("play_asset_novelty_label") or "")
+        play_asset_match_source = str(analysis_raw.get("play_asset_match_source") or "")
+        play_asset_classification_reason = str(analysis_raw.get("play_asset_classification_reason") or "")
         effect_embedding_duplicate_json = _json_for_optional(
             analysis_raw.get("effect_embedding_duplicate_match")
             or analysis_raw.get("effect_embedding_duplicate")
@@ -840,6 +948,13 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner = ""
         play_fingerprint = ""
         differentiator = ""
+        play_asset_id = ""
+        play_asset_name = ""
+        play_asset_subtag_ids = ""
+        play_asset_subtag_names = ""
+        play_asset_novelty_label = ""
+        play_asset_match_source = ""
+        play_asset_classification_reason = ""
         effect_embedding_duplicate_json = ""
         embedding_duplicate_candidate_json = ""
         material_tags_json = ""
@@ -878,6 +993,13 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner,
         play_fingerprint,
         differentiator,
+        play_asset_id,
+        play_asset_name,
+        play_asset_subtag_ids,
+        play_asset_subtag_names,
+        play_asset_novelty_label,
+        play_asset_match_source,
+        play_asset_classification_reason,
         effect_embedding_duplicate_json,
         embedding_duplicate_candidate_json,
         material_tags_json,
@@ -1319,6 +1441,8 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
               category, product, appid, ad_key, platform,
               video_duration, video_url, raw_json, insight_analysis, insight_ua_suggestion,
               effect_one_liner, ad_one_liner, play_fingerprint, differentiator,
+              play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+              play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
               updated_at_local, id
             FROM daily_creative_insights
             WHERE ad_key IN ({placeholders})
@@ -1375,6 +1499,13 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                     "ad_one_liner": str(row["ad_one_liner"] or ""),
                     "play_fingerprint": str(row["play_fingerprint"] or ""),
                     "differentiator": str(row["differentiator"] or ""),
+                    "play_asset_id": str(row["play_asset_id"] or ""),
+                    "play_asset_name": str(row["play_asset_name"] or ""),
+                    "play_asset_subtag_ids": str(row["play_asset_subtag_ids"] or ""),
+                    "play_asset_subtag_names": str(row["play_asset_subtag_names"] or ""),
+                    "play_asset_novelty_label": str(row["play_asset_novelty_label"] or ""),
+                    "play_asset_match_source": str(row["play_asset_match_source"] or ""),
+                    "play_asset_classification_reason": str(row["play_asset_classification_reason"] or ""),
                 }
         return out
     finally:
@@ -1496,7 +1627,7 @@ def load_cover_style_rows_for_dates_grouped_by_appid(
         ph = ",".join(["?"] * len(dlist))
         cur.execute(
             f"""
-            SELECT ad_key, appid, insight_cover_style, COALESCE(all_exposure_value, 0) AS exp
+            SELECT target_date, ad_key, appid, insight_cover_style, COALESCE(all_exposure_value, 0) AS exp
             FROM daily_creative_insights
             WHERE target_date IN ({ph})
               AND COALESCE(TRIM(insight_cover_style), '') <> ''
@@ -1520,6 +1651,7 @@ def load_cover_style_rows_for_dates_grouped_by_appid(
                 continue
             by_app[aid].append(
                 {
+                    "target_date": str(row["target_date"] or ""),
                     "ad_key": ak,
                     "style_json": obj,
                     "exposure": int(row["exp"] or 0),
@@ -1757,6 +1889,13 @@ def crossday_filter_items_against_creative_library(
                         "matched_ad_key": hit_ak,
                         "matched_date": hit_date,
                         "appid": appid,
+                        "product": str(item.get("product") or "").strip(),
+                        "preview_img_url": str(c.get("preview_img_url") or "").strip(),
+                        "image_url": _pick_image_url_from_raw(c),
+                        "video_url": _pick_video_url_from_raw(c),
+                        "all_exposure_value": int(c.get("all_exposure_value") or 0),
+                        "title": str(c.get("title") or "").strip(),
+                        "body": str(c.get("body") or "").strip(),
                     }
                 )
             else:
@@ -1852,6 +1991,13 @@ def _row_from_item_and_patched_analysis(
         "effect_one_liner": str(ex_meta.get("effect_one_liner") or ""),
         "play_fingerprint": str(ex_meta.get("play_fingerprint") or ""),
         "differentiator": str(ex_meta.get("differentiator") or ""),
+        "play_asset_id": str(ex_meta.get("play_asset_id") or ""),
+        "play_asset_name": str(ex_meta.get("play_asset_name") or ""),
+        "play_asset_subtag_ids": str(ex_meta.get("play_asset_subtag_ids") or ""),
+        "play_asset_subtag_names": str(ex_meta.get("play_asset_subtag_names") or ""),
+        "play_asset_novelty_label": str(ex_meta.get("play_asset_novelty_label") or ""),
+        "play_asset_match_source": str(ex_meta.get("play_asset_match_source") or ""),
+        "play_asset_classification_reason": str(ex_meta.get("play_asset_classification_reason") or ""),
         "exclude_from_bitable": bool(ex_meta.get("exclude_from_bitable", False)),
         "exclude_from_cluster": bool(ex_meta.get("exclude_from_cluster", False)),
     }
@@ -1902,6 +2048,13 @@ def combined_analysis_results_for_pipeline(
                         "ad_one_liner": ex.get("ad_one_liner", ""),
                         "play_fingerprint": ex.get("play_fingerprint", ""),
                         "differentiator": ex.get("differentiator", ""),
+                        "play_asset_id": ex.get("play_asset_id", ""),
+                        "play_asset_name": ex.get("play_asset_name", ""),
+                        "play_asset_subtag_ids": ex.get("play_asset_subtag_ids", ""),
+                        "play_asset_subtag_names": ex.get("play_asset_subtag_names", ""),
+                        "play_asset_novelty_label": ex.get("play_asset_novelty_label", ""),
+                        "play_asset_match_source": ex.get("play_asset_match_source", ""),
+                        "play_asset_classification_reason": ex.get("play_asset_classification_reason", ""),
                     },
                 )
             )
@@ -1946,6 +2099,13 @@ def combined_analysis_results_for_pipeline(
                         "ad_one_liner": ex0.get("ad_one_liner", ""),
                         "play_fingerprint": ex0.get("play_fingerprint", ""),
                         "differentiator": ex0.get("differentiator", ""),
+                        "play_asset_id": ex0.get("play_asset_id", ""),
+                        "play_asset_name": ex0.get("play_asset_name", ""),
+                        "play_asset_subtag_ids": ex0.get("play_asset_subtag_ids", ""),
+                        "play_asset_subtag_names": ex0.get("play_asset_subtag_names", ""),
+                        "play_asset_novelty_label": ex0.get("play_asset_novelty_label", ""),
+                        "play_asset_match_source": ex0.get("play_asset_match_source", ""),
+                        "play_asset_classification_reason": ex0.get("play_asset_classification_reason", ""),
                     },
                 )
             else:
@@ -2049,28 +2209,6 @@ def get_deduped_items_for_analysis(
     return deduped_items, report
 
 
-# ---------------------------------------------------------------------------
-# 语义嵌入：存储与查询
-# ---------------------------------------------------------------------------
-SEMANTIC_DEDUP_THRESHOLD = 0.92  # cosine similarity 阈值
-
-def upsert_analysis_embedding(ad_key: str, embedding_blob: bytes) -> bool:
-    """将分析文本的嵌入向量写入 creative_library。"""
-    init_db()
-    conn = _get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE creative_library SET analysis_embedding = ?, "
-            "updated_at_local = datetime('now','localtime') WHERE ad_key = ?",
-            (embedding_blob, ad_key),
-        )
-        conn.commit()
-        return cur.rowcount > 0
-    finally:
-        conn.close()
-
-
 def upsert_effect_one_liner_embedding(ad_key: str, embedding_blob: bytes) -> bool:
     """将 effect_one_liner 的嵌入向量写入 creative_library。"""
     init_db()
@@ -2086,113 +2224,6 @@ def upsert_effect_one_liner_embedding(ad_key: str, embedding_blob: bytes) -> boo
         return cur.rowcount > 0
     finally:
         conn.close()
-
-
-def load_embeddings_for_crossday(
-    target_date: str,
-    appid_filter: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    加载 creative_library 中「早于 target_date」且有嵌入向量的记录。
-    返回 [{ad_key, appid, analysis_embedding(bytes), first_target_date}]。
-    """
-    init_db()
-    conn = _get_conn()
-    try:
-        cur = conn.cursor()
-        sql = """
-        SELECT ad_key, appid, analysis_embedding, first_target_date
-        FROM creative_library
-        WHERE first_target_date < ?
-          AND first_target_date IS NOT NULL
-          AND analysis_embedding IS NOT NULL
-        """
-        params: list = [target_date]
-        if appid_filter:
-            sql += " AND appid = ?"
-            params.append(appid_filter)
-        cur.execute(sql, params)
-        return [
-            {
-                "ad_key": r["ad_key"],
-                "appid": r["appid"],
-                "analysis_embedding": bytes(r["analysis_embedding"]),
-                "first_target_date": r["first_target_date"],
-            }
-            for r in cur.fetchall()
-            if r["analysis_embedding"]
-        ]
-    finally:
-        conn.close()
-
-
-def semantic_crossday_filter(
-    target_date: str,
-    items_with_analysis: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    语义嵌入去重：对已有 analysis 的素材，与历史嵌入做 cosine similarity 比较。
-    仅在同 appid 内比较。
-    返回 (kept_items, semantic_removed)。
-    """
-    from ua_workflows.shared.llm.client import bytes_to_embedding, call_embedding, cosine_similarity, embedding_to_bytes
-
-    init_db()
-    kept: List[Dict[str, Any]] = []
-    removed: List[Dict[str, Any]] = []
-
-    by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for it in items_with_analysis:
-        appid = str(it.get("appid") or "").strip()
-        by_app[appid].append(it)
-
-    for appid, bucket in by_app.items():
-        hist = load_embeddings_for_crossday(target_date, appid_filter=appid if appid else None)
-        if not hist:
-            kept.extend(bucket)
-            continue
-
-        hist_vecs = [(h["ad_key"], h["first_target_date"], bytes_to_embedding(h["analysis_embedding"])) for h in hist]
-
-        for it in bucket:
-            c = it.get("creative") or {}
-            ad_key = str(c.get("ad_key") or "").strip()
-            analysis_text = str(it.get("_analysis_text") or "").strip()
-            if not analysis_text or not ad_key:
-                kept.append(it)
-                continue
-
-            try:
-                vec = call_embedding(analysis_text[:2000])
-            except Exception as e:
-                print(f"[semantic-dedup] embedding failed ad_key={ad_key[:12]}: {e}")
-                kept.append(it)
-                continue
-
-            upsert_analysis_embedding(ad_key, embedding_to_bytes(vec))
-
-            best_sim = 0.0
-            best_match = ""
-            best_date = ""
-            for h_ak, h_dt, h_vec in hist_vecs:
-                sim = cosine_similarity(vec, h_vec)
-                if sim > best_sim:
-                    best_sim = sim
-                    best_match = h_ak
-                    best_date = h_dt
-
-            if best_sim >= SEMANTIC_DEDUP_THRESHOLD:
-                removed.append({
-                    "ad_key": ad_key,
-                    "reason": f"semantic(sim={best_sim:.3f})",
-                    "matched_ad_key": best_match,
-                    "matched_date": best_date,
-                    "appid": appid,
-                })
-            else:
-                kept.append(it)
-
-    return kept, removed
 
 
 # ---------------------------------------------------------------------------
@@ -3786,6 +3817,8 @@ def load_new_creatives_for_date(
             SELECT cl.ad_key, cl.product, cl.appid, cl.platform, cl.creative_type,
                    cl.title, cl.best_heat, cl.best_impression, cl.best_all_exposure_value,
                    cl.effect_one_liner, cl.play_fingerprint, cl.differentiator,
+                   cl.play_asset_id, cl.play_asset_name, cl.play_asset_subtag_ids, cl.play_asset_subtag_names,
+                   cl.play_asset_novelty_label, cl.play_asset_match_source, cl.play_asset_classification_reason,
                    cl.first_target_date, cl.dedup_group_id,
                    cl.preview_img_url, cl.video_url, cl.video_duration
             FROM creative_library cl

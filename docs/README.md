@@ -8,6 +8,7 @@
 | [cron-schedules.md](./cron-schedules.md) | macOS 定时任务（crontab）、日志路径、避让原则与注意事项     |
 | [workflows.md](./workflows.md)           | 三条生产工作流职责、入口脚本、与 `ua_workflows/` 的对应关系 |
 | [setup-and-data.md](./setup-and-data.md) | 环境、`.env`、SQLite 与 `data/`、换机迁移历史库     |
+| [ve-play-assets.md](./ve-play-assets.md) | VE 玩法资产库与飞书云文档的双向同步方式                 |
 
 
 详细变更历史仍以仓库根目录 [AGENTS.md](../AGENTS.md) 为准。

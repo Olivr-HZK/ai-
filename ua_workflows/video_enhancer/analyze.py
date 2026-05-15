@@ -5,16 +5,17 @@
 data/video_enhancer_pipeline.db 的 daily_creative_insights；可用 --no-db 或环境变量
 VIDEO_ENHANCER_ANALYSIS_NO_DB=1 关闭。
 
-灵感分析为**纯文本结论**（或模型若输出 JSON，仅取其中 `analysis` 字段）。「我方已投」类标签由主流程中
-`launched_effects_db` 等在分析**之后**统一打标，本脚本不再做套路筛选。
+VE 灵感分析默认只产出结构化字段（Hook、脚本、核心卖点、玩法指纹、差异点、玩法资产/变种判断、风险标签/等级）。
+`analysis` 仍会保留一份由结构化字段拼出的短摘要，供旧链路成功判定与兼容展示使用。「我方已投」
+类标签由主流程中 `launched_effects_db` 等在分析**之后**统一打标，本脚本不再做套路筛选。
 
 并发：环境变量 VIDEO_ANALYSIS_WORKERS（默认 3）或命令行 --workers，多条素材并行调用多模态（缩短总墙钟时间；注意 API 限流）。
 
-多模态可调用成功但**正文解析为空**时（或模型只返回空 JSON/空 analysis）：
+多模态可调用成功但**结构化字段解析为空**时（或模型只返回空 JSON/空 analysis）：
 - `VIDEO_ANALYSIS_VISION_RETRY_ON_EMPTY=1`：同一条再请求一次多模态（加「禁止空」提示）；默认 0
 - `VIDEO_ANALYSIS_EMPTY_ENRICH=1`（默认 1）：再调**纯文本**大模型，仅根据标题/文案/指标写补充分析（并带前缀说明置信度有限）
-- 若仍无正文：输出 `inspiration_enrichment=minimal_stub` 的元数据摘记
-- 若返回像 JSON 但**无法解析**或 **`analysis` 无效/过短**：`VIDEO_ANALYSIS_MULTIMODAL_FORMAT_RETRIES=3`（默认 3，0=关闭）对**同一条依次多模态重试**（不依赖纯文本收束，避免长文被「格式修复」截断/改写丢失）。仍失败且 `VIDEO_ANALYSIS_JSON_REPAIR=1` 时，才用**纯文本**做最后兜底（默认关闭；`inspiration_enrichment=json_repair`）
+- 若仍无结构化内容：输出 `inspiration_enrichment=minimal_stub` 的元数据摘记
+- 若返回像 JSON 但**无法解析**或 **`analysis` 无效/过短**：`VIDEO_ANALYSIS_MULTIMODAL_FORMAT_RETRIES=3`（默认 3，0=关闭）对**同一条依次多模态重试**。仍失败且 `VIDEO_ANALYSIS_JSON_REPAIR=1` 时，才用**纯文本**做最后兜底（默认关闭；`inspiration_enrichment=json_repair`）
 - `VIDEO_ANALYSIS_PARALLEL_SHARDS=1`（默认 1，最大 5）：**首次**多模态可并发 N 路；**格式重试**为串行单路，不叠加 fanout
 
 灵感准入：纯图 / mp4(等)直链 / 真实 TikTok 外链（需 TIKTOK_YTDLP_RESOLVE=1 + yt-dlp 预处理）；tiktok.com/@test/ 为假链，仅视频路径不可分析（有封面可走图）。详见 scripts/tiktok_video_resolve.py。
@@ -42,6 +43,7 @@ from dotenv import load_dotenv
 
 from ua_workflows.shared.config import DATA_DIR
 from ua_workflows.shared.db.video_enhancer import upsert_single_daily_creative_insight
+from ua_workflows.video_enhancer.play_assets import format_play_asset_catalog_for_prompt
 
 try:
     from ua_workflows.shared.db.arrow2 import upsert_arrow2_daily_insight_full
@@ -157,10 +159,10 @@ def _substantial_inspiration_body(s: str) -> bool:
 
 def _format_retry_user_note(attempt: int) -> str:
     return (
-        f"\n\n【重要·多模态重试 第{attempt}次】上一条**无法稳定解析**为有效长正文（如 JSON 不合法、"
-        "缺 `analysis` 或过短、杂糅等）。请按原题**原样打满**各小节与编号要求；"
-        "若用 JSON 包装则须**完整合法**且 `analysis` 为**完整长文**（不少于约 30 字），"
-        "禁止空字段、禁止用省略/摘要代替要点。"
+        f"\n\n【重要·多模态重试 第{attempt}次】上一条**无法稳定解析**为有效结构化字段（如 JSON 不合法、"
+        "缺少固定字段、字段为空或杂糅等）。请按原题固定格式输出完整字段；"
+        "若用 JSON 包装则须**完整合法**且 `analysis` 字段里包含所有固定字段文本，"
+        "禁止空字段、禁止用省略号代替要点。"
     )
 
 
@@ -185,14 +187,14 @@ def _needs_json_or_format_repair(raw: str, parsed: str) -> bool:
 
 
 def _repair_inspiration_raw_with_text_llm(raw: str) -> str:
-    """纯文本再投：把破碎 JSON / 杂糅输出收成合法 JSON 或抽出长分析。"""
+    """纯文本再投：把破碎 JSON / 杂糅输出收成合法 JSON 或抽出结构化分析。"""
     sys_t = (
         "你是数据格式整理助手。用户会给你模型原始回复，"
         "可能不是合法 JSON、或 JSON 中 analysis 为空/过短。请**只**输出一个 JSON 对象，"
-        "有且仅有一个键 `analysis`（字符串），值为完整、结构化的中文素材分析长文，"
-        "与日常灵感分析 1～6 点类似；不要 markdown 代码围栏、不要其他键。"
+        "有且仅有一个键 `analysis`（字符串），值为完整的中文结构化素材分析字段文本；"
+        "不要 markdown 代码围栏、不要其他键。"
     )
-    u = "模型原始输出如下，请恢复或合理补全为上述 JSON（须保留与合并全部实质信息，禁止无故删减长文）：\n\n" + (raw or "")
+    u = "模型原始输出如下，请恢复或合理补全为上述 JSON（须保留与合并全部实质信息，禁止无故删减字段）：\n\n" + (raw or "")
     return _call_llm_text(sys_t, u)
 
 
@@ -325,9 +327,11 @@ def _arrow2_fixed_footer() -> str:
 
 
 def _ve_fixed_footer() -> str:
-    """VE（视频增强）流程的 footer：核心卖点。"""
+    """VE（视频增强）流程的结构化输出要求。"""
     return (
-        "\n7) 在全文最后**必须**追加七行（固定格式，便于系统解析，每行独立一行）：\n"
+        "\n请先根据下方「玩法资产库候选清单」判断素材属于哪个稳定玩法资产/变种；"
+        "若没有任何资产能覆盖核心玩法，标为新玩法；若资产能覆盖但没有合适变种，标为新变种。\n"
+        "请**仅输出以下十三行**（固定格式，每行独立一行），不要输出编号正文、JSON、Markdown 代码围栏或其他解释：\n"
         "【Hook解析】用一句中文（约20~40字）概括最前段抓人机制：先写画面/台词触发点，再写制造的悬念、痛点或承诺；"
         "避免泛泛写「吸引用户注意」。若开头无明确 Hook，写「无明确强 Hook」。\n"
         "【脚本口播】提炼视频中的旁白、口播、字幕或画中文字脚本；按出现顺序用短句串联，保留可借鉴的表达。"
@@ -338,12 +342,19 @@ def _ve_fixed_footer() -> str:
         "等——先写具体特效/玩法，必要时加展现形式；如果是常见修图/美颜/前后对比，必须补充可区分的场景、"
         "对象、风格或呈现方式（如派对、泳装、商务头像、分屏滑动、宝丽来名人合影），避免只写「AI修图」「AI美颜」"
         "这类过泛描述；禁止写投放建议，只描述素材本身做了什么。\n"
-        "【玩法指纹】给机器去重用，用一句中文（约8~18字）写「输入对象 + 关键变换 + 输出形态 + 不可省略视觉元素」；"
+        "【玩法指纹】给机器去重用，用一句中文（约8~18字）写稳定、可复用的「输入对象 + 关键变换 + 输出大类」；"
+        "先归纳玩法机制，再决定是否保留视觉元素。不要因为热点话题、运动项目、节日、发型、服装、名人同款、画面文案不同就拆成新玩法；"
+        "这些只影响素材差异时放到【差异点】。只有缺少该视觉元素会导致玩法机制本身改变时，才写进玩法指纹。"
         "不要写一键、AI、免费、好看、震撼、抓眼等营销词；不要写投放建议、Hook、脚本。"
-        "如果不同视觉元素会让玩法明显不同，必须保留该元素，例如：透明足球、母亲节、逝者纪念、宝丽来名人合影、手绘素描、涂鸦、骑恐龙、火焰变身。"
-        "示例：「双人照片融合生成温馨合影」「静态照片生成透明足球动态视频」「真人照片生成手绘素描头像」「老照片修复生成动态视频」。\n"
+        "示例：「单人照片生成赛事现场视频」「单人照片融入灾难电影场景」「自拍生成生日主题写真」「双人照片融合生成温馨合影」「老照片修复生成动态视频」。\n"
         "【差异点】写这条素材相对同类玩法不可省略的差异点，多个用顿号连接；没有明显差异写「无」。"
         "例如：亲属感、母亲节、逝者纪念、透明足球容器、手绘素描、涂鸦风、宝丽来名人合影、分屏滑动、派对场景。\n"
+        "【玩法资产ID】若命中已有玩法资产，只能写候选清单中的 asset_id；若不是任何已有资产，写 new_play。\n"
+        "【玩法资产名称】若命中已有资产，写候选清单中的资产中文名；若是新玩法，写一个稳定、泛化的中文玩法名，不要写产品名或单个热点标题。\n"
+        "【玩法变种ID】若命中已有变种，写候选清单中的 tag_id，多个用顿号；若已有资产但没有合适变种，写 new_variant；若是新玩法，写 new_play。\n"
+        "【玩法变种名称】若命中已有变种，写候选清单中的变种中文名，多个用顿号；若是新变种/新玩法，写一个稳定的中文变种名；若无变种，写 基础变体。\n"
+        "【玩法归类】只选一项：已沉淀玩法、新变种、新玩法、不确定。已有资产+已有变种=已沉淀玩法；已有资产+new_variant=新变种；new_play=新玩法。\n"
+        "【玩法判断理由】一句中文说明为什么这样归类，重点比较「输入对象、关键变换、输出形态」是否与资产库一致。\n"
         "【风险标签】只从以下标签中选择，多个用顿号连接；若无则写「无明显风险」："
         "成人色情风险、擦边露肤风险、版权名人风险、产品不适配风险、低质素材风险、无明显风险。"
         "只有画面/文案实际存在色情、裸体、露点、明显性行为或成人视频导向时，才写「成人色情风险」；"
@@ -378,15 +389,18 @@ def _infer_risk_level_from_tags(tags: list[str]) -> str:
     return ""
 
 
-def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str, str, str, str, str, str, str]:
-    """从分析正文移除末段固定行；解析素材类型、一句话说明、特效玩法；旧版【游戏素材标签】仍兼容为 llm_tags。
+def _strip_arrow2_footer_lines(
+    text: str,
+) -> tuple[str, list[str], str, str, str, str, str, str, str, str, str, str, str, str, str, str, str]:
+    """从模型输出移除固定字段行；解析素材类型、一句话说明、特效玩法；旧版【游戏素材标签】仍兼容为 llm_tags。
 
     返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner,
-    voiceover_script, risk_level, play_fingerprint, differentiator)。
+    voiceover_script, risk_level, play_fingerprint, differentiator, play_asset_id, play_asset_name,
+    play_asset_subtag_ids, play_asset_subtag_names, play_asset_novelty_label, play_asset_reason)。
     """
     raw = (text or "").strip()
     if not raw:
-        return "", [], "", "", "", "", "", "", ""
+        return "", [], "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
     lines = raw.splitlines()
     n = len(lines)
     legacy_tags: list[str] = []
@@ -400,6 +414,12 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
     risk_level = ""
     play_fingerprint = ""
     differentiator = ""
+    play_asset_id = ""
+    play_asset_name = ""
+    play_asset_subtag_ids = ""
+    play_asset_subtag_names = ""
+    play_asset_novelty_label = ""
+    play_asset_reason = ""
     risk_tag_seen = False
     remove_idx: set[int] = set()
 
@@ -479,6 +499,32 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
             rest, i = _read_block(i, prefix)
             differentiator = rest[:160]
             continue
+        if s.startswith("【玩法资产ID】") or s.startswith("【玩法资产 ID】"):
+            prefix = "【玩法资产ID】" if s.startswith("【玩法资产ID】") else "【玩法资产 ID】"
+            rest, i = _read_block(i, prefix)
+            play_asset_id = rest[:120]
+            continue
+        if s.startswith("【玩法资产名称】"):
+            rest, i = _read_block(i, "【玩法资产名称】")
+            play_asset_name = rest[:120]
+            continue
+        if s.startswith("【玩法变种ID】") or s.startswith("【玩法变种 ID】"):
+            prefix = "【玩法变种ID】" if s.startswith("【玩法变种ID】") else "【玩法变种 ID】"
+            rest, i = _read_block(i, prefix)
+            play_asset_subtag_ids = rest[:240]
+            continue
+        if s.startswith("【玩法变种名称】"):
+            rest, i = _read_block(i, "【玩法变种名称】")
+            play_asset_subtag_names = rest[:240]
+            continue
+        if s.startswith("【玩法归类】"):
+            rest, i = _read_block(i, "【玩法归类】")
+            play_asset_novelty_label = rest[:40]
+            continue
+        if s.startswith("【玩法判断理由】"):
+            rest, i = _read_block(i, "【玩法判断理由】")
+            play_asset_reason = rest[:240]
+            continue
         if s.startswith("【风险标签】"):
             rest, i = _read_block(i, "【风险标签】")
             risk_tag_seen = True
@@ -539,6 +585,12 @@ def _strip_arrow2_footer_lines(text: str) -> tuple[str, list[str], str, str, str
         risk_level.strip(),
         play_fingerprint.strip(),
         differentiator.strip(),
+        play_asset_id.strip(),
+        play_asset_name.strip(),
+        play_asset_subtag_ids.strip(),
+        play_asset_subtag_names.strip(),
+        play_asset_novelty_label.strip(),
+        play_asset_reason.strip(),
     )
 
 
@@ -709,6 +761,7 @@ def _build_video_prompt(
     if arrow2:
         return _arrow2_one_liner_prompt(item, creative)
     foot = _ve_fixed_footer()
+    asset_catalog = format_play_asset_catalog_for_prompt()
     return f"""
 以下是一条竞品 UA 视频素材：
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
@@ -725,13 +778,11 @@ def _build_video_prompt(
 - 素材标签（系统）: {_format_pipeline_tags(creative)}
 - 广大大脚本/字幕/口播提取（若有）: {_format_script_metadata(creative)}
 
-请输出，整体保持精炼，避免逐帧赘述：
-1) 广告创意拆解：2~3 句说明核心机制、画面结构和转化承诺
-2) Hook（前几秒抓人点）：重点解析开头 1~3 秒的画面/台词/字幕如何制造悬念、痛点、反差或结果承诺
-3) 脚本/口播提炼：若能识别旁白、字幕、画中文字或 CTA，请按顺序提炼成可复用文案短句；若无则写「无明确口播/字幕」
-4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议；最多 2 点）
-5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球、版权/名人肖像、产品功能不适配或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度、版权或产品适配），禁止色情细节描写
-6) 语言：全文仅使用汉字、英文字母与常规标点数字；遇外语口播/字幕/标题时用中文概括含义，勿整段保留阿拉伯文等非中英原文
+玩法资产库候选清单（判断【玩法资产ID】和【玩法变种ID】只能引用这里的 ID；不匹配才写 new_play/new_variant）：
+{asset_catalog}
+
+请结合视频画面与文案/标题，直接完成结构化字段；整体保持精炼，避免逐帧赘述。
+全文仅使用汉字、英文字母与常规标点数字；遇外语口播/字幕/标题时用中文概括含义，勿整段保留阿拉伯文等非中英原文。
 {foot}
 """.strip()
 
@@ -746,6 +797,7 @@ def _build_image_prompt(
     if arrow2:
         return _arrow2_one_liner_prompt(item, creative)
     foot = _ve_fixed_footer()
+    asset_catalog = format_play_asset_catalog_for_prompt()
     return f"""
 以下是一条竞品 UA 图片素材：
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
@@ -760,13 +812,11 @@ def _build_image_prompt(
 - 热度: {creative.get('heat', 0)}
 - 素材标签（系统）: {_format_pipeline_tags(creative)}
 
-请结合图片画面与文案/标题，精炼输出，避免细节堆砌：
-1) 广告创意拆解（构图、视觉焦点、Before/After 对比、文字排版等）
-2) 视觉钩子（第一眼抓人的核心元素）
-3) 画面文案提炼：若能识别画中文字或 CTA，请按顺序提炼成可复用文案短句；若无则写「无明确画面文案」
-4) 可复用观察（仅总结素材表现与创意机制，不输出 UA 投放建议；最多 2 点）
-5) 合规与风险提示：是否涉及明显露肤、性暗示、擦边博眼球、版权/名人肖像、产品功能不适配或易触发审核的画面/文案；若无则写「未观察到明显高风险」；若有则简述程度与投放侧注意点（平台审核、年龄定向、素材尺度、版权或产品适配），禁止色情细节描写
-6) 语言：全文仅使用汉字、英文字母与常规标点数字；遇外语标题/画中字时用中文概括含义，勿整段保留阿拉伯文等非中英原文
+玩法资产库候选清单（判断【玩法资产ID】和【玩法变种ID】只能引用这里的 ID；不匹配才写 new_play/new_variant）：
+{asset_catalog}
+
+请结合图片画面与文案/标题，直接完成结构化字段；整体保持精炼，避免细节堆砌。
+全文仅使用汉字、英文字母与常规标点数字；遇外语标题/画中字时用中文概括含义，勿整段保留阿拉伯文等非中英原文。
 {foot}
 """.strip()
 
@@ -791,7 +841,7 @@ def _try_parse_json_object(text: str) -> Any:
 
 def _parse_inspiration_response(raw: str) -> str:
     """
-    从单次 LLM 回复中取分析正文：若为 JSON 且含 analysis 则取该字段，否则整段作为正文。
+    从单次 LLM 回复中取模型输出：若为 JSON 且含 analysis 则取该字段，否则整段作为输出。
     """
     t = (raw or "").strip()
     if not t:
@@ -822,10 +872,16 @@ def _build_text_only_inspiration_prompt(
     arrow2: bool = False,
 ) -> str:
     foot = _arrow2_fixed_footer() if arrow2 else _ve_fixed_footer()
+    asset_catalog = "" if arrow2 else format_play_asset_catalog_for_prompt()
+    asset_catalog_block = (
+        "\n\n玩法资产库候选清单（判断【玩法资产ID】和【玩法变种ID】只能引用这里的 ID；不匹配才写 new_play/new_variant）：\n"
+        + asset_catalog
+        if asset_catalog
+        else ""
+    )
     if creative_type == "video":
         return f"""
-多模态接口未返回可解析的有效分析。请**仅根据**以下元数据作合理推断（首句须点明：因未见到画面，以下为基于文案/数据的推测）；
-按常规视频分析**编号 1～6 节**写全，**每节至少 1～2 句中文**，**总字数不少于 200 字**。
+多模态接口未返回可解析的有效结构化字段。请**仅根据**以下元数据作合理推断；如果没有看到画面，请在相关字段里体现为「基于文案推测」。
 
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
 - 平台: {creative.get('platform', '')}
@@ -835,11 +891,12 @@ def _build_text_only_inspiration_prompt(
 - 展示/参考链: {display_link or '无'}
 - 展示估值/人气/热度: {creative.get('impression', 0)} / {creative.get('all_exposure_value', 0)} / {creative.get('heat', 0)}
 - 素材标签: {_format_pipeline_tags(creative)}
+{asset_catalog_block}
 
 禁止只输出空内容、只输出「无」或空 JSON。{foot}
 """.strip()
     return f"""
-多模态接口未返回可解析的有效分析。请**仅根据**以下元数据对「图片类」素材作合理推断；按常规**图片分析编号结构**写全，**每节至少 1～2 句中文**，**总字数不少于 150 字**。
+多模态接口未返回可解析的有效结构化字段。请**仅根据**以下元数据对「图片类」素材作合理推断；如果没有看到画面，请在相关字段里体现为「基于文案推测」。
 
 - 分类/产品: {item.get('category', '')} / {item.get('product', '')}
 - 平台: {creative.get('platform', '')}
@@ -847,6 +904,7 @@ def _build_text_only_inspiration_prompt(
 - 文案: {creative.get('body', '') or '无'}
 - 参考图/封面: {image_url or '无'}
 - 展示估值/人气: {creative.get('impression', 0)} / {creative.get('all_exposure_value', 0)}
+{asset_catalog_block}
 
 禁止只输出空内容。{foot}
 """.strip()
@@ -854,12 +912,58 @@ def _build_text_only_inspiration_prompt(
 
 def _minimal_inspiration_stub(item: Dict[str, Any], creative: Dict[str, Any]) -> str:
     return (
-        "【系统补记】多模态与文本补全均未返回可解析正文，以下为元数据摘要做人工审核依据：\n"
+        "【系统补记】多模态与文本补全均未返回可解析结构化字段，以下为元数据摘要做人工审核依据：\n"
         f"- 标题: {str(creative.get('title') or '无')[:500]}\n"
         f"- 文案: {str(creative.get('body') or '无')[:800]}\n"
         f"- 产品/平台: {item.get('product', '')} / {creative.get('platform', '')}\n"
         f"- impression: {creative.get('impression', 0)}"
     )
+
+
+def _build_ve_structured_analysis_summary(
+    *,
+    hook_one_liner: str,
+    voiceover_script: str,
+    effect_one_liner: str,
+    play_fingerprint: str,
+    differentiator: str,
+    play_asset_name: str,
+    play_asset_subtag_names: str,
+    play_asset_novelty_label: str,
+    play_asset_reason: str,
+    material_tags: list[str],
+    risk_level: str,
+) -> str:
+    """Keep the legacy `analysis` field non-empty without asking the model for a long正文."""
+    parts: list[str] = []
+    if effect_one_liner:
+        parts.append(f"核心卖点：{effect_one_liner}")
+    if play_fingerprint:
+        parts.append(f"玩法指纹：{play_fingerprint}")
+    if differentiator:
+        parts.append(f"差异点：{differentiator}")
+    if play_asset_name or play_asset_subtag_names or play_asset_novelty_label:
+        asset_bits = [
+            x
+            for x in (
+                f"资产={play_asset_name}" if play_asset_name else "",
+                f"变种={play_asset_subtag_names}" if play_asset_subtag_names else "",
+                f"新旧={play_asset_novelty_label}" if play_asset_novelty_label else "",
+            )
+            if x
+        ]
+        parts.append("玩法归类：" + "；".join(asset_bits))
+    if play_asset_reason:
+        parts.append(f"玩法判断理由：{play_asset_reason}")
+    if hook_one_liner:
+        parts.append(f"Hook解析：{hook_one_liner}")
+    if voiceover_script:
+        parts.append(f"脚本口播：{voiceover_script}")
+    risk_bits = [t for t in material_tags if t and t != "无明显风险"]
+    if risk_level or risk_bits:
+        risk_text = "、".join(risk_bits) if risk_bits else "无明显风险"
+        parts.append(f"风险：{risk_level or '低风险'} / {risk_text}")
+    return "\n".join(parts).strip()
 
 
 def _apply_empty_multimodal_enrichment(
@@ -878,7 +982,7 @@ def _apply_empty_multimodal_enrichment(
     arrow2: bool,
 ) -> tuple[str, str]:
     """
-    若多模态未报 [ERROR] 但解析后无正文，则：可选多模态重试 -> 纯文本补全 -> 元数据硬兜底。
+    若多模态未报 [ERROR] 但解析后无结构化内容，则：可选多模态重试 -> 纯文本补全 -> 元数据硬兜底。
     返回 (新 analysis, inspiration_enrichment 标签)。
     """
     st = (analysis or "").strip()
@@ -891,8 +995,8 @@ def _apply_empty_multimodal_enrichment(
         return analysis, "none"
 
     vision_note = (
-        "\n\n【重要】上一条未产生**有效可解析**的分析正文。请按原要求写满各小节，"
-        "每节有实质内容；禁止空响应、禁止仅输出 {} 或空 JSON、禁止 analysis 字段为空。"
+        "\n\n【重要】上一条未产生**有效可解析**的结构化字段。请按原要求输出固定字段，"
+        "每个字段有实质内容；禁止空响应、禁止仅输出 {} 或空 JSON、禁止 analysis 字段为空。"
     )
 
     if _vision_retry_on_empty_enabled():
@@ -1081,6 +1185,12 @@ def _analyze_one_item(
     effect_one_liner = ""
     play_fingerprint = ""
     differentiator = ""
+    play_asset_id = ""
+    play_asset_name = ""
+    play_asset_subtag_ids = ""
+    play_asset_subtag_names = ""
+    play_asset_novelty_label = ""
+    play_asset_reason = ""
     inspiration_enrich: str = "none"
     json_repair_applied = False
     work: str = str(raw_out or "")
@@ -1157,6 +1267,12 @@ def _analyze_one_item(
                 _risk_level,
                 _play_fingerprint,
                 _differentiator,
+                _play_asset_id,
+                _play_asset_name,
+                _play_asset_subtag_ids,
+                _play_asset_subtag_names,
+                _play_asset_novelty_label,
+                _play_asset_reason,
             ) = _strip_arrow2_footer_lines(raw_text)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
             # Arrow2 精简模式下 analysis 正文可能为空（只有 footer），用原始输出作为入库文本
@@ -1175,10 +1291,30 @@ def _analyze_one_item(
                 risk_level,
                 play_fingerprint,
                 differentiator,
+                play_asset_id,
+                play_asset_name,
+                play_asset_subtag_ids,
+                play_asset_subtag_names,
+                play_asset_novelty_label,
+                play_asset_reason,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_ve(creative, llm_tags)
             if not risk_level:
                 risk_level = _infer_risk_level_from_tags(material_tags)
+            if not analysis.strip():
+                analysis = _build_ve_structured_analysis_summary(
+                    hook_one_liner=hook_one_liner,
+                    voiceover_script=voiceover_script,
+                    effect_one_liner=effect_one_liner,
+                    play_fingerprint=play_fingerprint,
+                    differentiator=differentiator,
+                    play_asset_name=play_asset_name,
+                    play_asset_subtag_names=play_asset_subtag_names,
+                    play_asset_novelty_label=play_asset_novelty_label,
+                    play_asset_reason=play_asset_reason,
+                    material_tags=material_tags,
+                    risk_level=risk_level,
+                )
         analysis, inspiration_enrich = _apply_empty_multimodal_enrichment(
             analysis,
             work,
@@ -1219,6 +1355,12 @@ def _analyze_one_item(
                 _risk_level,
                 _play_fingerprint,
                 _differentiator,
+                _play_asset_id,
+                _play_asset_name,
+                _play_asset_subtag_ids,
+                _play_asset_subtag_names,
+                _play_asset_novelty_label,
+                _play_asset_reason,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
         if inspiration_enrich != "none" and not arrow2:
@@ -1234,12 +1376,47 @@ def _analyze_one_item(
                 risk_level,
                 play_fingerprint,
                 differentiator,
+                play_asset_id,
+                play_asset_name,
+                play_asset_subtag_ids,
+                play_asset_subtag_names,
+                play_asset_novelty_label,
+                play_asset_reason,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_ve(creative, llm_tags)
             if not risk_level:
                 risk_level = _infer_risk_level_from_tags(material_tags)
+            if not analysis.strip():
+                analysis = _build_ve_structured_analysis_summary(
+                    hook_one_liner=hook_one_liner,
+                    voiceover_script=voiceover_script,
+                    effect_one_liner=effect_one_liner,
+                    play_fingerprint=play_fingerprint,
+                    differentiator=differentiator,
+                    play_asset_name=play_asset_name,
+                    play_asset_subtag_names=play_asset_subtag_names,
+                    play_asset_novelty_label=play_asset_novelty_label,
+                    play_asset_reason=play_asset_reason,
+                    material_tags=material_tags,
+                    risk_level=risk_level,
+                )
     else:
         analysis = work
+
+    if not arrow2 and not str(analysis or "").strip():
+        analysis = _build_ve_structured_analysis_summary(
+            hook_one_liner=hook_one_liner,
+            voiceover_script=voiceover_script,
+            effect_one_liner=effect_one_liner,
+            play_fingerprint=play_fingerprint,
+            differentiator=differentiator,
+            play_asset_name=play_asset_name,
+            play_asset_subtag_names=play_asset_subtag_names,
+            play_asset_novelty_label=play_asset_novelty_label,
+            play_asset_reason=play_asset_reason,
+            material_tags=material_tags,
+            risk_level=risk_level,
+        )
 
     row = {
         "category": item.get("category"),
@@ -1275,6 +1452,13 @@ def _analyze_one_item(
         "effect_one_liner": effect_one_liner,
         "play_fingerprint": play_fingerprint,
         "differentiator": differentiator,
+        "play_asset_id": play_asset_id,
+        "play_asset_name": play_asset_name,
+        "play_asset_subtag_ids": play_asset_subtag_ids,
+        "play_asset_subtag_names": play_asset_subtag_names,
+        "play_asset_novelty_label": play_asset_novelty_label,
+        "play_asset_classification_reason": play_asset_reason,
+        "play_asset_match_source": "ai" if (play_asset_id or play_asset_name or play_asset_novelty_label) else "",
         "exclude_from_bitable": exclude_from_bitable,
         "exclude_from_cluster": exclude_from_cluster,
         "_orig_idx": idx,
@@ -1303,6 +1487,13 @@ def _analyze_one_item(
                         "effect_one_liner": effect_one_liner,
                         "play_fingerprint": play_fingerprint,
                         "differentiator": differentiator,
+                        "play_asset_id": play_asset_id,
+                        "play_asset_name": play_asset_name,
+                        "play_asset_subtag_ids": play_asset_subtag_ids,
+                        "play_asset_subtag_names": play_asset_subtag_names,
+                        "play_asset_novelty_label": play_asset_novelty_label,
+                        "play_asset_classification_reason": play_asset_reason,
+                        "play_asset_match_source": "ai" if (play_asset_id or play_asset_name or play_asset_novelty_label) else "",
                     },
                 )
             if ok:
@@ -1491,6 +1682,13 @@ def main() -> None:
             "[arrow2] ads_type=7 试玩：跳过多模态与单条 UA；飞书「试玩链接」列写 HTML（非「视频链接」）",
             flush=True,
         )
+    else:
+        try:
+            from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
+
+            maybe_pull_play_asset_doc()
+        except Exception as e:
+            print(f"[play-assets-doc] 分析前同步玩法资产库失败，使用本地 JSON：{e}", flush=True)
 
     if tiktok_ytdlp_resolve_enabled():
         print(
