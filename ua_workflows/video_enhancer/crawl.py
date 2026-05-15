@@ -1,6 +1,8 @@
 """
-测试：跑 video enhancer 类下的竞品（仅排除 Hula），抓当前 7 天窗口内素材，不入库，写两个 JSON。
-可按日期筛选 target_date；默认不再做单产品硬截断，后续依赖封面/玩法/同步前规则筛选。
+测试：跑 video enhancer 类下的竞品（仅排除 Hula），不入库，写两个 JSON。
+默认使用「UI 指定日期筛选 + 页面卡片逐张点击 detail-v2 + 本地 first_seen 校验」的主路径，
+和 Arrow2 最新素材点卡口径对齐；旧 7 天池子仅保留为 --no-ui-date-range 调试回退。
+默认不再做单产品硬截断，后续依赖封面/玩法/同步前规则筛选。
 重投素材（resume_advertising_flag）一律不纳入。
 
 - 原始 JSON：按产品分组的完整创意列表（raw creative 对象）
@@ -141,6 +143,31 @@ async def main():
         default="",
         help="可选：输出文件前缀（默认沿用 test_video_enhancer_2_*）",
     )
+    parser.add_argument(
+        "--napi-list",
+        action="store_true",
+        help="调试回退：使用旧的 napi 列表结果为主，不逐张点击页面卡片 detail-v2。",
+    )
+    parser.add_argument(
+        "--ui-date-range",
+        action="store_true",
+        help="兼容参数：传入 --target-date 时默认已同步设置 UI 日期为 target_date ~ target_date。",
+    )
+    parser.add_argument(
+        "--no-ui-date-range",
+        action="store_true",
+        help="调试回退：传入 --target-date 时仍按旧口径先选 7天，再本地按 first_seen 筛目标日。",
+    )
+    parser.add_argument(
+        "--pause-per-product",
+        action="store_true",
+        help="调试检查：每个产品爬完后暂停，保持浏览器页面供人工检查。",
+    )
+    parser.add_argument(
+        "--keep-browser-open",
+        action="store_true",
+        help="调试检查：全部爬完并写出文件后保持浏览器打开，回车后才关闭。",
+    )
     args = parser.parse_args()
 
     selected_products = [x.strip() for x in (args.products or "").split(",") if x.strip()]
@@ -159,6 +186,15 @@ async def main():
         )
     else:
         print(f"[2] 不传 target_date：仅应用主工作流广告主过滤，返回当前抓取到的全部素材")
+    crawl_mode = "napi_list" if args.napi_list else "dom_detail_click"
+    print(f"[2] VE 爬取模式: {crawl_mode}")
+    ui_date_range = (
+        (args.target_date, args.target_date)
+        if args.target_date and not args.no_ui_date_range
+        else None
+    )
+    if ui_date_range:
+        print(f"[2] UI 日期范围: {ui_date_range[0]} ~ {ui_date_range[1]}")
 
     results = await run_batch(
         keywords=keywords,
@@ -166,6 +202,12 @@ async def main():
         is_tool=True,
         order_by="latest",
         use_popularity_top1=False,
+        detail_click_primary=not args.napi_list,
+        first_seen_target_ymd=args.target_date,
+        date_range=ui_date_range,
+        pause_per_keyword=bool(args.pause_per_product),
+        keep_browser_open=bool(args.keep_browser_open),
+        keyword_labels={c.appid: c.product for c in competitors},
     )
 
 # 应用与主工作流一致的筛选：广告主匹配 + 可选日期命中；重投一律去掉。
@@ -204,6 +246,7 @@ async def main():
             c
             for c in all_creatives
             if isinstance(c, dict)
+            and str(c.get("ad_key") or "").strip()
             and advertiser_matches_product(
                 str(c.get("advertiser_name") or c.get("page_name") or ""), comp.product or ""
             )
@@ -285,6 +328,8 @@ async def main():
     raw_path = DATA_DIR / f"{base}_raw.json"
     raw_payload = {
         "target_date": args.target_date,
+        "crawl_mode": crawl_mode,
+        "ui_date_range": list(ui_date_range) if ui_date_range else None,
         "total": len(raw_items),
         "competitors": [{"product": c.product, "appid": c.appid} for c in competitors],
         "items": raw_items,

@@ -59,12 +59,50 @@ class CrawlSmokeCliTest(unittest.TestCase):
         self.assertEqual(headed_env["DEBUG"], "1")
         self.assertNotIn("DEBUG", headless_env)
 
+    def test_video_enhancer_all_products_smoke_args_are_direct(self) -> None:
+        date = "2026-05-05"
+        output_prefix = "smoke_all"
+        args = ["--target-date", date, "--output-prefix", output_prefix, "--pause-per-product"]
+
+        self.assertEqual(
+            args,
+            ["--target-date", "2026-05-05", "--output-prefix", "smoke_all", "--pause-per-product"],
+        )
+
     def test_exposure_output_requires_successful_top10_dropdown(self) -> None:
         from ua_workflows.shared.crawl_smoke import exposure_attempt_succeeded
 
         self.assertTrue(exposure_attempt_succeeded("Top 创意下拉 ✓\n[raw] out.json"))
         self.assertFalse(exposure_attempt_succeeded("Top 创意下拉 ✗\n[raw] out.json"))
         self.assertFalse(exposure_attempt_succeeded("Top 创意下拉 ✓\nTraceback"))
+
+    def test_video_enhancer_db_extracts_card_detail_geo(self) -> None:
+        from ua_workflows.shared.db.video_enhancer import (
+            _extract_country_codes_from_creative,
+            _extract_geo_targeting_from_creative,
+        )
+
+        creative = {
+            "countries": ["USA", "SGP"],
+            "country_code": "JPN,KOR",
+            "areas": [{"code": "GBR", "name": "United Kingdom"}],
+            "heat": 12,
+            "all_exposure_value": 34,
+            "impression": 56,
+        }
+
+        self.assertEqual(
+            _extract_country_codes_from_creative(creative),
+            ["USA", "SGP", "JPN", "KOR"],
+        )
+        self.assertEqual(
+            _extract_geo_targeting_from_creative(creative),
+            {
+                "countries": ["USA", "SGP"],
+                "country_code": "JPN,KOR",
+                "areas": [{"code": "GBR", "name": "United Kingdom"}],
+            },
+        )
 
 
 if __name__ == "__main__":

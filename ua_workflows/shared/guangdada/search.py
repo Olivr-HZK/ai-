@@ -184,6 +184,145 @@ async def _click_day_span(page, day_span: str, log_prefix: str) -> bool:
     return bool(ok)
 
 
+def _normalize_date_range(date_range: object) -> tuple[str, str] | None:
+    start = ""
+    end = ""
+    if date_range is None:
+        return None
+    if isinstance(date_range, dict):
+        start = str(date_range.get("start") or date_range.get("start_date") or "").strip()
+        end = str(date_range.get("end") or date_range.get("end_date") or start).strip()
+    elif isinstance(date_range, (list, tuple)):
+        if len(date_range) >= 1:
+            start = str(date_range[0] or "").strip()
+        if len(date_range) >= 2:
+            end = str(date_range[1] or "").strip()
+    else:
+        raw = str(date_range or "").strip()
+        if "~" in raw or "～" in raw:
+            parts = re.split(r"[~～]", raw, maxsplit=1)
+            start = parts[0].strip()
+            end = parts[1].strip() if len(parts) > 1 else start
+        else:
+            start = raw
+            end = raw
+    start = start[:10]
+    end = (end or start)[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start):
+        return None
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end):
+        return None
+    return start, end
+
+
+async def _set_date_input_value(locator, value: str) -> bool:
+    try:
+        await locator.scroll_into_view_if_needed(timeout=1000)
+    except Exception:
+        pass
+    try:
+        await locator.click(timeout=1500, force=True)
+    except Exception:
+        pass
+    try:
+        await locator.fill(value, timeout=1500)
+    except Exception:
+        try:
+            handle = await locator.element_handle(timeout=1000)
+            if not handle:
+                return False
+            await handle.evaluate(
+                """
+                (el, value) => {
+                  const proto = Object.getPrototypeOf(el);
+                  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                  if (desc && desc.set) {
+                    desc.set.call(el, value);
+                  } else {
+                    el.value = value;
+                  }
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                """,
+                value,
+            )
+        except Exception:
+            return False
+    try:
+        got = (await locator.input_value(timeout=1000) or "").strip()
+        if got[:10] == value:
+            return True
+    except Exception:
+        pass
+    try:
+        handle = await locator.element_handle(timeout=1000)
+        if not handle:
+            return False
+        got = await handle.evaluate("(el) => (el.value || '').trim()")
+        return str(got or "")[:10] == value
+    except Exception:
+        return False
+
+
+async def _set_custom_date_range(page, date_range: object, log_prefix: str) -> bool:
+    rng = _normalize_date_range(date_range)
+    if not rng:
+        print(f"{log_prefix}[失败] 日期范围格式不合法: {date_range!r}", file=sys.stderr)
+        return False
+    start, end = rng
+
+    start_candidates = [
+        "input[placeholder*='开始']",
+        "input[placeholder*='起始']",
+        ".ant-picker-range .ant-picker-input:nth-child(1) input",
+        ".ant-picker-input input",
+    ]
+    end_candidates = [
+        "input[placeholder*='结束']",
+        "input[placeholder*='终止']",
+        ".ant-picker-range .ant-picker-input:nth-child(3) input",
+        ".ant-picker-input input",
+    ]
+
+    start_loc = None
+    end_loc = None
+    for sel in start_candidates:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() > 0:
+                start_loc = loc
+                break
+        except Exception:
+            continue
+    for sel in end_candidates:
+        try:
+            locs = page.locator(sel)
+            cnt = await locs.count()
+            if cnt > 0:
+                end_loc = locs.nth(1) if sel == ".ant-picker-input input" and cnt > 1 else locs.first
+                break
+        except Exception:
+            continue
+    if start_loc is None or end_loc is None:
+        print(f"{log_prefix}[失败] 未找到日期范围输入框", file=sys.stderr)
+        return False
+
+    ok_start = await _set_date_input_value(start_loc, start)
+    await page.wait_for_timeout(300)
+    ok_end = await _set_date_input_value(end_loc, end)
+    try:
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(500)
+        await page.keyboard.press("Escape")
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+    ok = bool(ok_start and ok_end)
+    print(f"{log_prefix}指定日期 {start} ~ {end} {'✓' if ok else '✗'}")
+    return ok
+
+
 def _ant_popularity_option_title(popularity_option_text: str | None) -> str | None:
     """配置项（如 Top10%）与页面上 ant-select-option 的 title 对齐。"""
     w = (popularity_option_text or "").strip()
@@ -608,13 +747,17 @@ async def _fetch_detail_v2(page, creative: dict[str, Any], *, app_type: int) -> 
         body = await page.evaluate(
             """
 async ({ url }) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   const resp = await fetch(url, {
     method: 'GET',
     credentials: 'include',
+    signal: controller.signal,
     headers: {
       'accept': 'application/json, text/plain, */*'
     }
   });
+  clearTimeout(timer);
   let data = null;
   try {
     data = await resp.json();
@@ -1438,6 +1581,7 @@ async def _do_setup(
     use_popularity_top1: bool = False,
     *,
     day_span: str = "7",
+    date_range: object | None = None,
     popularity_option_text: str | None = None,
     ad_channel_labels: list[str] | None = None,
     country_codes: list[str] | None = None,
@@ -1445,10 +1589,10 @@ async def _do_setup(
 ) -> bool:
     """
     在已登录的页面上做一次性的筛选设置：工具标签（可选）→ 广告渠道多选（可选）→
-    国家/地区（只读 input 点开后选，可选）→ 时间窗 → 素材 → Top 创意(可选) → 排序在搜索后点。
+    国家/地区（只读 input 点开后选，可选）→ 时间窗/指定日期 → 素材 → Top 创意(可选) → 排序在搜索后点。
     任一步未满足预期则返回 False，调用方应中止后续爬取。
     order_by: 供调用方在搜索后使用（本函数内不点排序）。
-    day_span: "7" / "30" / "90" 等。
+    day_span: "7" / "30" / "90" 等；date_range 传入时跳过快捷时间窗，直接填开始/结束日期。
     popularity_option_text: 若设，在 Top 创意下拉中尽量匹配子串；否则 `use_popularity_top1` 为真时点首项。
     ad_channel_labels: 如 Facebook系、Google系、UnityAds、AppLovin，对应 `label.ant-checkbox-wrapper`。
     country_codes: ISO3，点 `input[placeholder=国家/地区]` 打开面板后再点选/搜索。
@@ -1517,10 +1661,16 @@ async def _do_setup(
             )
             return False
 
-    _p(f"{log_prefix}选择时间窗: {day_span!r} 天", log_quiet=log_quiet)
-    if not await _click_day_span(page, day_span, log_prefix):
-        print(f"{log_prefix}[失败] 时间窗未设置成功，中止。", file=sys.stderr)
-        return False
+    if date_range:
+        _p(f"{log_prefix}选择指定日期范围: {date_range!r}", log_quiet=log_quiet)
+        if not await _set_custom_date_range(page, date_range, log_prefix):
+            print(f"{log_prefix}[失败] 指定日期范围未设置成功，中止。", file=sys.stderr)
+            return False
+    else:
+        _p(f"{log_prefix}选择时间窗: {day_span!r} 天", log_quiet=log_quiet)
+        if not await _click_day_span(page, day_span, log_prefix):
+            print(f"{log_prefix}[失败] 时间窗未设置成功，中止。", file=sys.stderr)
+            return False
     await page.wait_for_timeout(2000)
 
     _p(f"{log_prefix}选择 素材…", log_quiet=log_quiet)
@@ -1963,6 +2113,35 @@ async def _click_cards_for_details(
     """
     enriched: list[dict] = []
     detail_holder: list[dict] = []
+
+    async def _dismiss_detail_modal() -> None:
+        try:
+            await page.evaluate(
+                """
+() => {
+  const sels = [
+    '.ant-modal .ant-modal-close',
+    '.ant-modal button[aria-label="Close"]',
+    '.ant-modal [aria-label="Close"]',
+    '.ant-modal-close-x'
+  ];
+  for (const sel of sels) {
+    for (const el of document.querySelectorAll(sel)) {
+      try { el.click(); } catch (e) {}
+    }
+  }
+}
+"""
+            )
+        except Exception:
+            pass
+        for _ in range(2):
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                break
+            await page.wait_for_timeout(120)
+
     try:
         probe_first = int((os.environ.get("ARROW2_DEBUG_DOM_PROBE_FIRST") or "").strip() or "0")
     except Exception:
@@ -2002,21 +2181,19 @@ async def _click_cards_for_details(
 
     async def _on_detail_response(response):
         url = response.url or ""
-        if "guangdada" not in url:
+        if "detail-v2" not in url:
             return
         if response.status != 200:
             return
-        _p(f"      [detail请求] {url[:120]}", log_quiet=log_quiet)
+        if log_each_click:
+            _p(f"      [detail请求] {url[:120]}", log_quiet=log_quiet)
         try:
             body = await response.json()
         except Exception:
             return
-        lists = _extract_creative_lists(body)
-        for lst in lists:
-            if isinstance(lst, list):
-                for c in lst:
-                    if isinstance(c, dict) and c.get("ad_key"):
-                        detail_holder.append(c)
+        for c in _detail_rows_from_body(body):
+            if isinstance(c, dict) and c.get("ad_key"):
+                detail_holder.append(c)
 
     page.on("response", _on_detail_response)
 
@@ -2034,6 +2211,7 @@ async def _click_cards_for_details(
         )
 
         for idx in range(card_count):
+            await _dismiss_detail_modal()
             detail_holder.clear()
             try:
                 meta = await _card_debug_meta(idx) if log_each_click else {}
@@ -2160,6 +2338,8 @@ async def _click_cards_for_details(
 
                 # 把新的 creative 收集起来
                 for c in detail_holder:
+                    if isinstance(c, dict):
+                        c["_dom_idx"] = idx
                     ak = str(c.get("ad_key") or "")
                     if ak and ak not in known_ad_keys:
                         known_ad_keys.add(ak)
@@ -2167,16 +2347,7 @@ async def _click_cards_for_details(
                         enriched.append(c)
 
                 # 关闭详情弹窗（Escape 或点关闭按钮）
-                try:
-                    close_btn = page.locator(
-                        'button[aria-label="Close"], .ant-modal-close, [class*="close"]'
-                    ).first
-                    if await close_btn.count() > 0:
-                        await close_btn.click(timeout=800)
-                    else:
-                        await page.keyboard.press("Escape")
-                except Exception:
-                    await page.keyboard.press("Escape")
+                await _dismiss_detail_modal()
 
                 await page.wait_for_timeout(400)
 
@@ -2197,7 +2368,7 @@ async def _click_cards_for_details(
 
             except Exception as e:
                 # 单张失败不中断整体
-                await page.keyboard.press("Escape")
+                await _dismiss_detail_modal()
                 await page.wait_for_timeout(300)
                 if log_each_click:
                     print(f"    [点击详情] 第 {idx + 1}/{card_count} 张异常跳过: {e}", flush=True)
@@ -2206,6 +2377,7 @@ async def _click_cards_for_details(
                 continue
 
     finally:
+        await _dismiss_detail_modal()
         page.remove_listener("response", _on_detail_response)
 
     _p(
@@ -2555,6 +2727,7 @@ def _merge_prefer_dom_detail(
 def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]) -> list[dict]:
     """以当前页面 DOM 卡片为底，按 preview_img_url 尽量用 detail 行覆盖；不以 napi 作为主结果源。"""
     detail_by_preview: dict[str, dict] = {}
+    detail_by_page_idx: dict[tuple[int, int], dict] = {}
     extra_details: list[dict] = []
     for d in detail_rows:
         if not isinstance(d, dict):
@@ -2562,20 +2735,36 @@ def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]
         prev = str(d.get("preview_img_url") or "").split("?")[0]
         if prev:
             detail_by_preview[prev] = d
-        else:
-            extra_details.append(d)
+        try:
+            page_no = int(d.get("_result_page") or 1)
+            dom_idx = int(d.get("_dom_idx"))
+            detail_by_page_idx[(page_no, dom_idx)] = d
+        except Exception:
+            pass
+        if prev or ("_dom_idx" in d):
+            continue
+        extra_details.append(d)
 
     merged: list[dict] = []
     seen_keys: set[str] = set()
+    seen_page_idx: set[tuple[int, int]] = set()
     for card in dom_cards:
         if not isinstance(card, dict):
             continue
         prev = str(card.get("preview_img_url") or "").split("?")[0]
-        key = prev or f"_dom_idx_{card.get('_dom_idx', id(card))}"
+        page_no = card.get("_result_page") or 1
+        key = prev or f"_dom_page_{page_no}_idx_{card.get('_dom_idx', id(card))}"
         if key in seen_keys:
             continue
         seen_keys.add(key)
+        try:
+            page_idx_key = (int(page_no), int(card.get("_dom_idx")))
+        except Exception:
+            page_idx_key = (-1, -1)
+        seen_page_idx.add(page_idx_key)
         detail = detail_by_preview.get(prev) if prev else None
+        if not detail:
+            detail = detail_by_page_idx.get(page_idx_key)
         if detail:
             item = dict(card)
             item.update(detail)
@@ -2600,6 +2789,12 @@ def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]
         prev = str(d.get("preview_img_url") or "").split("?")[0]
         if prev and prev in seen_keys:
             continue
+        try:
+            page_idx_key = (int(d.get("_result_page") or 1), int(d.get("_dom_idx")))
+            if page_idx_key in seen_page_idx:
+                continue
+        except Exception:
+            pass
         d2 = dict(d)
         d2.setdefault("_source", "dom_detail")
         merged.append(d2)
@@ -2608,6 +2803,304 @@ def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]
         if prev:
             seen_keys.add(prev)
     return merged
+
+
+async def _click_next_result_page(page, log_prefix: str = "    ", log_quiet: bool = False) -> bool:
+    """点击广大大搜索结果的下一页按钮；没有可用下一页时返回 False。"""
+    try:
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+    selectors = [
+        "li.ant-pagination-next:not(.ant-pagination-disabled) button",
+        "li.ant-pagination-next:not(.ant-pagination-disabled)",
+        "button[aria-label='Next Page']:not([disabled])",
+        "button[aria-label='next page']:not([disabled])",
+        "li[title='下一页']:not(.ant-pagination-disabled) button",
+        "li[title='下一页']:not(.ant-pagination-disabled)",
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).last
+            if await loc.count() <= 0:
+                continue
+            if not await loc.is_visible(timeout=800):
+                continue
+            await loc.click(timeout=1500, force=True)
+            await page.wait_for_timeout(1500)
+            try:
+                await page.evaluate("window.scrollTo(0, 0)")
+                await page.wait_for_timeout(600)
+            except Exception:
+                pass
+            _p(f"{log_prefix}[翻页] 已进入下一页", log_quiet=log_quiet)
+            return True
+        except Exception:
+            continue
+
+    try:
+        clicked = await page.evaluate(
+            """
+() => {
+  const items = Array.from(document.querySelectorAll('li, button, a'));
+  const next = items.find(el => {
+    const text = (el.textContent || '').trim();
+    const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+    const cls = el.className ? String(el.className) : '';
+    const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true' || cls.includes('disabled');
+    if (disabled) return false;
+    return text === '下一页' || text === 'Next' || aria === 'next page' || aria === 'next';
+  });
+  if (!next) return false;
+  next.click();
+  return true;
+}
+"""
+        )
+        if clicked:
+            await page.wait_for_timeout(1500)
+            try:
+                await page.evaluate("window.scrollTo(0, 0)")
+                await page.wait_for_timeout(600)
+            except Exception:
+                pass
+            _p(f"{log_prefix}[翻页] 已进入下一页", log_quiet=log_quiet)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def _load_current_result_page_cards(
+    page,
+    log_prefix: str = "    ",
+    log_quiet: bool = False,
+    max_rounds: int = 10,
+) -> int:
+    """翻页后滚动当前结果页，让懒加载卡片尽量进入 DOM。"""
+    last_count = -1
+    stable_rounds = 0
+    current_count = 0
+    for _ in range(max(1, max_rounds)):
+        try:
+            current_count = int(
+                await page.evaluate(
+                    "() => document.querySelectorAll('.shadow-common-light.bg-white').length"
+                )
+                or 0
+            )
+        except Exception:
+            current_count = 0
+        if current_count == last_count:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+            last_count = current_count
+        if stable_rounds >= 2:
+            break
+        try:
+            await page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 0.9, 700))")
+        except Exception:
+            pass
+        await page.wait_for_timeout(650)
+    _p(f"{log_prefix}[翻页] 当前页已加载 DOM 卡片 {current_count} 张", log_quiet=log_quiet)
+    return current_count
+
+
+async def _collect_keyword_crawl_result_latest_dom_detail(
+    page,
+    keyword: str,
+    batches_ref: list,
+    capture_state: dict,
+    log_prefix: str = "    ",
+    max_scroll_rounds: int = 48,
+    log_quiet: bool = False,
+    *,
+    first_seen_target_ymd: str | None = None,
+    max_cards_env: str = "DOM_DETAIL_MAX_CARDS",
+    max_pages_env: str = "DOM_DETAIL_MAX_PAGES",
+    default_max_pages: int = 1,
+    early_stop_env: str | None = None,
+    early_stop_default: bool = True,
+    stop_scroll_if_before_target: bool = False,
+    list_source: str = "dom_detail+dom",
+) -> dict:
+    """
+    「最新创意」通用点卡主路径：搜索/滚动后，以当前 DOM 卡片为主逐张拿 detail-v2。
+
+    这条路径用于需要和页面卡片顺序一致、并依赖 detail-v2 完整字段的工作流。
+    若 detail 点取全空，则回退为 napi 列表，避免页面结构偶发变化时整条链路无结果。
+    """
+    ymd_for_stop: str | None = None
+    if first_seen_target_ymd:
+        enabled = True
+        if early_stop_env:
+            enabled = _env_truthy(early_stop_env, default=early_stop_default)
+        if enabled:
+            y = (str(first_seen_target_ymd).strip() or "")[:10]
+            ymd_for_stop = y if y else None
+
+    result_for_kw: dict | None = None
+    for attempt in range(1, 3):
+        try:
+            await _search_one_keyword(
+                page,
+                keyword,
+                batches_ref,
+                capture_state,
+                order_by="latest",
+                log_prefix=log_prefix,
+                max_scroll_rounds=max_scroll_rounds,
+                log_quiet=log_quiet,
+                stop_scroll_if_oldest_first_seen_before_ymd=(
+                    ymd_for_stop if stop_scroll_if_before_target else None
+                ),
+            )
+            napi_creatives = [x for x in _all_creatives_from_batches(batches_ref) if isinstance(x, dict)]
+
+            def _napi_preview_map() -> dict[str, list[dict]]:
+                rows_by_preview: dict[str, list[dict]] = {}
+                for row in _all_creatives_from_batches(batches_ref):
+                    if not isinstance(row, dict):
+                        continue
+                    prev = str(row.get("preview_img_url") or "").split("?")[0]
+                    if prev:
+                        rows_by_preview.setdefault(prev, []).append(row)
+                return rows_by_preview
+
+            try:
+                raw_max = (os.environ.get(max_cards_env) or "").strip()
+                max_cards = int(raw_max) if raw_max else 0
+            except Exception:
+                max_cards = 0
+
+            try:
+                raw_pages = (os.environ.get(max_pages_env) or "").strip()
+                max_pages = int(raw_pages) if raw_pages else int(default_max_pages or 1)
+            except Exception:
+                max_pages = int(default_max_pages or 1)
+            max_pages = max(1, max_pages)
+
+            known: set = set()
+            all_dom_cards: list[dict] = []
+            details: list[dict] = []
+            stopped_by_first_seen = False
+            for page_no in range(1, max_pages + 1):
+                if page_no > 1:
+                    await _load_current_result_page_cards(
+                        page,
+                        log_prefix=log_prefix,
+                        log_quiet=log_quiet,
+                    )
+                dom_cards_page = await _extract_dom_cards(page, log_quiet=log_quiet)
+                if page_no > 1 and not dom_cards_page:
+                    _p(
+                        f"{log_prefix}[dom-detail] 第 {page_no} 页未加载到卡片，停止翻页",
+                        log_quiet=log_quiet,
+                    )
+                    break
+                for card in dom_cards_page:
+                    if isinstance(card, dict):
+                        card["_result_page"] = page_no
+                        all_dom_cards.append(card)
+
+                napi_rows_by_preview = _napi_preview_map()
+                details_page = await _click_cards_for_details(
+                    page,
+                    known,
+                    max_cards=(max(1, max_cards) if max_cards > 0 else 10**9),
+                    target_previews=None,
+                    napi_rows_by_preview=napi_rows_by_preview or None,
+                    log_quiet=log_quiet,
+                    stop_after_detail_first_seen_before_ymd=ymd_for_stop,
+                )
+                for detail in details_page:
+                    if isinstance(detail, dict):
+                        detail["_result_page"] = page_no
+                        details.append(detail)
+
+                if ymd_for_stop:
+                    for d0 in details_page:
+                        if not isinstance(d0, dict):
+                            continue
+                        d_ymd = _beijing_ymd_from_first_seen(d0.get("first_seen"))
+                        if d_ymd and d_ymd < ymd_for_stop:
+                            stopped_by_first_seen = True
+                            break
+
+                _p(
+                    f"{log_prefix}[dom-detail] 第 {page_no}/{max_pages} 页 "
+                    f"DOM={len(dom_cards_page)} detail={len(details_page)} "
+                    f"累计detail={len(details)}",
+                    log_quiet=log_quiet,
+                )
+                if stopped_by_first_seen:
+                    _p(
+                        f"{log_prefix}[dom-detail] 已遇到早于目标日 {ymd_for_stop} 的素材，停止翻页",
+                        log_quiet=log_quiet,
+                    )
+                    break
+                if page_no >= max_pages:
+                    break
+                if not await _click_next_result_page(page, log_prefix=log_prefix, log_quiet=log_quiet):
+                    _p(f"{log_prefix}[dom-detail] 没有可用下一页，停止翻页", log_quiet=log_quiet)
+                    break
+
+            merged = _merge_dom_cards_with_details(
+                [x for x in all_dom_cards if isinstance(x, dict)],
+                [x for x in details if isinstance(x, dict)],
+            )
+            napi_creatives = [x for x in _all_creatives_from_batches(batches_ref) if isinstance(x, dict)]
+            if not merged and napi_creatives:
+                merged = napi_creatives
+                actual_source = "napi_fallback"
+            else:
+                actual_source = list_source
+            merged = _sort_creatives_latest_first(merged) if merged else []
+            top_creatives, total = (merged[:3] if merged else []), len(merged)
+            best = top_creatives[0] if top_creatives else None
+            result_for_kw = {
+                "keyword": keyword,
+                "selected": best,
+                "top_creatives": top_creatives,
+                "all_creatives": merged,
+                "napi_creatives": napi_creatives,
+                "dom_cards": all_dom_cards,
+                "dom_creatives": [d for d in (details or []) if isinstance(d, dict)],
+                "total_captured": total,
+                "list_source": actual_source,
+            }
+            if merged:
+                break
+            if attempt == 1 and not log_quiet:
+                print(
+                    f"{log_prefix}[dom-detail] 点卡+napi 全空，准备重试一次…",
+                    file=sys.stderr,
+                )
+        except Exception as e:
+            if attempt == 1:
+                if not log_quiet:
+                    print(f"{log_prefix}[失败] {e}，准备重试一次…", file=sys.stderr)
+                continue
+            print(f"{log_prefix}[失败] {e}", file=sys.stderr)
+            break
+    if result_for_kw is None:
+        return {
+            "keyword": keyword,
+            "selected": None,
+            "top_creatives": [],
+            "all_creatives": [],
+            "napi_creatives": [],
+            "dom_cards": [],
+            "dom_creatives": [],
+            "total_captured": 0,
+            "list_source": list_source,
+        }
+    if not (result_for_kw.get("all_creatives") or []) and not log_quiet:
+        print(f"{log_prefix}[提醒] 点卡主路径抓取后仍无素材。", file=sys.stderr)
+    return result_for_kw
 
 
 async def _collect_keyword_crawl_result_arrow2_latest_dom(
@@ -2728,6 +3221,12 @@ async def run_batch(
     order_by: str = "exposure",
     use_popularity_top1: bool = False,
     enable_dom_track: bool = False,
+    detail_click_primary: bool = False,
+    first_seen_target_ymd: str | None = None,
+    date_range: object | None = None,
+    pause_per_keyword: bool = False,
+    keep_browser_open: bool = False,
+    keyword_labels: dict[str, str] | None = None,
 ) -> list:
     """
     登录一次、界面设置一次（工具/7天/素材/排序方式），然后对每个关键词只做「填关键字 → 搜索 → 取结果」。
@@ -2737,6 +3236,11 @@ async def run_batch(
       }。
     order_by: "exposure"（展示估值）或 "latest"（最新创意）。
     enable_dom_track: 是否启用 DOM 补充 + 点击详情（默认关闭，仅供 fetch_competitor_raw 等调试脚本使用）。
+    detail_click_primary: 是否以当前页面卡片逐张点击 detail-v2 作为主结果源（VE/Arrow2 latest 类工作流使用）。
+    first_seen_target_ymd: detail_click_primary 下的目标 first_seen 日期；用于滚动/点卡早停。
+    date_range: 可选 (start_ymd, end_ymd) 或 YYYY-MM-DD；传入后直接设置 UI 日期范围，跳过 7 天快捷项。
+    pause_per_keyword: 每个关键词爬完后暂停，供 headed 模式人工检查页面。
+    keep_browser_open: 全部抓取完成后保持浏览器打开，等人工回车后再关闭。
     """
     if not keywords:
         return []
@@ -2801,13 +3305,15 @@ async def run_batch(
             print("[1/4] 主站稳定中（SPA 可能不触发 networkidle，数秒内继续）…", flush=True)
             await _await_post_login_shell(page)
 
-            print("[2/4] 一次性设置筛选（7天 / 素材 / 排序方式 / 可选人气值Top1%）...")
+            date_desc = "指定日期" if date_range else "7天"
+            print(f"[2/4] 一次性设置筛选（{date_desc} / 素材 / 排序方式 / 可选人气值Top1%）...")
             if not await _do_setup(
                 page,
                 is_tool,
                 log_prefix="  ",
                 order_by=order_by,
                 use_popularity_top1=use_popularity_top1,
+                date_range=date_range,
             ):
                 print("[失败] 筛选条件未全部就绪，中止爬取", file=sys.stderr)
                 sys.exit(3)
@@ -2817,21 +3323,239 @@ async def run_batch(
             results = []
             for i, keyword in enumerate(keywords, 1):
                 print(f"  [{i}/{len(keywords)}] {keyword}")
-                result_for_kw = await _collect_keyword_crawl_result(
-                    page,
-                    keyword,
-                    batches_ref,
-                    capture_state,
-                    order_by=order_by,
-                    log_prefix="    ",
-                    max_scroll_rounds=16,
-                    enable_dom_track=enable_dom_track,
-                )
+                if detail_click_primary and order_by == "latest":
+                    result_for_kw = await _collect_keyword_crawl_result_latest_dom_detail(
+                        page,
+                        keyword,
+                        batches_ref,
+                        capture_state,
+                        log_prefix="    ",
+                        max_scroll_rounds=48 if first_seen_target_ymd else 16,
+                        log_quiet=False,
+                        first_seen_target_ymd=first_seen_target_ymd,
+                        max_cards_env="VIDEO_ENHANCER_DOM_CLICK_MAX_CARDS",
+                        max_pages_env="VIDEO_ENHANCER_DOM_CLICK_MAX_PAGES",
+                        default_max_pages=3,
+                        early_stop_env="VIDEO_ENHANCER_FIRST_SEEN_EARLY_STOP",
+                        early_stop_default=True,
+                        stop_scroll_if_before_target=False,
+                        list_source="ve_dom_detail+dom",
+                    )
+                else:
+                    result_for_kw = await _collect_keyword_crawl_result(
+                        page,
+                        keyword,
+                        batches_ref,
+                        capture_state,
+                        order_by=order_by,
+                        log_prefix="    ",
+                        max_scroll_rounds=16,
+                        enable_dom_track=enable_dom_track,
+                    )
                 results.append(result_for_kw)
+                if pause_per_keyword:
+                    label = (keyword_labels or {}).get(str(keyword), str(keyword))
+                    all_rows = [x for x in (result_for_kw.get("all_creatives") or []) if isinstance(x, dict)]
+                    detail_rows = [x for x in (result_for_kw.get("dom_creatives") or []) if isinstance(x, dict)]
+                    all_count = len(all_rows)
+                    detail_count = len(detail_rows)
+                    source = str(result_for_kw.get("list_source") or ("dom_detail+dom" if detail_click_primary else "napi"))
+                    date_counts: dict[str, int] = {}
+                    for row in all_rows:
+                        ymd = _beijing_ymd_from_first_seen(row.get("first_seen")) or "(无first_seen)"
+                        date_counts[ymd] = date_counts.get(ymd, 0) + 1
+                    target_hits = date_counts.get(str(first_seen_target_ymd or "")[:10], 0) if first_seen_target_ymd else 0
+                    other_hits = max(0, all_count - target_hits) if first_seen_target_ymd else 0
+                    date_summary = ", ".join(
+                        f"{k}:{v}" for k, v in sorted(date_counts.items(), reverse=True)[:6]
+                    )
+                    print(
+                        f"\n[check] 产品={label!r} keyword={keyword!r} source={source} "
+                        f"all_creatives={all_count} detail_rows={detail_count}"
+                    )
+                    if first_seen_target_ymd:
+                        print(
+                            f"[check] first_seen 目标日={str(first_seen_target_ymd)[:10]} "
+                            f"命中={target_hits} 非目标日/未知={other_hits}"
+                        )
+                    if date_summary:
+                        print(f"[check] first_seen 日期分布: {date_summary}")
+                    if first_seen_target_ymd:
+                        try:
+                            from ua_workflows.shared.guangdada.competitor_utils import (  # noqa: PLC0415
+                                _creative_hits_target_date,
+                                _is_resume_advertising,
+                                advertiser_matches_product,
+                            )
+                        except Exception:
+                            _creative_hits_target_date = None  # type: ignore[assignment]
+                            _is_resume_advertising = None  # type: ignore[assignment]
+                            advertiser_matches_product = None  # type: ignore[assignment]
+
+                        target_ymd = str(first_seen_target_ymd)[:10]
+                        material_rows: list[dict] = []
+                        target_candidate_rows: list[dict] = []
+                        date_filtered_rows: list[dict] = []
+                        seen_material_keys: set[str] = set()
+                        for row in all_rows:
+                            ak = str(row.get("ad_key") or "").strip()
+                            if _creative_hits_target_date is not None:
+                                hit, _why = _creative_hits_target_date(row, target_ymd)
+                                if not hit:
+                                    date_filtered_rows.append(row)
+                                    continue
+                            else:
+                                if (_beijing_ymd_from_first_seen(row.get("first_seen")) or "") != target_ymd:
+                                    date_filtered_rows.append(row)
+                                    continue
+                            target_candidate_rows.append(row)
+                            if not ak or ak in seen_material_keys:
+                                continue
+                            if advertiser_matches_product is not None:
+                                adv = str(row.get("advertiser_name") or row.get("page_name") or "")
+                                if not advertiser_matches_product(adv, str(label)):
+                                    continue
+                            if _is_resume_advertising is not None and _is_resume_advertising(row):
+                                continue
+                            seen_material_keys.add(ak)
+                            material_rows.append(row)
+
+                        material_rows.sort(
+                            key=lambda x: int(x.get("first_seen") or x.get("created_at") or 0),
+                            reverse=True,
+                        )
+                        date_filtered_rows.sort(
+                            key=lambda x: int(x.get("first_seen") or x.get("created_at") or 0),
+                            reverse=True,
+                        )
+
+                        def _media_url(c: dict) -> str:
+                            for r0 in c.get("resource_urls") or []:
+                                if not isinstance(r0, dict):
+                                    continue
+                                if r0.get("video_url"):
+                                    return str(r0.get("video_url") or "")
+                                if r0.get("image_url"):
+                                    return str(r0.get("image_url") or "")
+                            return str(c.get("video_url") or c.get("preview_img_url") or "")
+
+                        def _preview_url(c: dict) -> str:
+                            return str(c.get("preview_img_url") or "").split("?")[0]
+
+                        def _check_item(idx0: int, c0: dict) -> dict:
+                            return {
+                                "index": idx0,
+                                "product": label,
+                                "keyword": keyword,
+                                "ad_key": c0.get("ad_key"),
+                                "first_seen_utc8": _beijing_dt_from_unix_sec(c0.get("first_seen")) or "",
+                                "first_seen_date": _beijing_ymd_from_first_seen(c0.get("first_seen")) or "",
+                                "created_at_utc8": _beijing_dt_from_unix_sec(c0.get("created_at")) or "",
+                                "source": c0.get("_source"),
+                                "result_page": c0.get("_result_page"),
+                                "advertiser_name": c0.get("advertiser_name") or c0.get("page_name"),
+                                "title": c0.get("title") or c0.get("body") or c0.get("message"),
+                                "all_exposure_value": c0.get("all_exposure_value") or 0,
+                                "heat": c0.get("heat") or 0,
+                                "impression": c0.get("impression") or 0,
+                                "video_duration": c0.get("video_duration") or 0,
+                                "preview_img_url": _preview_url(c0),
+                                "media_url": _media_url(c0),
+                            }
+
+                        slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(label)).strip("_") or str(keyword)
+                        check_path = DATA_DIR / f"ve_check_{target_ymd}_{slug}_materials.json"
+                        check_payload = []
+                        date_filtered_payload = []
+                        print(
+                            f"[check] 目标日页面候选 count={len(target_candidate_rows)}；"
+                            f"正式筛选素材 count={len(material_rows)}；"
+                            f"日期筛掉 count={len(date_filtered_rows)}"
+                        )
+                        for idx0, c0 in enumerate(material_rows, 1):
+                            check_payload.append(_check_item(idx0, c0))
+                        for idx0, c0 in enumerate(date_filtered_rows, 1):
+                            date_filtered_payload.append(_check_item(idx0, c0))
+                        sample_payload = (
+                            check_payload
+                            if len(check_payload) <= 6
+                            else [*check_payload[:3], *check_payload[-3:]]
+                        )
+                        for item0 in sample_payload:
+                            print(
+                                "[material] "
+                                f"{int(item0.get('index') or 0):03d} "
+                                f"page={item0.get('result_page') or ''} "
+                                f"source={item0.get('source') or ''} "
+                                f"ad_key={item0.get('ad_key') or ''} "
+                                f"first_seen={item0.get('first_seen_utc8') or ''} "
+                                f"created_at={item0.get('created_at_utc8') or ''} "
+                                f"exposure={item0.get('all_exposure_value') or 0} "
+                                f"heat={item0.get('heat') or 0} "
+                                f"title={str(item0.get('title') or '')[:90]!r} "
+                                f"preview={item0.get('preview_img_url') or ''} "
+                                f"media={item0.get('media_url') or ''}"
+                            )
+                            if len(check_payload) > 6 and item0.get("index") == 3:
+                                print("[material] ...")
+                        date_filtered_sample = (
+                            date_filtered_payload
+                            if len(date_filtered_payload) <= 6
+                            else [*date_filtered_payload[:3], *date_filtered_payload[-3:]]
+                        )
+                        for item0 in date_filtered_sample:
+                            print(
+                                "[date-filtered] "
+                                f"{int(item0.get('index') or 0):03d} "
+                                f"date={item0.get('first_seen_date') or ''} "
+                                f"page={item0.get('result_page') or ''} "
+                                f"source={item0.get('source') or ''} "
+                                f"ad_key={item0.get('ad_key') or ''} "
+                                f"first_seen={item0.get('first_seen_utc8') or ''} "
+                                f"created_at={item0.get('created_at_utc8') or ''} "
+                                f"exposure={item0.get('all_exposure_value') or 0} "
+                                f"title={str(item0.get('title') or '')[:90]!r} "
+                                f"media={item0.get('media_url') or ''}"
+                            )
+                            if len(date_filtered_payload) > 6 and item0.get("index") == 3:
+                                print("[date-filtered] ...")
+                        try:
+                            check_path.parent.mkdir(parents=True, exist_ok=True)
+                            check_path.write_text(
+                                json.dumps(
+                                    {
+                                        "product": label,
+                                        "keyword": keyword,
+                                        "target_date": target_ymd,
+                                        "target_candidate_count": len(target_candidate_rows),
+                                        "date_filtered_count": len(date_filtered_payload),
+                                        "count": len(check_payload),
+                                        "materials": check_payload,
+                                        "date_filtered_out": date_filtered_payload,
+                                    },
+                                    ensure_ascii=False,
+                                    indent=2,
+                                ),
+                                encoding="utf-8",
+                            )
+                            print(f"[check] 素材清单 JSON 已写: {check_path}")
+                        except Exception as e:
+                            print(f"[check] 素材清单 JSON 写入失败: {e}", file=sys.stderr)
+                    print("[check] 请检查当前浏览器页面；确认后在终端回车继续下一个产品。", flush=True)
+                    await asyncio.to_thread(input, "[check] Press Enter to continue...")
             print("[3/4] 全部关键词搜索完成 ✓")
-            print("[4/4] 关闭浏览器")
             return results
         finally:
+            if keep_browser_open:
+                print(
+                    "[browser] 抓取已完成，浏览器保持打开；请手动确认页面后回车关闭。",
+                    flush=True,
+                )
+                try:
+                    await asyncio.to_thread(input, "[browser] Press Enter to close browser...")
+                except Exception:
+                    pass
+            print("[4/4] 关闭浏览器")
             await browser.close()
 
 

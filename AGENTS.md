@@ -4,6 +4,15 @@
 
 ## 2026-05-15
 
+### [VE] 审核多维表反馈训练链路（独立于正常工作流）
+
+- `ua_workflows/video_enhancer/feedback_training.py`（新增）：从 VE 审核多维表 `CivwbJ2HkazcKTsKnbGclA5RnWc / tblrZZvVuFcjL0kE / vewJtPixtM` 直接拉取字段，单独写入 `data/ve_feedback_training.db`。`接受情况` 中 `接受`/`采纳`/`入素材库=1`，`删除`/`不采纳=0`，`待定`/`重复抓取`/空值只做留存不进训练。
+- 训练特征限定为素材本身：标题、正文、视频/封面链接、核心卖点、Hook、脚本/口播、玩法资产/变种、玩法指纹、差异点、风险等级、AI 分析和素材标签；产品、广告主、抓取日期、展示估值、人气、热度、投放地区等运营字段只写审计 JSON，不作为自变量。
+- 新增产物：`data/ve_feedback_training_dataset_{date}.jsonl`、`data/models/ve_feedback_preference_nb_{date}.json`、`reports/ve_feedback_training_{date}.md`。当前 baseline 是无额外依赖的文本朴素贝叶斯，便于先积累反馈闭环；后续可替换为多模态/排序模型。
+- `scripts/run_ve_feedback_training.py` / `scripts/cron_ve_feedback_training_daily.sh`（新增）：支持 `run`（拉取+入库+导出+训练）、`pull`、`train`、`export`；cron 建议每天 09:40 运行，日志 `logs/cron_ve_feedback_training.log`。该链路不触发广大大爬取、VE 分析、多维表主表同步或日报推送。
+- `.gitignore`：忽略反馈训练本地产物（SQLite、JSONL、模型 JSON、日报 Markdown），避免每日训练输出进入版本管理。
+- `docs/ve-feedback-training.md` / `docs/workflows.md` / `docs/cron-schedules.md` / `docs/README.md`：补充独立反馈训练链路说明、字段口径、产物和定时任务。
+
 ### [VE] 视频分析结构化收敛与 analysis embedding 去重下线
 
 - `ua_workflows/video_enhancer/analyze.py`：VE 多模态分析 prompt 取消原有 1～6 段正文分析，只要求模型输出 7 个固定结构化字段：`Hook解析`、`脚本口播`、`核心卖点`、`玩法指纹`、`差异点`、`风险标签`、`风险等级`。`analysis` 老字段不再承载长正文，仅由这些结构化字段拼出兼容短摘要，保证旧同步成功判定与多维表 `AI分析结果` 不为空。
@@ -28,6 +37,13 @@
 
 ## 2026-05-14
 
+### [VE] 正式抓取口径切为 UI 指定日期 + 点卡校验
+
+- `ua_workflows/video_enhancer/crawl.py` / `ua_workflows/video_enhancer/pipeline.py`：确认正式 VE 主流程调用 `--target-date` 时默认设置 UI 日期范围为 `target_date ~ target_date`，替代旧的「先选 7 天再本地筛」口径；`--no-ui-date-range` 仅保留作 A/B 调试回退。
+- 对 PixVerse 2026-05-12 做三组对比：旧 `napi list + 7天` 仅 5 条，`7天 + 点卡 detail + first_seen` 39 条，`UI 指定日期 + 点卡 detail + first_seen` 64 条；因此正式口径采用最后一种。注意 UI 日期筛仍会夹带非目标日排序结果，必须保留本地 `first_seen == target_date` 校验和早停。
+- `ua_workflows/shared/guangdada/search.py`：headed 检查 JSON 额外写入 `date_filtered_out`，用于人工对比被本地日期校验剔除的非目标日素材。
+- `ua_workflows/shared/db/video_enhancer.py`：VE 数据库补充卡片 detail 可得到的投放地区字段；`daily_creative_insights` 与 `creative_library` 新增 `country_codes_json`、`geo_targeting_json` 并自动迁移。展示估值/人气/热度继续写入既有 `all_exposure_value` / `impression` / `heat` 数值列；投放地区同时保留规范化国家码与原始 geo payload，便于后续同步和对账。
+
 ### [VE] 2026-05-13 筛选复核看板刷新与 CLIP 日内展示修正
 
 - `ua_workflows/video_enhancer/review_dashboard.py`：刷新 2026-05-13 复核看板；CLIP 指标改为「CLIP 封面命中」，并在统计备注中拆分跨日 / 日内，避免把 `cover_style_cluster` 日内簇误读成跨日命中。
@@ -49,6 +65,13 @@
 
 ## 2026-05-13
 
+### [VE] 爬取主路径改为页面卡片逐张点击 detail-v2
+
+- `ua_workflows/shared/guangdada/search.py`：新增通用 latest 点卡主路径 `_collect_keyword_crawl_result_latest_dom_detail`，流程为搜索/滚动后读取当前 DOM 卡片并逐张获取 `detail-v2`，再用 detail 覆盖 DOM 基础字段；若点卡结果为空才回退 napi 列表。`_click_cards_for_details` 的响应解析改为直接支持 detail-v2 返回的单 dict，并收窄监听日志，避免普通运行时刷屏。
+- `ua_workflows/shared/guangdada/search.py`：`run_batch` 新增 `detail_click_primary` 与 `first_seen_target_ymd` 参数；VE 使用时会完整滚动加载页面卡片，并在点开的 detail 真正早于目标日期时早停（`VIDEO_ENHANCER_FIRST_SEEN_EARLY_STOP=0` 可关）。点卡默认翻 3 页以覆盖超过 70 条的竞品素材池，`VIDEO_ENHANCER_DOM_CLICK_MAX_PAGES` 可调页数，`VIDEO_ENHANCER_DOM_CLICK_MAX_CARDS` 可限每页点卡数。
+- `ua_workflows/video_enhancer/crawl.py`：默认启用 `dom_detail_click` 模式，和 Arrow2 点击卡片抓 detail 的逻辑对齐；有 `--target-date` 时默认同步把 UI 日期设为 `target_date ~ target_date`，减少 7 天池子/虚拟列表加载不完整导致的漏抓。raw 输出新增 `crawl_mode` / `ui_date_range`。保留 `--no-ui-date-range` 对比旧 7 天口径，保留 `--napi-list` 作为旧 napi 列表口径的调试回退；最终过滤会丢弃无 `ad_key` 的 DOM-only 行，避免后续入库缺主键。
+- `ua_workflows/shared/guangdada/search.py` / `scripts/test_video_enhancer_crawl.py`：新增 headed 人工验收辅助，`--all-products --pause-per-product` 会按全部 VE 产品逐个爬取，每个产品完成后在浏览器保持当前页面并打印 `source/all_creatives/detail_rows`、目标日 `first_seen` 命中数和日期分布摘要，等待回车再继续下一个产品。
+
 ### [VE] CLIP 封面跨日去重硬拦截
 
 - `ua_workflows/video_enhancer/cover_dedupe.py`：修正 CLIP 封面向量跨日去重口径。过去实现虽然把近 7 日历史封面向量加入聚类，但同簇按展示估值最高者胜出，导致“今日估值更高”的跨日相似封面会被保留；现改为只要今日封面命中历史 CLIP 簇（同 appid、cosine ≥ `COVER_VISUAL_DEDUP_THRESHOLD`，默认 0.8），即按 `cover_style_cluster_vs_yesterday` 剔除今日素材，只有纯日内簇才按展示估值保留当日代表。
@@ -59,7 +82,6 @@
 - `ua_workflows/video_enhancer/pipeline.py`：主流程在分析筛选与 embedding 写库后自动刷新复核看板，默认写 `reports/ve_filter_review_日期.html`，同时覆盖 `reports/ve_cover_dedupe_clusters_日期.html`，便于日常直接打开固定地址复核。
 - 已生成 2026-05-12 封面去重人工复核 HTML：`reports/ve_cover_dedupe_clusters_2026-05-12.html`，上半部分展示按新规则识别出的 CLIP 跨日命中（17 条 / 9 簇），下半部分展示原流程已剔除的 ahash/url 指纹跨日命中（20 条 / 18 簇）；封面缓存于 `reports/assets/ve_cover_dedupe_2026-05-12/`。
 - 已刷新 2026-05-12 筛选复核 HTML：`reports/ve_filter_review_2026-05-12.html` 与 `reports/ve_cover_dedupe_clusters_2026-05-12.html`，当前统计为 CLIP 跨日 17 条 / 9 簇、指纹跨日 20 条 / 18 簇、一句话命中 33 个素材 / 26 簇 / 39 条证据，其中按当前封面规则已覆盖 12 个、真正玩法兜底 21 个；浏览器验证无「无本地封面」占位。
-
 ## 2026-05-11
 
 ### [VE] 核心卖点与玩法指纹拆分

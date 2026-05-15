@@ -5,6 +5,8 @@ logs/
 ua_downloads/
 data/*.json
 data/*.db
+data/ve_feedback_training_dataset_*.jsonl
+data/models/ve_feedback_preference_nb_*.json
 guangdada_auth.json
 credentials.json
 .worktrees/
@@ -14,6 +16,7 @@ reports/assets/
 reports/ve_cover_dedupe_clusters_*.html
 reports/ve_filter_review_*.html
 reports/*_acceptance.md
+reports/ve_feedback_training_*.md
 data/ua_suggestion_workflow_video_enhancer_*.md
 
 # Local crawl/debug captures

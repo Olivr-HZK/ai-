@@ -55,6 +55,8 @@ def init_db() -> None:
               heat INTEGER,
               all_exposure_value INTEGER,
               impression INTEGER,
+              country_codes_json TEXT,
+              geo_targeting_json TEXT,
               raw_json TEXT,
               insight_analysis TEXT,
               insight_ua_suggestion TEXT,
@@ -149,6 +151,8 @@ def init_db() -> None:
               best_heat INTEGER DEFAULT 0,
               best_impression INTEGER DEFAULT 0,
               best_all_exposure_value INTEGER DEFAULT 0,
+              country_codes_json TEXT,
+              geo_targeting_json TEXT,
 
               -- 出现记录
               first_target_date TEXT,       -- 第一次出现的目标日期
@@ -272,6 +276,21 @@ def init_db() -> None:
             cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN exclude_from_cluster INTEGER")
         if "launched_effect_match_json" not in dci_cols_filter:
             cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN launched_effect_match_json TEXT")
+        # Card detail geo metadata. Metrics already have dedicated columns
+        # (heat / impression / all_exposure_value); geo is preserved both as
+        # normalized country codes and raw payload for later sync/reporting.
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols_geo = {str(r["name"]) for r in cur.fetchall()}
+        if "country_codes_json" not in dci_cols_geo:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN country_codes_json TEXT")
+        if "geo_targeting_json" not in dci_cols_geo:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN geo_targeting_json TEXT")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols_geo = {str(r["name"]) for r in cur.fetchall()}
+        if "country_codes_json" not in cl_cols_geo:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN country_codes_json TEXT")
+        if "geo_targeting_json" not in cl_cols_geo:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN geo_targeting_json TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -340,6 +359,83 @@ def _pick_image_url_from_raw(creative: Dict[str, Any]) -> str:
     if creative.get("preview_img_url"):
         return str(creative["preview_img_url"])
     return ""
+
+
+_GEO_TARGETING_KEYS = (
+    "countries",
+    "country",
+    "country_code",
+    "country_codes",
+    "country_name",
+    "country_names",
+    "areas",
+    "area",
+    "regions",
+    "region",
+    "geo",
+    "geos",
+)
+
+
+def _json_nonempty(value: Any) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _flatten_geo_tokens(value: Any) -> List[str]:
+    tokens: List[str] = []
+    if value in (None, "", [], {}):
+        return tokens
+    if isinstance(value, str):
+        for token in re.split(r"[,，、/;；\s]+", value):
+            token = token.strip()
+            if token:
+                tokens.append(token)
+        return tokens
+    if isinstance(value, (int, float)):
+        return [str(value)]
+    if isinstance(value, list):
+        for item in value:
+            tokens.extend(_flatten_geo_tokens(item))
+        return tokens
+    if isinstance(value, dict):
+        for key in ("code", "country_code", "country", "id", "name", "country_name"):
+            if key in value:
+                tokens.extend(_flatten_geo_tokens(value.get(key)))
+        return tokens
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _extract_country_codes_from_creative(creative: Dict[str, Any]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for key in ("countries", "country_codes", "country_code", "country"):
+        for token in _flatten_geo_tokens(creative.get(key)):
+            code = token.strip().upper()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            out.append(code)
+    return out
+
+
+def _extract_geo_targeting_from_creative(creative: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    for key in _GEO_TARGETING_KEYS:
+        value = creative.get(key)
+        if value in (None, "", [], {}):
+            continue
+        payload[key] = value
+    return payload
+
+
+def _country_codes_json_from_creative(creative: Dict[str, Any]) -> str:
+    return _json_nonempty(_extract_country_codes_from_creative(creative))
+
+
+def _geo_targeting_json_from_creative(creative: Dict[str, Any]) -> str:
+    return _json_nonempty(_extract_geo_targeting_from_creative(creative))
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +511,8 @@ def upsert_creative_library(
             heat = int(creative.get("heat") or 0)
             impression = int(creative.get("impression") or 0)
             all_exp = int(creative.get("all_exposure_value") or 0)
+            country_codes_json = _country_codes_json_from_creative(creative)
+            geo_targeting_json = _geo_targeting_json_from_creative(creative)
             analysis_raw = analysis_by_ad.get(ad_key, "")
             if isinstance(analysis_raw, dict):
                 analysis = str(analysis_raw.get("analysis") or "")
@@ -518,6 +616,12 @@ def upsert_creative_library(
                          play_asset_classification_reason = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE play_asset_classification_reason END,
+                         country_codes_json = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE country_codes_json END,
+                         geo_targeting_json = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE geo_targeting_json END,
                          updated_at_local = datetime('now','localtime')
                        WHERE ad_key = ?""",
                     (target_date, inc, new_heat, new_imp, new_exp,
@@ -535,6 +639,8 @@ def upsert_creative_library(
                      play_asset_novelty_label, play_asset_novelty_label,
                      play_asset_match_source, play_asset_match_source,
                      play_asset_classification_reason, play_asset_classification_reason,
+                     country_codes_json, country_codes_json,
+                     geo_targeting_json, geo_targeting_json,
                      ad_key),
                 )
                 upserted += 1
@@ -619,6 +725,7 @@ def upsert_creative_library(
                      creative_type, video_duration,
                      title, body, video_url, image_url, preview_img_url,
                      best_heat, best_impression, best_all_exposure_value,
+                     country_codes_json, geo_targeting_json,
                      first_target_date, last_target_date, appearance_count,
                      insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
                      effect_one_liner, ad_one_liner,
@@ -633,6 +740,7 @@ def upsert_creative_library(
                      ?, ?,
                      ?, ?, ?, ?, ?,
                      ?, ?, ?,
+                     ?, ?,
                      ?, ?, 1,
                      ?, ?, ?, ?,
                      ?, ?,
@@ -649,6 +757,7 @@ def upsert_creative_library(
                     creative_type, int(creative.get("video_duration") or 0),
                     title, body, video_url, image_url, preview_img_url,
                     heat, impression, all_exp,
+                    country_codes_json, geo_targeting_json,
                     target_date, target_date,
                     analysis, ua_single, cover_style_str, dedup_reason,
                     effect_one_liner, ad_one_liner,
@@ -734,6 +843,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ad_key, platform, video_url, preview_img_url, video_duration,
           first_seen, created_at, last_seen,
           heat, all_exposure_value, impression,
+          country_codes_json, geo_targeting_json,
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
           effect_one_liner, ad_one_liner,
           play_fingerprint, differentiator,
@@ -747,6 +857,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?, ?, ?, ?,
           ?, ?, ?,
           ?, ?, ?,
+          ?, ?,
           ?, ?, ?, ?,
           ?, ?,
           ?, ?,
@@ -767,6 +878,16 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           heat=excluded.heat,
           all_exposure_value=excluded.all_exposure_value,
           impression=excluded.impression,
+          country_codes_json=CASE
+            WHEN COALESCE(TRIM(excluded.country_codes_json), '') <> ''
+            THEN excluded.country_codes_json
+            ELSE daily_creative_insights.country_codes_json
+          END,
+          geo_targeting_json=CASE
+            WHEN COALESCE(TRIM(excluded.geo_targeting_json), '') <> ''
+            THEN excluded.geo_targeting_json
+            ELSE daily_creative_insights.geo_targeting_json
+          END,
           raw_json=excluded.raw_json,
           insight_analysis=CASE
             WHEN COALESCE(TRIM(excluded.insight_analysis), '') <> ''
@@ -911,6 +1032,8 @@ def _params_tuple_for_daily_creative_insight(
     heat = creative.get("heat")
     all_exp = creative.get("all_exposure_value")
     impression = creative.get("impression")
+    country_codes_json = _country_codes_json_from_creative(creative)
+    geo_targeting_json = _geo_targeting_json_from_creative(creative)
     raw_json = json.dumps(creative, ensure_ascii=False)
     if isinstance(analysis_raw, dict):
         insight = str(analysis_raw.get("analysis") or "")
@@ -985,6 +1108,8 @@ def _params_tuple_for_daily_creative_insight(
         int(heat or 0) if heat is not None else None,
         int(all_exp or 0) if all_exp is not None else None,
         int(impression or 0) if impression is not None else None,
+        country_codes_json,
+        geo_targeting_json,
         raw_json,
         insight,
         ua_single,
