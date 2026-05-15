@@ -100,6 +100,48 @@ class VeFeedbackTrainingTest(unittest.TestCase):
             self.assertIsNotNone(model_path)
             self.assertEqual(metrics["status"], "trained")
 
+    def test_complete_profile_filters_required_fields(self) -> None:
+        from ua_workflows.video_enhancer.feedback_training import (
+            filter_samples_by_completeness,
+            normalize_record,
+        )
+
+        complete = normalize_record(
+            {
+                "record_id": "complete",
+                "fields": {
+                    "广告ID": "ad_complete",
+                    "标题": "AI portrait",
+                    "视频链接": "https://example.com/v.mp4",
+                    "封面图链接": "https://example.com/c.png",
+                    "核心卖点": "照片变大片",
+                    "Hook解析": "开头展示前后对比",
+                    "脚本/口播": "上传照片生成大片",
+                    "风险等级": "低风险",
+                    "AI分析结果": "核心卖点明确",
+                    "接受情况": "采纳",
+                },
+            }
+        )
+        incomplete = normalize_record(
+            {
+                "record_id": "incomplete",
+                "fields": {
+                    "广告ID": "ad_incomplete",
+                    "标题": "AI portrait",
+                    "视频链接": "https://example.com/v.mp4",
+                    "封面图链接": "https://example.com/c.png",
+                    "AI分析结果": "缺核心卖点和 Hook",
+                    "接受情况": "采纳",
+                },
+            }
+        )
+
+        self.assertEqual(
+            [s.record_id for s in filter_samples_by_completeness([complete, incomplete], "core")],
+            ["complete"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@
 - `ua_workflows/video_enhancer/feedback_training.py`（新增）：从 VE 审核多维表 `CivwbJ2HkazcKTsKnbGclA5RnWc / tblrZZvVuFcjL0kE / vewJtPixtM` 直接拉取字段，单独写入 `data/ve_feedback_training.db`。`接受情况` 中 `接受`/`采纳`/`入素材库=1`，`删除`/`不采纳=0`，`待定`/`重复抓取`/空值只做留存不进训练。
 - 训练特征限定为素材本身：标题、正文、视频/封面链接、核心卖点、Hook、脚本/口播、玩法资产/变种、玩法指纹、差异点、风险等级、AI 分析和素材标签；产品、广告主、抓取日期、展示估值、人气、热度、投放地区等运营字段只写审计 JSON，不作为自变量。
 - 新增产物：`data/ve_feedback_training_dataset_{date}.jsonl`、`data/models/ve_feedback_preference_nb_{date}.json`、`reports/ve_feedback_training_{date}.md`。当前 baseline 是无额外依赖的文本朴素贝叶斯，便于先积累反馈闭环；后续可替换为多模态/排序模型。
+- `ua_workflows/video_enhancer/feedback_training.py`：新增 `--complete-profile` 完整度过滤。`core` 只用标题、视频/封面链接、核心卖点、Hook、脚本/口播、风险等级、AI 分析齐全的样本；`core_play` / `play` 额外要求玩法字段；`all` 要求所有训练字段齐全（当前历史数据因 `玩法判断理由` 为空会筛到 0 条）。
 - `scripts/run_ve_feedback_training.py` / `scripts/cron_ve_feedback_training_daily.sh`（新增）：支持 `run`（拉取+入库+导出+训练）、`pull`、`train`、`export`；cron 建议每天 09:40 运行，日志 `logs/cron_ve_feedback_training.log`。该链路不触发广大大爬取、VE 分析、多维表主表同步或日报推送。
 - `.gitignore`：忽略反馈训练本地产物（SQLite、JSONL、模型 JSON、日报 Markdown），避免每日训练输出进入版本管理。
 - `docs/ve-feedback-training.md` / `docs/workflows.md` / `docs/cron-schedules.md` / `docs/README.md`：补充独立反馈训练链路说明、字段口径、产物和定时任务。

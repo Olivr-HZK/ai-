@@ -118,6 +118,45 @@ TEXT_FEATURE_KEYS = [
     "material_tags",
 ]
 
+COMPLETENESS_PROFILES: dict[str, tuple[str, ...]] = {
+    "any": tuple(),
+    "all": tuple(MATERIAL_FEATURE_FIELDS.keys()),
+    "core": (
+        "title",
+        "video_url",
+        "cover_url",
+        "core_selling_point",
+        "hook",
+        "script_or_voiceover",
+        "risk_level",
+        "ai_analysis",
+    ),
+    "core_play": (
+        "title",
+        "video_url",
+        "cover_url",
+        "core_selling_point",
+        "hook",
+        "script_or_voiceover",
+        "play_asset",
+        "play_variant",
+        "play_asset_id",
+        "play_variant_id",
+        "play_fingerprint",
+        "differentiator",
+        "risk_level",
+        "ai_analysis",
+    ),
+    "play": (
+        "play_asset",
+        "play_variant",
+        "play_asset_id",
+        "play_variant_id",
+        "play_fingerprint",
+        "differentiator",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class BitableRef:
@@ -283,6 +322,26 @@ def build_feature_text(feature: dict[str, Any]) -> str:
             field_name = MATERIAL_FEATURE_FIELDS.get(key, key)
             parts.append(f"【{field_name}】{value}")
     return "\n".join(parts).strip()
+
+
+def completeness_required_field_names(profile: str) -> list[str]:
+    keys = COMPLETENESS_PROFILES.get(profile)
+    if keys is None:
+        raise ValueError(f"未知 complete profile: {profile}")
+    return [MATERIAL_FEATURE_FIELDS[k] for k in keys]
+
+
+def sample_matches_completeness(sample: FeedbackSample, profile: str) -> bool:
+    keys = COMPLETENESS_PROFILES.get(profile)
+    if keys is None:
+        raise ValueError(f"未知 complete profile: {profile}")
+    return all(cell_to_text(sample.feature.get(k)).strip() for k in keys)
+
+
+def filter_samples_by_completeness(samples: list[FeedbackSample], profile: str) -> list[FeedbackSample]:
+    if profile == "any":
+        return samples
+    return [s for s in samples if sample_matches_completeness(s, profile)]
 
 
 def normalize_record(record: dict[str, Any]) -> FeedbackSample:
@@ -484,6 +543,11 @@ def export_dataset(
     return out_path
 
 
+def output_path_with_profile(base_dir: Path, stem: str, run_date: str, suffix: str, profile: str) -> Path:
+    profile_suffix = "" if profile == "any" else f"_{profile}"
+    return base_dir / f"{stem}_{run_date}{profile_suffix}.{suffix}"
+
+
 ASCII_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+\-.]{1,}|[0-9]+(?:\.[0-9]+)?")
 
 
@@ -656,6 +720,7 @@ def write_report(
     model_path: Path | None,
     metrics: dict[str, Any],
     status_counts: dict[str, int] | None = None,
+    complete_profile: str = "any",
     output_path: Path | None = None,
 ) -> Path:
     out_path = output_path or (REPORTS_DIR / f"ve_feedback_training_{run_date}.md")
@@ -673,8 +738,19 @@ def write_report(
         f"- 接受：{label_counts.get(LABEL_ACCEPTED, 0)}",
         f"- 删除：{label_counts.get(LABEL_REJECTED, 0)}",
         f"- 模型状态：{metrics.get('status', 'unknown')}",
-        "",
     ]
+    if complete_profile != "any":
+        lines.extend(
+            [
+                f"- 完整度口径：`{complete_profile}`",
+                f"- 必填字段：{'、'.join(completeness_required_field_names(complete_profile))}",
+            ]
+        )
+        source_labeled_count = metrics.get("source_labeled_count")
+        if source_labeled_count:
+            lines.append(f"- 完整度筛选前可训练样本：{source_labeled_count}")
+            lines.append(f"- 完整度筛选后可训练样本：{len(labeled_samples)}")
+    lines.append("")
     if status_counts:
         lines.extend(["## 接受情况分布", ""])
         for status, count in status_counts.items():
@@ -762,12 +838,27 @@ def run_feedback_training(
     bitable_url: str,
     run_date: str,
     db_path: Path = DB_PATH,
+    complete_profile: str = "any",
 ) -> dict[str, Any]:
     _load_env()
     pulled_samples, pull_stats = pull_feedback(bitable_url, db_path=db_path)
-    labeled_samples = load_labeled_samples(db_path)
-    dataset_path = export_dataset(labeled_samples, run_date=run_date)
-    model_path, metrics = train_baseline_model(labeled_samples, run_date=run_date)
+    source_labeled_samples = load_labeled_samples(db_path)
+    labeled_samples = filter_samples_by_completeness(source_labeled_samples, complete_profile)
+    dataset_path = export_dataset(
+        labeled_samples,
+        run_date=run_date,
+        output_path=output_path_with_profile(DATA_DIR, "ve_feedback_training_dataset", run_date, "jsonl", complete_profile),
+    )
+    requested_model_path = output_path_with_profile(
+        MODEL_DIR,
+        "ve_feedback_preference_nb",
+        run_date,
+        "json",
+        complete_profile,
+    )
+    model_path, metrics = train_baseline_model(labeled_samples, run_date=run_date, model_path=requested_model_path)
+    metrics["complete_profile"] = complete_profile
+    metrics["source_labeled_count"] = len(source_labeled_samples)
     report_path = write_report(
         run_date=run_date,
         pulled_count=pull_stats["total"],
@@ -776,6 +867,8 @@ def run_feedback_training(
         model_path=model_path,
         metrics=metrics,
         status_counts=pull_stats.get("status_counts") or {},
+        complete_profile=complete_profile,
+        output_path=output_path_with_profile(REPORTS_DIR, "ve_feedback_training", run_date, "md", complete_profile),
     )
     label_counts = Counter(s.label for s in labeled_samples)
     record_training_run(
@@ -833,9 +926,32 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
 def cmd_train(args: argparse.Namespace) -> int:
     run_date = _run_date(args.date)
-    samples = load_labeled_samples(Path(args.db))
-    dataset_path = export_dataset(samples, run_date=run_date)
-    model_path, metrics = train_baseline_model(samples, run_date=run_date)
+    source_samples = load_labeled_samples(Path(args.db))
+    samples = filter_samples_by_completeness(source_samples, args.complete_profile)
+    dataset_path = export_dataset(
+        samples,
+        run_date=run_date,
+        output_path=output_path_with_profile(
+            DATA_DIR,
+            "ve_feedback_training_dataset",
+            run_date,
+            "jsonl",
+            args.complete_profile,
+        ),
+    )
+    model_path, metrics = train_baseline_model(
+        samples,
+        run_date=run_date,
+        model_path=output_path_with_profile(
+            MODEL_DIR,
+            "ve_feedback_preference_nb",
+            run_date,
+            "json",
+            args.complete_profile,
+        ),
+    )
+    metrics["complete_profile"] = args.complete_profile
+    metrics["source_labeled_count"] = len(source_samples)
     report_path = write_report(
         run_date=run_date,
         pulled_count=0,
@@ -843,6 +959,14 @@ def cmd_train(args: argparse.Namespace) -> int:
         dataset_path=dataset_path,
         model_path=model_path,
         metrics=metrics,
+        complete_profile=args.complete_profile,
+        output_path=output_path_with_profile(
+            REPORTS_DIR,
+            "ve_feedback_training",
+            run_date,
+            "md",
+            args.complete_profile,
+        ),
     )
     print(
         f"[ve-feedback] labeled={len(samples)} dataset={dataset_path} "
@@ -854,8 +978,20 @@ def cmd_train(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     run_date = _run_date(args.date)
-    samples = load_labeled_samples(Path(args.db))
-    dataset_path = export_dataset(samples, run_date=run_date, output_path=Path(args.output) if args.output else None)
+    samples = filter_samples_by_completeness(load_labeled_samples(Path(args.db)), args.complete_profile)
+    dataset_path = export_dataset(
+        samples,
+        run_date=run_date,
+        output_path=Path(args.output)
+        if args.output
+        else output_path_with_profile(
+            DATA_DIR,
+            "ve_feedback_training_dataset",
+            run_date,
+            "jsonl",
+            args.complete_profile,
+        ),
+    )
     print(f"[ve-feedback] exported={dataset_path} labeled={len(samples)}")
     return 0
 
@@ -865,6 +1001,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         bitable_url=_resolve_url(args.url),
         run_date=_run_date(args.date),
         db_path=Path(args.db),
+        complete_profile=args.complete_profile,
     )
     print(
         f"[ve-feedback] pulled={result['pulled']['total']} labeled={result['labeled_count']} "
@@ -881,6 +1018,12 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--url", default="", help="飞书多维表 URL；默认读 VE_FEEDBACK_BITABLE_URL 或内置反馈表")
     common.add_argument("--date", default="", help="产物日期，默认今天")
     common.add_argument("--db", default=str(DB_PATH), help="独立反馈训练 SQLite 路径")
+    common.add_argument(
+        "--complete-profile",
+        choices=sorted(COMPLETENESS_PROFILES.keys()),
+        default="any",
+        help="训练/导出前的字段完整度过滤：any=不过滤，core=核心素材字段齐全，core_play=核心+玩法字段齐全，all=全部字段齐全",
+    )
     sub = parser.add_subparsers(dest="command")
 
     pull = sub.add_parser("pull", parents=[common], help="只拉取多维表并写入独立反馈库")

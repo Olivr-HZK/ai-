@@ -48,6 +48,22 @@ https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuF
 .venv/bin/python scripts/run_ve_feedback_training.py train --date 2026-05-15
 ```
 
+只用核心素材字段齐全的样本训练：
+
+```bash
+.venv/bin/python scripts/run_ve_feedback_training.py train --date 2026-05-15 --complete-profile core
+```
+
+完整度口径：
+
+| profile | 说明 |
+|---------|------|
+| `any` | 默认，不过滤缺字段样本 |
+| `core` | 标题、视频/封面链接、核心卖点、Hook、脚本/口播、风险等级、AI 分析齐全 |
+| `core_play` | `core` 之外，玩法资产/变种/ID、玩法指纹、差异点也齐全 |
+| `play` | 只要求玩法资产/变种/ID、玩法指纹、差异点齐全 |
+| `all` | 所有训练字段齐全；当前历史表因 `玩法判断理由` 缺失，通常会筛到 0 条 |
+
 ## 定时任务
 
 脚本入口：
