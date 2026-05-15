@@ -3,7 +3,8 @@
 
 主表同步：写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]）。
 成人风险、低适配主题、已投放等硬风险仍不同步；玩法重复默认仅打标/归类，避免主表过瘦。
-同步前会补跑玩法资产、成人风险、低适配、已投放等匹配，为结果补全标签与字段。
+同步前会优先使用视频分析阶段的 AI 玩法资产判断；缺失或无效时补跑规则玩法资产匹配，
+并继续补成人风险、低适配、已投放等匹配，为结果补全标签与字段。
 封面图、**视频**均尽量下载为附件上传（`VIDEO_BITABLE_MAX_MB` 限制大小；
 `VIDEO_BITABLE_UPLOAD=0` 可关视频上传）。
 不写入 raw 中仅入库、未分析或分析失败的条目。聚类表逻辑不变。
@@ -106,6 +107,8 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "玩法新旧", "type": 1},
     {"field_name": "玩法资产ID", "type": 1},
     {"field_name": "玩法变种ID", "type": 1},
+    {"field_name": "玩法判断来源", "type": 1},
+    {"field_name": "玩法判断理由", "type": 1},
     {"field_name": "玩法指纹", "type": 1},
     {"field_name": "差异点", "type": 1},
     {
@@ -1189,6 +1192,8 @@ def main() -> None:
                         "play_asset_id": str(it.get("play_asset_id") or ""),
                         "play_asset_variant_key": str(it.get("play_asset_variant_key") or ""),
                         "play_asset_matched_keywords": str(it.get("play_asset_matched_keywords") or ""),
+                        "play_asset_match_source": str(it.get("play_asset_match_source") or ""),
+                        "play_asset_classification_reason": str(it.get("play_asset_classification_reason") or ""),
                     }
             if play_asset_by_ad:
                 print(f"[sync] 已补全玩法资产/变种字段 {len(play_asset_by_ad)} 条。")
@@ -1319,6 +1324,8 @@ def main() -> None:
                 "玩法新旧": play_asset_info.get("play_asset_novelty_label", ""),
                 "玩法资产ID": play_asset_info.get("play_asset_id", ""),
                 "玩法变种ID": play_asset_info.get("play_asset_variant_key", ""),
+                "玩法判断来源": play_asset_info.get("play_asset_match_source", ""),
+                "玩法判断理由": play_asset_info.get("play_asset_classification_reason", ""),
                 "玩法指纹": play_fingerprint_by_ad.get(ad_key, ""),
                 "差异点": differentiator_by_ad.get(ad_key, ""),
                 "风险等级": risk_level,
@@ -1340,6 +1347,8 @@ def main() -> None:
                 tag_list.append(f"玩法资产:{play_asset_info.get('play_asset_name')}")
             if play_asset_info.get("play_asset_variant_name"):
                 tag_list.append(f"玩法变种:{play_asset_info.get('play_asset_variant_name')}")
+            if play_asset_info.get("play_asset_match_source") == "ai":
+                tag_list.append("玩法判断:AI")
             fields["素材标签"] = "、".join(dict.fromkeys(tag_list))
             created_ms = to_ms_from_unix_sec(c.get("created_at"))
             first_seen_ms = to_ms_from_unix_sec(c.get("first_seen"))

@@ -66,6 +66,8 @@ def _asset_yaml(asset: dict[str, Any]) -> str:
 
 def render_play_asset_doc(payload: dict[str, Any]) -> str:
     assets = [asset for asset in payload.get("assets") or [] if isinstance(asset, dict)]
+    internal_source = payload.get("internal_launch_source")
+    internal_source = internal_source if isinstance(internal_source, dict) else {}
     lines: list[str] = [
         "# VE 玩法资产库（项目联动版）",
         "",
@@ -75,10 +77,19 @@ def render_play_asset_doc(payload: dict[str, Any]) -> str:
         f"- 当前资产数：{len(assets)}",
         f"- 本地更新时间：{payload.get('updated_at') or date.today().isoformat()}",
         f"- 历史范围：{' ~ '.join(str(x) for x in payload.get('source_date_range') or []) or '-'}",
-        "",
-        SYNC_START,
-        "",
     ]
+    if internal_source:
+        source_title = str(internal_source.get("title") or "内部特效上线记录")
+        source_sheet = str(internal_source.get("sheet") or "")
+        source_name = f"{source_title} / {source_sheet}" if source_sheet else source_title
+        launch_range = " ~ ".join(str(x) for x in internal_source.get("date_range") or []) or "-"
+        lines.extend(
+            [
+                f"- 内部上线记录：{source_name}，{internal_source.get('record_count') or '-'} 条，{launch_range}",
+                f"- 内部表入口：{internal_source.get('url') or '-'}",
+            ]
+        )
+    lines.extend(["", SYNC_START, ""])
     for idx, asset in enumerate(assets, 1):
         lines.extend(
             [

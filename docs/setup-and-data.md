@@ -43,6 +43,13 @@ playwright install chromium
 
 `data/` 与 `reports/` 在运行时自动创建目录。
 
+## VE 玩法资产数据
+
+- 本地资产库：`config/ve_play_assets.json`，作为运行兜底和版本化快照。
+- 协作源：飞书云文档，详见 [ve-play-assets.md](./ve-play-assets.md)；分析进程启动时会尝试拉取云文档并覆盖本地 JSON，失败则继续使用本地版本。
+- 内部主题来源：Google Sheet「AI产品热点排期表 / 特效上线记录」，当前用于补充 aliases、关键词、子标签与案例，不作为运行时必需依赖。
+- SQLite 自动迁移：VE 库的 `daily_creative_insights` 与 `creative_library` 会自动补齐 `play_asset_id`、`play_asset_name`、`play_asset_subtag_ids`、`play_asset_subtag_names`、`play_asset_novelty_label`、`play_asset_match_source`、`play_asset_classification_reason` 等字段，保留分析阶段 AI 玩法判断。
+
 ## 换机迁移历史库（SQLite）
 
 封面跨日、`play_fingerprint` / `effect_one_liner` 等逻辑依赖 `**creative_library` / `daily_*` / arrow2 表** 中已有数据。

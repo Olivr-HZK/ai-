@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-14",
-  "description": "Video Enhancer 人工玩法资产库。当前版本基于本地库 2026-03-18 至 2026-05-13 的 VE 已分析素材沉淀，其中五月 2026-05-05 至 2026-05-13 全量覆盖，用于把新素材归入稳定玩法资产，避免每天因热点、服装、发型、运动项目或文案差异被拆成过多新玩法。",
+  "updated_at": "2026-05-15",
+  "description": "Video Enhancer 人工玩法资产库。当前版本基于本地库 2026-03-18 至 2026-05-13 的 VE 已分析素材，以及 Google Sheet「AI产品热点排期表 / 特效上线记录」2025-11-17 至 2026-05-14 的 364 条内部上线记录合并沉淀，用于把新素材归入稳定玩法资产，避免每天因热点、服装、发型、运动项目或文案差异被拆成过多新玩法。",
   "source_date_range": [
     "2026-03-18",
     "2026-05-13"
   ],
   "source_analyzed_material_count": 526,
   "may_analyzed_material_count": 466,
-  "coverage_note": "只使用已有 play_fingerprint/effect_one_liner 或足够明确标题正文的素材沉淀资产；早期仅有泛标题的素材不作为资产命名依据，避免污染玩法库。",
+  "coverage_note": "本地竞品素材历史玩法覆盖率保持 100%；本次额外并入内部特效上线记录，把上线主题名、主题 ID、描述和产品上线日期沉淀为 aliases / include_keywords / subtags / example_effects，用于后续新素材归类和新变种判断。",
   "assets": [
     {
       "asset_id": "ve_play_sports_broadcast_scene",
@@ -20,7 +20,12 @@
         "体育场观众席",
         "球赛直播场景",
         "F1赛场写真",
-        "球场焦点"
+        "球场焦点",
+        "Stadium Cam",
+        "Stands Cam",
+        "Soccer Minis",
+        "体育看台镜头",
+        "足球小人"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -43,7 +48,16 @@
         "运动员",
         "球衣",
         "车队",
-        "贵宾席"
+        "贵宾席",
+        "Stadium Cam",
+        "Stands Cam",
+        "Soccer Minis",
+        "stadium stands",
+        "stands cam",
+        "soccer mini",
+        "足球小人",
+        "迷你球员",
+        "体育看台"
       ],
       "exclude_keywords": [
         "灾难",
@@ -127,6 +141,31 @@
             "领队",
             "车手"
           ]
+        },
+        {
+          "tag_id": "sports_stadium_cam",
+          "name": "Stadium/Stands Cam",
+          "category": "trend",
+          "keywords": [
+            "Stadium Cam",
+            "Stands Cam",
+            "stadium stands",
+            "stands cam",
+            "体育看台"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "sports_soccer_minis",
+          "name": "足球小人/迷你球员",
+          "category": "sport",
+          "keywords": [
+            "Soccer Minis",
+            "soccer mini",
+            "足球小人",
+            "迷你球员"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -140,12 +179,17 @@
         "普通自拍一键生成热门体育场镜头金发造型",
         "静态照片生成球赛现场动态视频",
         "静态自拍照片生成动态球场焦点视频",
-        "真人自拍一键生成 F1 车队风格 viral trend 视频"
+        "真人自拍一键生成 F1 车队风格 viral trend 视频",
+        "Stadium Cam：Live from the stadium stands",
+        "Stands Cam：把头像放到体育场看台镜头",
+        "Soccer Minis：Kick off your journey as a soccer mini"
       ],
       "source_dates": [
-        "2026-05-13"
+        "2026-05-13",
+        "2026-05-12",
+        "2026-05-14"
       ],
-      "notes": "用户 2026-05-14 反馈：Glam 中 F1、棒球、体育直播、球场观众等应先归为同一玩法资产，具体运动项目和造型是差异点。"
+      "notes": "用户 2026-05-14 反馈：Glam 中 F1、棒球、体育直播、球场观众等应先归为同一玩法资产，具体运动项目和造型是差异点。 2026-05-15 合并内部特效上线记录：Stadium Cam、Stands Cam、Soccer Minis 均归入体育赛事现场转播，运动项目和小人化包装作为变种。"
     },
     {
       "asset_id": "ve_play_movie_disaster_scene",
@@ -236,7 +280,27 @@
         "生日主题专业写真",
         "多风格写真",
         "网红生活大片",
-        "机场街拍大片"
+        "机场街拍大片",
+        "Bloom Days",
+        "Chinese Couture",
+        "Chinese Dress",
+        "Happy Graduation",
+        "Best Mom",
+        "Mother's Day",
+        "Floral You",
+        "Floral Joy",
+        "Floral Collage",
+        "Vintage Bride",
+        "Noir Frame",
+        "Noir Portrait",
+        "Spring Fuji",
+        "Urban Rain",
+        "Night Rain",
+        "Live Queen",
+        "黑白大片",
+        "黑白电影大片",
+        "黑白复古大片",
+        "Noir 大片"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -269,7 +333,37 @@
         "约会写真",
         "约会肖像",
         "工作室肖像",
-        "风格肖像"
+        "风格肖像",
+        "Bloom Days",
+        "Chinese Couture",
+        "Chinese Dress",
+        "Happy Graduation",
+        "Best Mom",
+        "Mother's Day",
+        "Floral You",
+        "Floral Joy",
+        "Floral Collage",
+        "Vintage Bride",
+        "Noir Frame",
+        "Noir Portrait",
+        "Spring Fuji",
+        "Urban Rain",
+        "Night Rain",
+        "花卉肖像",
+        "毕业写真",
+        "母亲节",
+        "中式礼服",
+        "旗袍",
+        "黑白肖像",
+        "雨夜写真",
+        "主播女王写真",
+        "黑白大片",
+        "黑白电影大片",
+        "黑白复古大片",
+        "Noir",
+        "B&W",
+        "B&W masterpiece",
+        "classic B&W masterpiece"
       ],
       "exclude_keywords": [
         "体育",
@@ -356,6 +450,97 @@
             "约会",
             "孕妇"
           ]
+        },
+        {
+          "tag_id": "photoshoot_floral_portrait",
+          "name": "花卉/春日肖像",
+          "category": "style",
+          "keywords": [
+            "Bloom Days",
+            "Floral You",
+            "Floral Joy",
+            "Floral Collage",
+            "Floral Bloom",
+            "Spring Bloom",
+            "Cherry Bloom",
+            "Rose Bloom",
+            "花卉肖像",
+            "花朵",
+            "floral portrait"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "photoshoot_chinese_couture",
+          "name": "中式礼服/旗袍",
+          "category": "style",
+          "keywords": [
+            "Chinese Couture",
+            "Chinese Dress",
+            "中式礼服",
+            "旗袍",
+            "国风",
+            "Chinese"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "photoshoot_graduation",
+          "name": "毕业写真",
+          "category": "occasion",
+          "keywords": [
+            "Happy Graduation",
+            "graduation",
+            "毕业",
+            "学士服"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "photoshoot_mothers_day",
+          "name": "母亲节/妈妈主题",
+          "category": "occasion",
+          "keywords": [
+            "Best Mom",
+            "Mother's Day",
+            "Mother’s Day",
+            "Mom",
+            "妈妈",
+            "母亲节"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "photoshoot_noir_vintage",
+          "name": "黑白复古/新娘",
+          "category": "style",
+          "keywords": [
+            "Noir Portrait",
+            "Noir Frame",
+            "Vintage Bride",
+            "黑白肖像",
+            "复古新娘",
+            "B&W masterpiece",
+            "黑白大片",
+            "黑白电影大片",
+            "黑白复古大片",
+            "Noir",
+            "B&W",
+            "classic B&W masterpiece"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "photoshoot_rain_night",
+          "name": "雨夜/都市氛围",
+          "category": "style",
+          "keywords": [
+            "Night Rain",
+            "Urban Rain",
+            "雨夜",
+            "都市雨景"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -369,11 +554,27 @@
         "单张照片生成多组时尚杂志封面大片效果",
         "单人照片生成多风格杂志封面 + 人物一致",
         "普通自拍一键生成网红 VIP 生活大片",
-        "普通自拍一键生成明星机场街拍大片"
+        "普通自拍一键生成明星机场街拍大片",
+        "Floral You：Transform your photo into a stunning floral portrait",
+        "Happy Graduation：Capture your happy graduation moment",
+        "Best Mom：Create a custom art piece for your mother",
+        "Chinese Couture/Chinese Dress：中式礼服写真",
+        "Noir Portrait/Noir Frame：黑白复古肖像写真",
+        "黑白大片：真人自拍生成黑白复古电影感肖像大片",
+        "Noir Portrait：Turn your selfie into a classic B&W masterpiece"
       ],
       "source_dates": [
-        "2026-05-13"
-      ]
+        "2026-05-13",
+        "2026-03-18",
+        "2026-04-15",
+        "2026-04-20",
+        "2026-04-24",
+        "2026-04-29",
+        "2026-04-30",
+        "2026-05-09",
+        "2026-05-11"
+      ],
+      "notes": "2026-05-15 合并内部特效上线记录：节日、花卉、中式礼服、毕业、母亲节、黑白复古等上线主题归为写真/杂志封面资产的变体。 2026-05-15 追补：泛称“黑白大片/黑白电影大片”也归入写真资产的黑白复古变体，避免仅因“黑白”命中老照片修复。"
     },
     {
       "asset_id": "ve_play_professional_headshot",
@@ -384,7 +585,11 @@
         "商务头像",
         "专业头像",
         "职业照",
-        "多风格专业照"
+        "多风格专业照",
+        "Screen Selfie",
+        "Macbook Photo",
+        "Vision Center",
+        "Photo Booth"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -402,7 +607,15 @@
         "自拍变 AI 职业照",
         "婚礼西装",
         "婚礼西装造型",
-        "手持手机展示"
+        "手持手机展示",
+        "Screen Selfie",
+        "Macbook Photo",
+        "Vision Center",
+        "Photo Booth",
+        "屏幕自拍",
+        "电脑照片",
+        "证件照亭",
+        "photo booth"
       ],
       "exclude_keywords": [
         "体育",
@@ -457,6 +670,30 @@
             "手持照片",
             "展示"
           ]
+        },
+        {
+          "tag_id": "headshot_device_selfie",
+          "name": "屏幕/设备自拍",
+          "category": "scene",
+          "keywords": [
+            "Screen Selfie",
+            "Macbook Photo",
+            "屏幕自拍",
+            "电脑照片",
+            "设备自拍"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "headshot_photo_booth",
+          "name": "Photo Booth/证件照亭",
+          "category": "scene",
+          "keywords": [
+            "Photo Booth",
+            "证件照亭",
+            "photo booth"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -467,10 +704,16 @@
       "example_effects": [
         "真人手持照片展示 AI 生成商务头像效果",
         "真人手持手机展示 AI 生成商务头像效果",
-        "真人自拍生成多风格专业照，涵盖商务婚礼及街拍"
+        "真人自拍生成多风格专业照，涵盖商务婚礼及街拍",
+        "Screen Selfie：屏幕/设备里的自拍展示",
+        "Macbook Photo：电脑设备照片包装",
+        "Photo Booth：证件照亭风格头像"
       ],
       "source_dates": [
-        "2026-05-13"
+        "2026-05-13",
+        "2026-01-19",
+        "2026-02-10",
+        "2026-05-11"
       ]
     },
     {
@@ -481,7 +724,12 @@
       "aliases": [
         "自然美颜前后对比",
         "AI修图前后对比",
-        "分屏滑动美颜"
+        "分屏滑动美颜",
+        "Dream Body",
+        "Fitness Life",
+        "Hairstyle Lookbook",
+        "Dress Up",
+        "Beauty Glow"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -494,7 +742,17 @@
         "前后对比",
         "分屏滑动",
         "自然美颜",
-        "照片修饰"
+        "照片修饰",
+        "Dream Body",
+        "Fitness Life",
+        "Hairstyle Lookbook",
+        "身材",
+        "健身",
+        "肌肉",
+        "发型图鉴",
+        "lookbook",
+        "dress up",
+        "梦幻身材"
       ],
       "exclude_keywords": [
         "体育",
@@ -549,6 +807,31 @@
             "修脸",
             "五官"
           ]
+        },
+        {
+          "tag_id": "beauty_body_fitness",
+          "name": "健身/身材优化",
+          "category": "body",
+          "keywords": [
+            "Dream Body",
+            "Fitness Life",
+            "身材",
+            "健身",
+            "肌肉",
+            "aesthetic physique"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "beauty_hairstyle_lookbook",
+          "name": "发型图鉴",
+          "category": "hair",
+          "keywords": [
+            "Hairstyle Lookbook",
+            "发型图鉴",
+            "lookbook"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -558,10 +841,17 @@
       ],
       "example_effects": [
         "真人照片自然美颜修饰，多场景前后对比展示效果",
-        "多场景分屏滑动对比展示自然美颜前后效果"
+        "多场景分屏滑动对比展示自然美颜前后效果",
+        "Fitness Life：Build a muscular and aesthetic physique",
+        "Dream Body：Step into the body of your dreams",
+        "Hairstyle Lookbook：多发型造型图鉴"
       ],
       "source_dates": [
-        "2026-05-13"
+        "2026-05-13",
+        "2026-02-28",
+        "2026-03-09",
+        "2026-04-02",
+        "2026-05-06"
       ]
     },
     {
@@ -573,7 +863,20 @@
         "双人照片融合",
         "情侣合影",
         "亲友重逢",
-        "双人同框"
+        "双人同框",
+        "Alive Again",
+        "Warm Reunion",
+        "Still Here",
+        "Eternal Memory",
+        "Soft Farewell",
+        "Eternal Love",
+        "Future Baby",
+        "Duo Bond",
+        "Soul Bond",
+        "Duo Reel",
+        "Lovers' Day",
+        "Heart Vibe",
+        "Painted Love"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -591,7 +894,26 @@
         "AI Kiss",
         "亲人",
         "逝者",
-        "天使"
+        "天使",
+        "Alive Again",
+        "Warm Reunion",
+        "Still Here",
+        "Eternal Memory",
+        "Soft Farewell",
+        "Eternal Love",
+        "Future Baby",
+        "Duo Bond",
+        "Soul Bond",
+        "Duo Reel",
+        "Lovers' Day",
+        "Painted Love",
+        "灵魂形态",
+        "heaven",
+        "beyond time",
+        "future baby",
+        "loved ones",
+        "妈妈 tribute",
+        "双人音乐 MV"
       ],
       "exclude_keywords": [
         "单人商务头像",
@@ -658,6 +980,55 @@
             "球场",
             "体育场"
           ]
+        },
+        {
+          "tag_id": "fusion_memorial_reunion",
+          "name": "纪念重逢/逝者同框",
+          "category": "emotion",
+          "keywords": [
+            "Alive Again",
+            "Warm Reunion",
+            "Still Here",
+            "Eternal Memory",
+            "Soft Farewell",
+            "Eternal Love",
+            "heaven",
+            "beyond time",
+            "逝者",
+            "灵魂",
+            "重逢",
+            "loved ones"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "fusion_future_baby",
+          "name": "未来宝宝/情侣亲子",
+          "category": "family",
+          "keywords": [
+            "Future Baby",
+            "future baby",
+            "future of your love",
+            "宝宝",
+            "未来孩子"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "fusion_romantic_mv",
+          "name": "情侣音乐 MV",
+          "category": "format",
+          "keywords": [
+            "Duo Reel",
+            "Lovers' Day",
+            "Heart Vibe",
+            "Duo Bond",
+            "Soul Bond",
+            "Painted Love",
+            "romantic music video",
+            "情侣 MV"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -669,11 +1040,29 @@
       "example_effects": [
         "上传两张照片生成情侣看球互动视频",
         "上传两张照片生成 AI 情侣合影特效",
-        "上传逝者与生者照片生成牵手行走动态视频"
+        "上传逝者与生者照片生成牵手行走动态视频",
+        "Warm Reunion：Reunited with loved ones beyond time",
+        "Alive Again：Bring past photos to life and meet again",
+        "Future Baby：See the future of your love",
+        "Duo Reel：Turn two photos into a romantic music video",
+        "Painted Love：两张图生成爱情艺术合影"
       ],
       "source_dates": [
-        "2026-05-13"
-      ]
+        "2026-05-13",
+        "2026-02-02",
+        "2026-02-24",
+        "2026-03-02",
+        "2026-03-12",
+        "2026-03-24",
+        "2026-03-25",
+        "2026-04-03",
+        "2026-04-13",
+        "2026-04-20",
+        "2026-04-27",
+        "2026-05-07",
+        "2026-05-09"
+      ],
+      "notes": "2026-05-15 合并内部特效上线记录：纪念重逢、逝者灵魂同框、情侣/未来宝宝/双人 MV 均归入双人融合，具体情感场景作为子标签。"
     },
     {
       "asset_id": "ve_play_template_face_replacement",
@@ -683,7 +1072,13 @@
       "aliases": [
         "热门视频换脸",
         "病毒视频模板换脸",
-        "自拍视频主角替换"
+        "自拍视频主角替换",
+        "Role Switch",
+        "Scene Show",
+        "Comic Chaos",
+        "Magic Box",
+        "Boss Mode",
+        "Viral Dances"
       ],
       "include_keywords": [
         "替换视频主角",
@@ -701,7 +1096,21 @@
         "选趋势模板",
         "匹配模板",
         "模板",
-        "主角脸"
+        "主角脸",
+        "Role Switch",
+        "Scene Show",
+        "Comic Chaos",
+        "Magic Box",
+        "Boss Mode",
+        "Viral Dances",
+        "Tiny Fruits",
+        "Palm Foodie",
+        "Skyfall Vanguard",
+        "Fatal Ace",
+        "Elite Reading",
+        "Dimension Leap",
+        "Leviathan's Wake",
+        "Calorie Quest"
       ],
       "exclude_keywords": [
         "灾难电影",
@@ -758,6 +1167,20 @@
             "app 界面",
             "界面演示"
           ]
+        },
+        {
+          "tag_id": "template_pixverse_theme",
+          "name": "PixVerse模板主题",
+          "category": "source",
+          "keywords": [
+            "Role Switch",
+            "Scene Show",
+            "Comic Chaos",
+            "Magic Box",
+            "Boss Mode",
+            "PixVerse"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -768,10 +1191,18 @@
       "example_effects": [
         "真人照片一键替换热门视频人物面部生成动态视频",
         "真人照片一键替换病毒视频主角脸",
-        "热点视频模板替换人脸，上传自拍生成同款动态视频"
+        "热点视频模板替换人脸，上传自拍生成同款动态视频",
+        "Magic Box Boss Mode：热门模板新增特效",
+        "Role Switch / Scene Show / Comic Chaos：模板主题新增特效"
       ],
       "source_dates": [
-        "2026-05-13"
+        "2026-05-13",
+        "2026-04-07",
+        "2026-04-08",
+        "2026-04-23",
+        "2026-04-24",
+        "2026-04-30",
+        "2026-05-07"
       ]
     },
     {
@@ -782,7 +1213,15 @@
       "aliases": [
         "机甲变身",
         "奇幻变身",
-        "天使动态视频"
+        "天使动态视频",
+        "Bottle Dweller",
+        "Enchanted Campus",
+        "Fantasy Knight Bride",
+        "Snow Monster",
+        "Hero Kitty",
+        "GTA Style",
+        "Bicep Burst",
+        "Queen Mode"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -812,7 +1251,22 @@
         "僵尸",
         "科幻特效",
         "神经特效",
-        "动漫角色"
+        "动漫角色",
+        "Bottle Dweller",
+        "Enchanted Campus",
+        "Fantasy Knight Bride",
+        "Snow Monster",
+        "Hero Kitty",
+        "Bicep Burst",
+        "Queen Mode",
+        "瓶中精灵",
+        "魔法学院",
+        "哈利波特",
+        "骑士婚礼",
+        "雪怪",
+        "女王模式",
+        "瓶中",
+        "魔法校园"
       ],
       "exclude_keywords": [
         "体育",
@@ -886,6 +1340,34 @@
             "冰霜",
             "火焰"
           ]
+        },
+        {
+          "tag_id": "fantasy_magic_campus",
+          "name": "魔法学院/瓶中精灵",
+          "category": "fantasy",
+          "keywords": [
+            "Bottle Dweller",
+            "Enchanted Campus",
+            "瓶中精灵",
+            "魔法学院",
+            "哈利波特",
+            "瓶中"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "fantasy_royal_bride",
+          "name": "骑士/女王/皇室",
+          "category": "role",
+          "keywords": [
+            "Knight Bride",
+            "Queen Mode",
+            "Fantasy Knight Bride",
+            "骑士婚礼",
+            "女王模式",
+            "皇室"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -895,10 +1377,20 @@
         "真人照片一键生成奇幻机甲天使动态视频",
         "上传真人照片 + 选机甲模板 + 输出战斗视频",
         "单人照片生成冰霜变身动态视频",
-        "真人照片一键生成名人或超级英雄动态视频"
+        "真人照片一键生成名人或超级英雄动态视频",
+        "Bottle Dweller：瓶中精灵奇幻场景",
+        "Enchanted Campus：魔法学院场景",
+        "Fantasy Knight Bride：骑士婚礼奇幻写真",
+        "Hero Kitty：宠物英雄化"
       ],
       "source_dates": [
-        "2026-05-13"
+        "2026-05-13",
+        "2025-11-17",
+        "2025-11-18",
+        "2026-01-14",
+        "2026-01-23",
+        "2026-02-26",
+        "2026-03-31"
       ]
     },
     {
@@ -909,7 +1401,10 @@
       "aliases": [
         "发型变换",
         "发型投票",
-        "造型反应"
+        "造型反应",
+        "Hairstyle Lookbook",
+        "Style Morph",
+        "Dress Up"
       ],
       "include_keywords": [
         "发型",
@@ -922,7 +1417,13 @@
         "化妆",
         "多手化妆",
         "化妆变身",
-        "妆容"
+        "妆容",
+        "Hairstyle Lookbook",
+        "Style Morph",
+        "Dress Up",
+        "发型图鉴",
+        "风格变换",
+        "iconic styles"
       ],
       "exclude_keywords": [
         "体育赛事",
@@ -974,16 +1475,32 @@
             "化妆",
             "妆容"
           ]
+        },
+        {
+          "tag_id": "hair_style_morph",
+          "name": "风格/造型 Morph",
+          "category": "style",
+          "keywords": [
+            "Style Morph",
+            "Dress Up",
+            "风格变换",
+            "iconic styles"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
         "abc1fa752a33ea9da55ec9e938272122"
       ],
       "example_effects": [
-        "社交媒体投票场景结合 AI 发型变换，真人反应增强可信度"
+        "社交媒体投票场景结合 AI 发型变换，真人反应增强可信度",
+        "Style Morph：One tap, infinite iconic styles",
+        "Hairstyle Lookbook：多发型造型图鉴"
       ],
       "source_dates": [
-        "2026-05-13"
+        "2026-05-13",
+        "2026-03-26",
+        "2026-05-06"
       ]
     },
     {
@@ -996,7 +1513,19 @@
         "生活场景动态视频",
         "面部驱动自然动态",
         "live photo 视频",
-        "静态照片动态化"
+        "静态照片动态化",
+        "Photo Revival",
+        "Memory Speaks",
+        "Memory Color",
+        "Time Talk",
+        "Photo Morph",
+        "Time Machine",
+        "Rhythm Reel",
+        "Retro Disco",
+        "Multi Me",
+        "Happy Moments",
+        "Live Photo",
+        "Screen Selfie"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1023,7 +1552,27 @@
         "滑动转场",
         "聚光灯效果",
         "AI 分身演绎",
-        "分身演绎"
+        "分身演绎",
+        "Photo Revival",
+        "Memory Speaks",
+        "Memory Color",
+        "Time Talk",
+        "Photo Morph",
+        "Time Machine",
+        "Rhythm Reel",
+        "Retro Disco",
+        "Multi Me",
+        "Happy Moments",
+        "Live Photo",
+        "照片说话",
+        "照片上色",
+        "音乐视频",
+        "photo morph",
+        "time machine",
+        "多分身",
+        "personal music video",
+        "gray memories",
+        "old photos into voices"
       ],
       "exclude_keywords": [
         "体育",
@@ -1100,17 +1649,97 @@
             "生活场景",
             "动态生活"
           ]
+        },
+        {
+          "tag_id": "motion_photo_speaks",
+          "name": "照片说话/声音纪念",
+          "category": "format",
+          "keywords": [
+            "Memory Speaks",
+            "Time Talk",
+            "old photos into voices",
+            "照片说话",
+            "声音",
+            "voice"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "motion_memory_color",
+          "name": "回忆上色/灰色转彩色",
+          "category": "restore",
+          "keywords": [
+            "Memory Color",
+            "gray memories",
+            "上色",
+            "灰色回忆"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "motion_music_video",
+          "name": "单图音乐 MV",
+          "category": "format",
+          "keywords": [
+            "Rhythm Reel",
+            "Retro Disco",
+            "personal music video",
+            "music video",
+            "音乐 MV"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "motion_photo_morph",
+          "name": "两图丝滑转场",
+          "category": "format",
+          "keywords": [
+            "Photo Morph",
+            "Time Machine",
+            "丝滑转变",
+            "两张图转变",
+            "photo morph"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "motion_multi_clone",
+          "name": "多分身/多我同框",
+          "category": "format",
+          "keywords": [
+            "Multi Me",
+            "多分身",
+            "多我",
+            "AI 分身"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
         "4d3fd36864f2fd663b5a8ac10ed1f526"
       ],
       "example_effects": [
-        "静态照片生成动态生活场景视频，面部驱动自然"
+        "静态照片生成动态生活场景视频，面部驱动自然",
+        "Photo Revival：Bring your old photos to life",
+        "Memory Speaks：Turn old photos into voices you missed",
+        "Memory Color：Turn your gray memories into vivid reality",
+        "Rhythm Reel：Create your personal music video with one photo",
+        "Photo Morph/Time Machine：两张图丝滑转变",
+        "Multi Me：单人多分身合成"
       ],
       "source_dates": [
-        "2026-05-13"
-      ]
+        "2026-05-13",
+        "2026-02-02",
+        "2026-02-12",
+        "2026-03-04",
+        "2026-03-17",
+        "2026-03-30",
+        "2026-04-10",
+        "2026-04-30",
+        "2026-05-07",
+        "2026-05-09"
+      ],
+      "notes": "2026-05-15 合并内部特效上线记录：老照片说话/上色、音乐 MV、两图转场、多分身等作为照片动态化资产的子变体。"
     },
     {
       "asset_id": "ve_play_photo_to_dance_animation",
@@ -1120,7 +1749,17 @@
       "aliases": [
         "照片跳舞动画",
         "静态图跳舞",
-        "趣味动作动画"
+        "趣味动作动画",
+        "Pet Dance",
+        "Face Dance",
+        "Viral Dance",
+        "Viral Dances",
+        "Jamal Step",
+        "Pigeon Dance",
+        "Retro Disco",
+        "Pop Dance",
+        "Sassy Groove",
+        "Kung Fu"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1133,7 +1772,23 @@
         "搞笑动作",
         "打斗动画",
         "动态动画",
-        "跳舞动画"
+        "跳舞动画",
+        "Pet Dance",
+        "Face Dance",
+        "Viral Dance",
+        "Viral Dances",
+        "Jamal Step",
+        "Pigeon Dance",
+        "Retro Disco",
+        "Pop Dance",
+        "Sassy Groove",
+        "Kung Fu",
+        "宠物跳舞",
+        "脸部跳舞",
+        "病毒舞蹈",
+        "鸽子舞",
+        "复古迪斯科",
+        "功夫动作"
       ],
       "exclude_keywords": [
         "体育赛事",
@@ -1185,6 +1840,68 @@
             "打斗动画",
             "打斗"
           ]
+        },
+        {
+          "tag_id": "dance_pet",
+          "name": "宠物跳舞",
+          "category": "input",
+          "keywords": [
+            "Pet Dance",
+            "宠物跳舞",
+            "furry friends",
+            "pets dancing",
+            "Sassy Groove"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "dance_face",
+          "name": "Face Dance/表情舞",
+          "category": "input",
+          "keywords": [
+            "Face Dance",
+            "脸部跳舞",
+            "face dance",
+            "crazy face"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "dance_viral_steps",
+          "name": "病毒舞步模板",
+          "category": "trend",
+          "keywords": [
+            "Viral Dance",
+            "Viral Dances",
+            "Jamal Step",
+            "Pop Dance",
+            "Pigeon Dance",
+            "病毒舞蹈",
+            "鸽子舞"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "dance_retro_music",
+          "name": "复古迪斯科/MV舞蹈",
+          "category": "style",
+          "keywords": [
+            "Retro Disco",
+            "复古迪斯科",
+            "golden era"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "dance_kungfu_action",
+          "name": "功夫/动作舞",
+          "category": "action",
+          "keywords": [
+            "Kung Fu",
+            "功夫",
+            "功夫动作"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -1197,14 +1914,26 @@
         "静态奶牛照片一键生成跳舞动画",
         "静态照片一键上传生成动态跳舞视频",
         "静态照片输入生成跳舞动态视频分屏对比",
-        "静态照片参考舞蹈视频一键生成动态动画"
+        "静态照片参考舞蹈视频一键生成动态动画",
+        "Pet Dance：Happy pets dancing to the beat",
+        "Face Dance：Show off your crazy face dance skills",
+        "Jamal Step：Viral Dances 新增舞步模板",
+        "Retro Disco：Dance to the rhythm of the golden era"
       ],
       "source_dates": [
         "2026-05-05",
         "2026-05-06",
         "2026-05-10",
-        "2026-05-12"
-      ]
+        "2026-05-12",
+        "2026-01-12",
+        "2026-02-28",
+        "2026-03-02",
+        "2026-03-16",
+        "2026-03-24",
+        "2026-04-16",
+        "2026-05-07"
+      ],
+      "notes": "2026-05-15 合并内部特效上线记录：Pet Dance、Face Dance、Viral Dances、Jamal Step 等统一沉淀为跳舞/趣味动画资产，输入对象和舞步作为变体。"
     },
     {
       "asset_id": "ve_play_prompt_to_story_video",
@@ -1214,7 +1943,12 @@
       "aliases": [
         "提示词生成剧情视频",
         "文本指令生成视频",
-        "照片加文字生成剧情"
+        "照片加文字生成剧情",
+        "Photo Morph",
+        "Time Machine",
+        "Dimension Leap",
+        "Leviathan's Wake",
+        "Scene Show"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1231,7 +1965,15 @@
         "运镜",
         "音乐波形",
         "生成剧情",
-        "电影级视频"
+        "电影级视频",
+        "Dimension Leap",
+        "Leviathan's Wake",
+        "Skyfall Vanguard",
+        "Fatal Ace",
+        "Elite Reading",
+        "场景展示",
+        "维度跳跃",
+        "剧情模板"
       ],
       "exclude_keywords": [
         "成人",
@@ -1305,13 +2047,17 @@
         "文本指令输入 + 场景变换 + 多人互动视频",
         "输入文字照片生成剧情视频保留人物特征",
         "单张照片 + 文字指令生成动态剧情视频",
-        "真人照片输入提示词生成动态剧情视频"
+        "真人照片输入提示词生成动态剧情视频",
+        "Scene Show：场景展示模板新增特效",
+        "Dimension Leap / Leviathan's Wake：剧情场景模板"
       ],
       "source_dates": [
         "2026-05-05",
         "2026-05-06",
         "2026-05-08",
-        "2026-05-12"
+        "2026-05-12",
+        "2026-04-08",
+        "2026-04-24"
       ]
     },
     {
@@ -1322,7 +2068,11 @@
       "aliases": [
         "变龄视频",
         "年龄渐变",
-        "性别风格转换"
+        "性别风格转换",
+        "Future Baby",
+        "My Baby",
+        "Baby Mine",
+        "Dream Body"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1333,7 +2083,14 @@
         "年龄渐变",
         "18 岁",
         "81 岁",
-        "年轻到年老"
+        "年轻到年老",
+        "Future Baby",
+        "My Baby",
+        "Baby Mine",
+        "future baby",
+        "未来宝宝",
+        "宝宝预测",
+        "年龄想象"
       ],
       "exclude_keywords": [
         "老照片修复",
@@ -1375,6 +2132,20 @@
             "分屏",
             "进度条"
           ]
+        },
+        {
+          "tag_id": "age_future_baby",
+          "name": "未来宝宝/宝宝预测",
+          "category": "family",
+          "keywords": [
+            "Future Baby",
+            "My Baby",
+            "Baby Mine",
+            "future baby",
+            "未来宝宝",
+            "宝宝预测"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -1387,13 +2158,18 @@
         "真人照片 + 性别风格转换 + 生成动态视频",
         "单张照片生成年龄增长动态视频",
         "真人照片输入加年龄性别变换输出动态视频",
-        "分屏展示 AI 人脸从 18 岁到 81 岁渐变"
+        "分屏展示 AI 人脸从 18 岁到 81 岁渐变",
+        "Future Baby：See the future of your love",
+        "My Baby/Baby Mine：宝宝主题生成"
       ],
       "source_dates": [
         "2026-05-06",
         "2026-05-08",
         "2026-05-10",
-        "2026-05-12"
+        "2026-05-12",
+        "2026-01-14",
+        "2026-03-23",
+        "2026-04-13"
       ]
     },
     {
@@ -1404,7 +2180,15 @@
       "aliases": [
         "老照片修复",
         "黑白照片上色",
-        "旧照片动态化"
+        "旧照片动态化",
+        "Photo Revival",
+        "Memory Speaks",
+        "Memory Color",
+        "Alive Again",
+        "Warm Reunion",
+        "Eternal Memory",
+        "Still Here",
+        "Soft Farewell"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1415,7 +2199,22 @@
         "上色",
         "彩色动态化",
         "人物动态化",
-        "照片修复"
+        "照片修复",
+        "Photo Revival",
+        "Memory Speaks",
+        "Memory Color",
+        "Alive Again",
+        "Warm Reunion",
+        "Eternal Memory",
+        "Still Here",
+        "Soft Farewell",
+        "old photos",
+        "past photos",
+        "gray memories",
+        "上色步骤",
+        "照片复活",
+        "回忆说话",
+        "回忆上色"
       ],
       "exclude_keywords": [
         "生日",
@@ -1467,6 +2266,32 @@
             "前后对比",
             "分屏对比"
           ]
+        },
+        {
+          "tag_id": "old_photo_memory_speaks",
+          "name": "老照片说话",
+          "category": "format",
+          "keywords": [
+            "Memory Speaks",
+            "old photos into voices",
+            "照片说话",
+            "声音纪念"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "old_photo_revival_meet",
+          "name": "照片复活/再次相见",
+          "category": "emotion",
+          "keywords": [
+            "Photo Revival",
+            "Alive Again",
+            "Warm Reunion",
+            "past photos to life",
+            "meet again",
+            "再次相见"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -1479,12 +2304,20 @@
         "静态老照片输入 + 彩色动态化 + 分屏对比",
         "黑白老照片 AI 修复上色并让人物动起来",
         "静态老照片一键修复生成动态视频",
-        "老照片输入 + 人物动态化 + 彩色视频输出"
+        "老照片输入 + 人物动态化 + 彩色视频输出",
+        "Photo Revival：Bring your old photos to life",
+        "Memory Color：Turn your gray memories into vivid reality",
+        "Memory Speaks：Turn old photos into voices you missed",
+        "Alive Again：Bring past photos to life and meet again"
       ],
       "source_dates": [
         "2026-05-07",
         "2026-05-10",
-        "2026-05-12"
+        "2026-05-12",
+        "2026-02-02",
+        "2026-03-17",
+        "2026-03-18",
+        "2026-04-20"
       ]
     },
     {
@@ -1495,7 +2328,13 @@
       "aliases": [
         "人宠奇幻合体",
         "骑恐龙视频",
-        "动物融合视频"
+        "动物融合视频",
+        "Cute Pet",
+        "Pet Hat",
+        "Spark Paws",
+        "Hero Kitty",
+        "Pet Party",
+        "Palm Foodie"
       ],
       "include_keywords": [
         "动物",
@@ -1509,7 +2348,19 @@
         "人宠",
         "宝宝骑恐龙",
         "奇幻森林",
-        "宠物照片"
+        "宠物照片",
+        "Cute Pet",
+        "Pet Hat",
+        "Spark Paws",
+        "Hero Kitty",
+        "Pet Party",
+        "Palm Foodie",
+        "宠物帽子",
+        "萌宠",
+        "萌爪",
+        "宠物派对",
+        "cute pet",
+        "pet hat"
       ],
       "exclude_keywords": [
         "商品图",
@@ -1558,6 +2409,33 @@
             "骑乘",
             "骑行"
           ]
+        },
+        {
+          "tag_id": "animal_pet_costume",
+          "name": "宠物装扮/帽子",
+          "category": "pet",
+          "keywords": [
+            "Pet Hat",
+            "Cute Pet",
+            "Spark Paws",
+            "宠物帽子",
+            "萌宠",
+            "萌爪"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "animal_pet_party",
+          "name": "宠物派对/宠物模板",
+          "category": "pet",
+          "keywords": [
+            "Pet Party",
+            "Hero Kitty",
+            "Palm Foodie",
+            "宠物派对",
+            "宠物英雄"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -1570,13 +2448,21 @@
         "真人照片生成鲨鱼背景或肌肉身材视频",
         "静态照片一键生成宝宝骑恐龙奇幻动态视频",
         "宝宝照片输入生成骑恐龙动态视频",
-        "上传两张照片一键生成人与宠物奇幻合体特效"
+        "上传两张照片一键生成人与宠物奇幻合体特效",
+        "Pet Hat：用户上传两张图给宠物戴帽子",
+        "Cute Pet：One photo, endless cute styles",
+        "Spark Paws：闪耀萌爪宠物主题",
+        "Hero Kitty：宠物英雄化"
       ],
       "source_dates": [
         "2026-05-05",
         "2026-05-07",
         "2026-05-08",
-        "2026-05-10"
+        "2026-05-10",
+        "2026-01-28",
+        "2026-03-03",
+        "2026-04-20",
+        "2026-04-22"
       ]
     },
     {
@@ -1588,7 +2474,15 @@
         "照片转手绘",
         "涂鸦手账",
         "蜡笔插画",
-        "素描头像"
+        "素描头像",
+        "Chibi Doll",
+        "Pencil Sketch",
+        "Caricature Me",
+        "Job Caricature",
+        "Paper Form",
+        "Painted Love",
+        "Best Mom",
+        "Chibi Emojis"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1607,7 +2501,21 @@
         "复古美学",
         "粘土",
         "玩具",
-        "娃娃"
+        "娃娃",
+        "Chibi Doll",
+        "Pencil Sketch",
+        "Caricature Me",
+        "Job Caricature",
+        "Paper Form",
+        "Painted Love",
+        "Best Mom",
+        "Chibi Emojis",
+        "Q版娃娃",
+        "铅笔素描",
+        "漫画像",
+        "职业漫画像",
+        "折纸形态",
+        "custom art piece"
       ],
       "exclude_keywords": [
         "贴纸包",
@@ -1666,6 +2574,42 @@
           "keywords": [
             "剪贴簿"
           ]
+        },
+        {
+          "tag_id": "illustration_chibi_doll",
+          "name": "Q版娃娃/Chibi",
+          "category": "style",
+          "keywords": [
+            "Chibi Doll",
+            "Chibi Emojis",
+            "Q版",
+            "chibi",
+            "娃娃"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "illustration_caricature_job",
+          "name": "漫画像/职业漫画",
+          "category": "style",
+          "keywords": [
+            "Caricature Me",
+            "Job Caricature",
+            "漫画像",
+            "职业漫画像"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "illustration_paper_art",
+          "name": "折纸/纸艺",
+          "category": "style",
+          "keywords": [
+            "Paper Form",
+            "折纸形态",
+            "纸艺"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -1678,12 +2622,22 @@
         "照片添加手绘涂鸦文字气泡生成手账风格特效",
         "宠物照片转蜡笔手绘风格加涂鸦背景",
         "真人照片生成手绘素描头像",
-        "人物输入 + 怪物变换 + 剪贴簿输出 + 文字"
+        "人物输入 + 怪物变换 + 剪贴簿输出 + 文字",
+        "Chibi Doll：真人照片生成 Q 版娃娃",
+        "Pencil Sketch：铅笔素描照片风格",
+        "Job Caricature：职业漫画像",
+        "Best Mom：母亲节定制艺术画"
       ],
       "source_dates": [
         "2026-05-06",
         "2026-05-09",
-        "2026-05-10"
+        "2026-05-10",
+        "2026-02-04",
+        "2026-02-11",
+        "2026-02-13",
+        "2026-02-14",
+        "2026-05-07",
+        "2026-05-11"
       ]
     },
     {
@@ -1694,7 +2648,11 @@
       "aliases": [
         "九宫格贴纸包",
         "卡通表情包",
-        "3D 表情符号"
+        "3D 表情符号",
+        "Chibi Emojis",
+        "Chibi Doll",
+        "Cute Pet",
+        "Spark Paws"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1706,7 +2664,13 @@
         "多姿势",
         "表情符号控制",
         "3D 表情符号",
-        "emoji"
+        "emoji",
+        "Chibi Emojis",
+        "Chibi Doll",
+        "chibi",
+        "Q版表情",
+        "表情贴纸",
+        "萌宠贴纸"
       ],
       "exclude_keywords": [
         "商务头像",
@@ -1748,6 +2712,18 @@
             "emoji",
             "表情符号控制"
           ]
+        },
+        {
+          "tag_id": "sticker_chibi_emoji",
+          "name": "Chibi/Q版表情",
+          "category": "style",
+          "keywords": [
+            "Chibi Emojis",
+            "Chibi Doll",
+            "chibi",
+            "Q版表情"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -1760,12 +2736,15 @@
         "单张照片生成九宫格多姿势贴纸包",
         "单张照片一键生成九宫格多姿态表情贴纸包",
         "单张真人照片输入生成多姿态卡通贴纸网格",
-        "真人照片一键生成全套动漫表情贴纸"
+        "真人照片一键生成全套动漫表情贴纸",
+        "Chibi Emojis：真人照片生成 Chibi 表情套装",
+        "Chibi Doll：Q 版娃娃贴纸风格"
       ],
       "source_dates": [
         "2026-05-06",
         "2026-05-07",
-        "2026-05-10"
+        "2026-05-10",
+        "2026-05-11"
       ]
     },
     {
@@ -1818,7 +2797,10 @@
       "aliases": [
         "罚单梗图",
         "票据证件场景",
-        "测速抓拍"
+        "测速抓拍",
+        "Baby Caught",
+        "Caught Mid-Lift",
+        "Speed Snap"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1827,7 +2809,11 @@
         "票据",
         "证件",
         "抓拍",
-        "歌词同步"
+        "歌词同步",
+        "Baby Caught",
+        "Caught Mid-Lift",
+        "被拎起来了",
+        "caught"
       ],
       "exclude_keywords": [
         "商务头像",
@@ -1875,10 +2861,14 @@
       "example_effects": [
         "真人照片生成测速抓拍罚单风格视频",
         "静态罚单图 + 歌词同步 + 真假文案",
-        "用户照片生成机车罚单风格画面"
+        "用户照片生成机车罚单风格画面",
+        "Baby Caught：宝宝抓拍梗图",
+        "Caught Mid-Lift：被拎起来了的抓拍式模板"
       ],
       "source_dates": [
-        "2026-05-09"
+        "2026-05-09",
+        "2026-01-16",
+        "2026-02-11"
       ]
     },
     {
@@ -1929,7 +2919,11 @@
       "aliases": [
         "搜索框演示",
         "App界面生成证明",
-        "模板选择界面"
+        "模板选择界面",
+        "Screen Selfie",
+        "Macbook Photo",
+        "Vision Center",
+        "Go Live"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -1947,7 +2941,14 @@
         "大字文案强引导",
         "生成进度",
         "选择模板",
-        "选模板"
+        "选模板",
+        "Screen Selfie",
+        "Macbook Photo",
+        "Vision Center",
+        "屏幕自拍",
+        "电脑展示",
+        "应用界面截图",
+        "screen selfie"
       ],
       "exclude_keywords": [
         "免费聊天",
@@ -2028,13 +3029,17 @@
         "真人分屏解说配合电影级 AI 生成视频演示",
         "滚动脚本展示 AI 生成电影级视频",
         "真人视频宣称 AI 生成 + 搜索框演示",
-        "真实生活照片 + 生成质疑评论 + 应用下载界面"
+        "真实生活照片 + 生成质疑评论 + 应用下载界面",
+        "Screen Selfie：用屏幕自拍/界面截图证明效果",
+        "Macbook Photo：电脑设备里的生成图展示"
       ],
       "source_dates": [
         "2026-05-05",
         "2026-05-06",
         "2026-05-09",
-        "2026-05-12"
+        "2026-05-12",
+        "2026-01-19",
+        "2026-05-11"
       ]
     },
     {
@@ -2045,7 +3050,13 @@
       "aliases": [
         "动作电影场景",
         "武士大片",
-        "电影主角特效"
+        "电影主角特效",
+        "Kung Fu",
+        "Army Dreamers",
+        "GTA Style",
+        "Bicep Burst",
+        "Night Rain",
+        "Urban Rain"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -2061,7 +3072,17 @@
         "西装动态",
         "打斗动画",
         "电影级动作",
-        "动作大片"
+        "动作大片",
+        "Kung Fu",
+        "Army Dreamers",
+        "GTA Style",
+        "Bicep Burst",
+        "功夫",
+        "军装",
+        "士兵梦",
+        "GTA",
+        "都市雨景",
+        "雨夜电影"
       ],
       "exclude_keywords": [
         "灾难",
@@ -2134,13 +3155,22 @@
         "静态照片一键生成电影级动作视频",
         "真人照片通过提示词生成动作电影片段",
         "上传人脸照片生成雨中电影感动态视频",
-        "自拍一键生成持刀武士风 AI 大片特效"
+        "自拍一键生成持刀武士风 AI 大片特效",
+        "Kung Fu：功夫动作视频",
+        "Army Dreamers：士兵/军旅角色场景",
+        "GTA Style：游戏化街头动作风格"
       ],
       "source_dates": [
         "2026-05-05",
         "2026-05-07",
         "2026-05-08",
-        "2026-05-10"
+        "2026-05-10",
+        "2026-01-16",
+        "2026-02-11",
+        "2026-02-12",
+        "2026-03-31",
+        "2026-04-17",
+        "2026-04-27"
       ]
     },
     {
@@ -2249,7 +3279,11 @@
       "aliases": [
         "游戏皮肤生成",
         "Fortnite 风格",
-        "堡垒之夜角色"
+        "堡垒之夜角色",
+        "GTA Style",
+        "Hero Kitty",
+        "Fortnite",
+        "Game Skin"
       ],
       "min_score": 1,
       "include_keywords": [
@@ -2258,7 +3292,12 @@
         "游戏皮肤",
         "游戏角色",
         "角色皮肤",
-        "游戏角色皮肤"
+        "游戏角色皮肤",
+        "GTA Style",
+        "GTA",
+        "游戏化街头",
+        "game style",
+        "Hero Kitty"
       ],
       "exclude_keywords": [
         "体育赛事",
@@ -2290,6 +3329,17 @@
             "角色皮肤",
             "游戏角色"
           ]
+        },
+        {
+          "tag_id": "game_gta_style",
+          "name": "GTA/开放世界风格",
+          "category": "game",
+          "keywords": [
+            "GTA Style",
+            "GTA",
+            "游戏化街头"
+          ],
+          "min_score": 1
         }
       ],
       "representative_ad_keys": [
@@ -2300,10 +3350,14 @@
       "example_effects": [
         "真人照片转 Fortnite 游戏皮肤风格",
         "AI 生成 Fortnite 风格游戏角色皮肤",
-        "真人照片转堡垒之夜游戏皮肤风格"
+        "真人照片转堡垒之夜游戏皮肤风格",
+        "GTA Style：真人照片转 GTA 游戏风格",
+        "Hero Kitty：宠物英雄/游戏角色化"
       ],
       "source_dates": [
-        "2026-04-29"
+        "2026-04-29",
+        "2026-02-12",
+        "2026-02-26"
       ]
     },
     {
@@ -2370,6 +3424,189 @@
       "source_dates": [
         "2026-04-29"
       ]
+    },
+    {
+      "asset_id": "ve_play_livestream_avatar_scene",
+      "name": "照片生成直播间/主播 PK 场景",
+      "status": "active",
+      "definition": "把单人或双人照片包装成直播间、主播头像、开播海报、PK 对战、连麦互动或直播女王/网红主播场景，输出直播感图片或短视频。",
+      "aliases": [
+        "Go Live",
+        "Live Queen",
+        "Live Battle",
+        "主播直播间",
+        "直播 PK",
+        "直播女王"
+      ],
+      "min_score": 2,
+      "include_keywords": [
+        "Go Live",
+        "Live Queen",
+        "Live Battle",
+        "直播间",
+        "主播",
+        "开播",
+        "go live",
+        "live queen",
+        "live battle",
+        "PK 对战",
+        "直播 PK",
+        "连麦",
+        "网红主播"
+      ],
+      "exclude_keywords": [
+        "体育",
+        "赛事",
+        "球场",
+        "体育场",
+        "Stadium Cam",
+        "Stands Cam",
+        "sports broadcast"
+      ],
+      "variant_dimensions": [
+        "直播角色",
+        "PK/连麦结构",
+        "单人/双人输入",
+        "直播间包装风格"
+      ],
+      "subtags": [
+        {
+          "tag_id": "livestream_go_live",
+          "name": "开播/主播海报",
+          "category": "format",
+          "keywords": [
+            "Go Live",
+            "开播",
+            "主播",
+            "go live"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "livestream_live_queen",
+          "name": "Live Queen/主播女王",
+          "category": "role",
+          "keywords": [
+            "Live Queen",
+            "直播女王",
+            "live queen"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "livestream_battle_pk",
+          "name": "Live Battle/PK 对战",
+          "category": "format",
+          "keywords": [
+            "Live Battle",
+            "直播 PK",
+            "PK 对战",
+            "live battle",
+            "连麦"
+          ],
+          "min_score": 1
+        }
+      ],
+      "representative_ad_keys": [],
+      "example_effects": [
+        "Go Live：单人照片生成开播/主播直播间画面",
+        "Live Queen：单人照片生成直播女王风格图",
+        "Live Battle：上传两张图生成直播 PK 对战画面"
+      ],
+      "source_dates": [
+        "2026-04-30",
+        "2026-05-09",
+        "2026-05-11"
+      ],
+      "notes": "2026-05-15 从内部特效上线记录沉淀。和体育直播转播不同，本资产关注社交直播间、主播身份、PK/连麦包装。"
+    },
+    {
+      "asset_id": "ve_play_crowd_find_me_scene",
+      "name": "照片生成密集场景寻人/找自己",
+      "status": "active",
+      "definition": "把用户照片或形象藏入密集人群、卡通街景、拼图式大场景或复杂画面中，让用户通过找自己、找目标人物来获得互动和传播。",
+      "aliases": [
+        "Find Me",
+        "Where’s Me?",
+        "Where's Me?",
+        "找自己",
+        "密集人群寻人"
+      ],
+      "min_score": 2,
+      "include_keywords": [
+        "Find Me",
+        "Where’s Me?",
+        "Where's Me?",
+        "找自己",
+        "找我",
+        "密集人群",
+        "密集世界",
+        "人群中",
+        "寻人",
+        "spot yourself",
+        "massive crowd",
+        "busy cartoon scene",
+        "dense world"
+      ],
+      "exclude_keywords": [
+        "路人消除",
+        "一键消除",
+        "object removal"
+      ],
+      "variant_dimensions": [
+        "真实人群/卡通场景",
+        "用户显眼程度",
+        "找人难度",
+        "海报/焦点图文案"
+      ],
+      "subtags": [
+        {
+          "tag_id": "find_me_real_crowd",
+          "name": "真实/写实人群",
+          "category": "scene",
+          "keywords": [
+            "Find Me",
+            "massive crowd",
+            "dense world",
+            "密集人群"
+          ],
+          "min_score": 1
+        },
+        {
+          "tag_id": "find_me_cartoon_scene",
+          "name": "卡通/插画大场景",
+          "category": "scene",
+          "keywords": [
+            "Where’s Me?",
+            "Where's Me?",
+            "busy cartoon scene",
+            "卡通场景"
+          ],
+          "min_score": 1
+        }
+      ],
+      "representative_ad_keys": [],
+      "example_effects": [
+        "Find Me：Scan the massive crowd and find you there",
+        "Where’s Me?：Spot yourself within the busy cartoon scene"
+      ],
+      "source_dates": [
+        "2026-04-23",
+        "2026-04-24"
+      ],
+      "notes": "2026-05-15 从内部特效上线记录沉淀。该玩法不是封面相似，而是互动机制相同：把用户藏入复杂场景让用户找自己。"
     }
-  ]
+  ],
+  "internal_launch_source": {
+    "title": "AI产品热点排期表",
+    "sheet": "特效上线记录",
+    "url": "https://docs.google.com/spreadsheets/d/1ub4fVGDxXeiC7tuZPtl4QAlj2zm0enmY6QYkkt_n8XU/edit?gid=461729734#gid=461729734",
+    "date_range": [
+      "2025-11-17",
+      "2026-05-14"
+    ],
+    "record_count": 364,
+    "imported_at": "2026-05-15",
+    "import_method": "Chrome Google Sheets copy via Computer Use; source snapshot saved under data/tmp/ (ignored by git)."
+  }
 }

@@ -227,6 +227,25 @@ def init_db() -> None:
             cur.execute("ALTER TABLE creative_library ADD COLUMN play_fingerprint TEXT")
         if "differentiator" not in cl_cols_play:
             cur.execute("ALTER TABLE creative_library ADD COLUMN differentiator TEXT")
+        play_asset_columns = {
+            "play_asset_id": "TEXT",
+            "play_asset_name": "TEXT",
+            "play_asset_subtag_ids": "TEXT",
+            "play_asset_subtag_names": "TEXT",
+            "play_asset_novelty_label": "TEXT",
+            "play_asset_match_source": "TEXT",
+            "play_asset_classification_reason": "TEXT",
+        }
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols_asset = {str(r["name"]) for r in cur.fetchall()}
+        for col, typ in play_asset_columns.items():
+            if col not in dci_cols_asset:
+                cur.execute(f"ALTER TABLE daily_creative_insights ADD COLUMN {col} {typ}")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols_asset = {str(r["name"]) for r in cur.fetchall()}
+        for col, typ in play_asset_columns.items():
+            if col not in cl_cols_asset:
+                cur.execute(f"ALTER TABLE creative_library ADD COLUMN {col} {typ}")
         # 玩法 embedding + duplicate evidence for VE dedupe calibration.
         cur.execute("PRAGMA table_info(creative_library)")
         cl_cols6 = {str(r["name"]) for r in cur.fetchall()}
@@ -404,6 +423,13 @@ def upsert_creative_library(
                 ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
                 play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
                 differentiator = str(analysis_raw.get("differentiator") or "")
+                play_asset_id = str(analysis_raw.get("play_asset_id") or "")
+                play_asset_name = str(analysis_raw.get("play_asset_name") or "")
+                play_asset_subtag_ids = str(analysis_raw.get("play_asset_subtag_ids") or "")
+                play_asset_subtag_names = str(analysis_raw.get("play_asset_subtag_names") or "")
+                play_asset_novelty_label = str(analysis_raw.get("play_asset_novelty_label") or "")
+                play_asset_match_source = str(analysis_raw.get("play_asset_match_source") or "")
+                play_asset_classification_reason = str(analysis_raw.get("play_asset_classification_reason") or "")
             else:
                 analysis = str(analysis_raw or "")
                 ua_single = ""
@@ -411,6 +437,13 @@ def upsert_creative_library(
                 ad_one_liner = ""
                 play_fingerprint = ""
                 differentiator = ""
+                play_asset_id = ""
+                play_asset_name = ""
+                play_asset_subtag_ids = ""
+                play_asset_subtag_names = ""
+                play_asset_novelty_label = ""
+                play_asset_match_source = ""
+                play_asset_classification_reason = ""
             appid = str(item.get("appid") or "").strip()
             cs = item.get("cover_style")
             if isinstance(cs, dict):
@@ -464,6 +497,27 @@ def upsert_creative_library(
                          differentiator = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE differentiator END,
+                         play_asset_id = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_id END,
+                         play_asset_name = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_name END,
+                         play_asset_subtag_ids = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_subtag_ids END,
+                         play_asset_subtag_names = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_subtag_names END,
+                         play_asset_novelty_label = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_novelty_label END,
+                         play_asset_match_source = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_match_source END,
+                         play_asset_classification_reason = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE play_asset_classification_reason END,
                          updated_at_local = datetime('now','localtime')
                        WHERE ad_key = ?""",
                     (target_date, inc, new_heat, new_imp, new_exp,
@@ -474,6 +528,13 @@ def upsert_creative_library(
                      ad_one_liner, ad_one_liner,
                      play_fingerprint, play_fingerprint,
                      differentiator, differentiator,
+                     play_asset_id, play_asset_id,
+                     play_asset_name, play_asset_name,
+                     play_asset_subtag_ids, play_asset_subtag_ids,
+                     play_asset_subtag_names, play_asset_subtag_names,
+                     play_asset_novelty_label, play_asset_novelty_label,
+                     play_asset_match_source, play_asset_match_source,
+                     play_asset_classification_reason, play_asset_classification_reason,
                      ad_key),
                 )
                 upserted += 1
@@ -562,6 +623,8 @@ def upsert_creative_library(
                      insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
                      effect_one_liner, ad_one_liner,
                      play_fingerprint, differentiator,
+                     play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+                     play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
                      created_at_local, updated_at_local
                    ) VALUES (
                      ?, ?, ?, ?,
@@ -574,6 +637,8 @@ def upsert_creative_library(
                      ?, ?, ?, ?,
                      ?, ?,
                      ?, ?,
+                     ?, ?, ?, ?,
+                     ?, ?, ?,
                      datetime('now','localtime'), datetime('now','localtime')
                    )""",
                 (
@@ -588,6 +653,8 @@ def upsert_creative_library(
                     analysis, ua_single, cover_style_str, dedup_reason,
                     effect_one_liner, ad_one_liner,
                     play_fingerprint, differentiator,
+                    play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+                    play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
                 ),
             )
             upserted += 1
@@ -670,6 +737,8 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
           effect_one_liner, ad_one_liner,
           play_fingerprint, differentiator,
+          play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+          play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
           effect_embedding_duplicate_json, embedding_duplicate_candidate_json,
           material_tags, exclude_from_bitable, exclude_from_cluster, launched_effect_match_json,
           created_at_local, updated_at_local
@@ -681,6 +750,8 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?, ?, ?,
           ?, ?,
           ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?,
           ?, ?,
           ?, ?, ?, ?,
           datetime('now','localtime'), datetime('now','localtime')
@@ -733,6 +804,41 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
             WHEN COALESCE(TRIM(excluded.differentiator), '') <> ''
             THEN excluded.differentiator
             ELSE daily_creative_insights.differentiator
+          END,
+          play_asset_id=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_id), '') <> ''
+            THEN excluded.play_asset_id
+            ELSE daily_creative_insights.play_asset_id
+          END,
+          play_asset_name=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_name), '') <> ''
+            THEN excluded.play_asset_name
+            ELSE daily_creative_insights.play_asset_name
+          END,
+          play_asset_subtag_ids=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_subtag_ids), '') <> ''
+            THEN excluded.play_asset_subtag_ids
+            ELSE daily_creative_insights.play_asset_subtag_ids
+          END,
+          play_asset_subtag_names=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_subtag_names), '') <> ''
+            THEN excluded.play_asset_subtag_names
+            ELSE daily_creative_insights.play_asset_subtag_names
+          END,
+          play_asset_novelty_label=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_novelty_label), '') <> ''
+            THEN excluded.play_asset_novelty_label
+            ELSE daily_creative_insights.play_asset_novelty_label
+          END,
+          play_asset_match_source=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_match_source), '') <> ''
+            THEN excluded.play_asset_match_source
+            ELSE daily_creative_insights.play_asset_match_source
+          END,
+          play_asset_classification_reason=CASE
+            WHEN COALESCE(TRIM(excluded.play_asset_classification_reason), '') <> ''
+            THEN excluded.play_asset_classification_reason
+            ELSE daily_creative_insights.play_asset_classification_reason
           END,
           effect_embedding_duplicate_json=excluded.effect_embedding_duplicate_json,
           embedding_duplicate_candidate_json=excluded.embedding_duplicate_candidate_json,
@@ -813,6 +919,13 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
         play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
         differentiator = str(analysis_raw.get("differentiator") or "")
+        play_asset_id = str(analysis_raw.get("play_asset_id") or "")
+        play_asset_name = str(analysis_raw.get("play_asset_name") or "")
+        play_asset_subtag_ids = str(analysis_raw.get("play_asset_subtag_ids") or "")
+        play_asset_subtag_names = str(analysis_raw.get("play_asset_subtag_names") or "")
+        play_asset_novelty_label = str(analysis_raw.get("play_asset_novelty_label") or "")
+        play_asset_match_source = str(analysis_raw.get("play_asset_match_source") or "")
+        play_asset_classification_reason = str(analysis_raw.get("play_asset_classification_reason") or "")
         effect_embedding_duplicate_json = _json_for_optional(
             analysis_raw.get("effect_embedding_duplicate_match")
             or analysis_raw.get("effect_embedding_duplicate")
@@ -835,6 +948,13 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner = ""
         play_fingerprint = ""
         differentiator = ""
+        play_asset_id = ""
+        play_asset_name = ""
+        play_asset_subtag_ids = ""
+        play_asset_subtag_names = ""
+        play_asset_novelty_label = ""
+        play_asset_match_source = ""
+        play_asset_classification_reason = ""
         effect_embedding_duplicate_json = ""
         embedding_duplicate_candidate_json = ""
         material_tags_json = ""
@@ -873,6 +993,13 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner,
         play_fingerprint,
         differentiator,
+        play_asset_id,
+        play_asset_name,
+        play_asset_subtag_ids,
+        play_asset_subtag_names,
+        play_asset_novelty_label,
+        play_asset_match_source,
+        play_asset_classification_reason,
         effect_embedding_duplicate_json,
         embedding_duplicate_candidate_json,
         material_tags_json,
@@ -1314,6 +1441,8 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
               category, product, appid, ad_key, platform,
               video_duration, video_url, raw_json, insight_analysis, insight_ua_suggestion,
               effect_one_liner, ad_one_liner, play_fingerprint, differentiator,
+              play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
+              play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
               updated_at_local, id
             FROM daily_creative_insights
             WHERE ad_key IN ({placeholders})
@@ -1370,6 +1499,13 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                     "ad_one_liner": str(row["ad_one_liner"] or ""),
                     "play_fingerprint": str(row["play_fingerprint"] or ""),
                     "differentiator": str(row["differentiator"] or ""),
+                    "play_asset_id": str(row["play_asset_id"] or ""),
+                    "play_asset_name": str(row["play_asset_name"] or ""),
+                    "play_asset_subtag_ids": str(row["play_asset_subtag_ids"] or ""),
+                    "play_asset_subtag_names": str(row["play_asset_subtag_names"] or ""),
+                    "play_asset_novelty_label": str(row["play_asset_novelty_label"] or ""),
+                    "play_asset_match_source": str(row["play_asset_match_source"] or ""),
+                    "play_asset_classification_reason": str(row["play_asset_classification_reason"] or ""),
                 }
         return out
     finally:
@@ -1855,6 +1991,13 @@ def _row_from_item_and_patched_analysis(
         "effect_one_liner": str(ex_meta.get("effect_one_liner") or ""),
         "play_fingerprint": str(ex_meta.get("play_fingerprint") or ""),
         "differentiator": str(ex_meta.get("differentiator") or ""),
+        "play_asset_id": str(ex_meta.get("play_asset_id") or ""),
+        "play_asset_name": str(ex_meta.get("play_asset_name") or ""),
+        "play_asset_subtag_ids": str(ex_meta.get("play_asset_subtag_ids") or ""),
+        "play_asset_subtag_names": str(ex_meta.get("play_asset_subtag_names") or ""),
+        "play_asset_novelty_label": str(ex_meta.get("play_asset_novelty_label") or ""),
+        "play_asset_match_source": str(ex_meta.get("play_asset_match_source") or ""),
+        "play_asset_classification_reason": str(ex_meta.get("play_asset_classification_reason") or ""),
         "exclude_from_bitable": bool(ex_meta.get("exclude_from_bitable", False)),
         "exclude_from_cluster": bool(ex_meta.get("exclude_from_cluster", False)),
     }
@@ -1905,6 +2048,13 @@ def combined_analysis_results_for_pipeline(
                         "ad_one_liner": ex.get("ad_one_liner", ""),
                         "play_fingerprint": ex.get("play_fingerprint", ""),
                         "differentiator": ex.get("differentiator", ""),
+                        "play_asset_id": ex.get("play_asset_id", ""),
+                        "play_asset_name": ex.get("play_asset_name", ""),
+                        "play_asset_subtag_ids": ex.get("play_asset_subtag_ids", ""),
+                        "play_asset_subtag_names": ex.get("play_asset_subtag_names", ""),
+                        "play_asset_novelty_label": ex.get("play_asset_novelty_label", ""),
+                        "play_asset_match_source": ex.get("play_asset_match_source", ""),
+                        "play_asset_classification_reason": ex.get("play_asset_classification_reason", ""),
                     },
                 )
             )
@@ -1949,6 +2099,13 @@ def combined_analysis_results_for_pipeline(
                         "ad_one_liner": ex0.get("ad_one_liner", ""),
                         "play_fingerprint": ex0.get("play_fingerprint", ""),
                         "differentiator": ex0.get("differentiator", ""),
+                        "play_asset_id": ex0.get("play_asset_id", ""),
+                        "play_asset_name": ex0.get("play_asset_name", ""),
+                        "play_asset_subtag_ids": ex0.get("play_asset_subtag_ids", ""),
+                        "play_asset_subtag_names": ex0.get("play_asset_subtag_names", ""),
+                        "play_asset_novelty_label": ex0.get("play_asset_novelty_label", ""),
+                        "play_asset_match_source": ex0.get("play_asset_match_source", ""),
+                        "play_asset_classification_reason": ex0.get("play_asset_classification_reason", ""),
                     },
                 )
             else:
@@ -3660,6 +3817,8 @@ def load_new_creatives_for_date(
             SELECT cl.ad_key, cl.product, cl.appid, cl.platform, cl.creative_type,
                    cl.title, cl.best_heat, cl.best_impression, cl.best_all_exposure_value,
                    cl.effect_one_liner, cl.play_fingerprint, cl.differentiator,
+                   cl.play_asset_id, cl.play_asset_name, cl.play_asset_subtag_ids, cl.play_asset_subtag_names,
+                   cl.play_asset_novelty_label, cl.play_asset_match_source, cl.play_asset_classification_reason,
                    cl.first_target_date, cl.dedup_group_id,
                    cl.preview_img_url, cl.video_url, cl.video_duration
             FROM creative_library cl

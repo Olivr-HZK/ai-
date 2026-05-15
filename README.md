@@ -2,7 +2,7 @@ UA 素材 · 三工作流版
 
 本项目现在只保留三条生产工作流：
 
-1. **Video Enhancer**：竞品素材抓取、灵感分析、日报推送。
+1. **Video Enhancer**：竞品素材抓取、结构化灵感分析、玩法资产判断、日报推送。
 2. **Arrow2 latest_yesterday**：Arrow2 竞品每日最新素材。
 3. **Arrow2 exposure_top10**：Arrow2 竞品展示估值素材。
 
@@ -16,6 +16,7 @@ UA 素材 · 三工作流版
 | **定时任务（crontab）** | [docs/cron-schedules.md](docs/cron-schedules.md) |
 | 三条工作流说明 | [docs/workflows.md](docs/workflows.md) |
 | 环境、`data/`、换机迁库 | [docs/setup-and-data.md](docs/setup-and-data.md) |
+| VE 玩法资产库联动 | [docs/ve-play-assets.md](docs/ve-play-assets.md) |
 
 Agent 变更日志见根目录 [AGENTS.md](AGENTS.md)。
 
@@ -84,6 +85,7 @@ ua素材/
 ## 必要配置
 
 - `config/ai_product.json`：Video Enhancer 竞品配置。
+- `config/ve_play_assets.json`：Video Enhancer 玩法资产库本地兜底；默认会先尝试从飞书云文档同步最新版本。
 - `config/arrow2_competitor.json`：Arrow2 竞品与 `pull_specs` 配置。
 - `config/iso3166_alpha3_zh.json`：国家代码映射。
 - `.env`：广大大登录、OpenRouter/OpenAI、Feishu、企业微信、Google Sheet 等密钥。

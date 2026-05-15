@@ -27,6 +27,45 @@ def load_play_assets(path: Path | None = None) -> list[dict[str, Any]]:
     return [asset for asset in assets if isinstance(asset, dict) and asset.get("asset_id")]
 
 
+def format_play_asset_catalog_for_prompt(
+    *,
+    assets: list[dict[str, Any]] | None = None,
+    max_aliases: int = 8,
+    max_chars: int = 16000,
+) -> str:
+    """Render a compact asset catalog for the analysis prompt.
+
+    The model only needs stable IDs, names, definitions, aliases, and subtag IDs;
+    detailed keyword lists stay in JSON for deterministic fallback matching.
+    """
+    assets = assets if assets is not None else load_play_assets()
+    lines: list[str] = []
+    for asset in assets:
+        if str(asset.get("status") or "active").strip().lower() not in ("active", ""):
+            continue
+        asset_id = str(asset.get("asset_id") or "").strip()
+        name = str(asset.get("name") or "").strip()
+        definition = str(asset.get("definition") or "").strip()
+        aliases = [str(x).strip() for x in asset.get("aliases") or [] if str(x).strip()]
+        alias_text = "、".join(aliases[:max_aliases])
+        subtags = []
+        for subtag in asset.get("subtags") or []:
+            if not isinstance(subtag, dict):
+                continue
+            tag_id = str(subtag.get("tag_id") or "").strip()
+            tag_name = str(subtag.get("name") or "").strip()
+            if tag_id and tag_name:
+                subtags.append(f"{tag_id}={tag_name}")
+        subtag_text = "；".join(subtags) if subtags else "无"
+        line = f"- {asset_id} | {name} | 定义：{definition} | 别名：{alias_text or '-'} | 变种：{subtag_text}"
+        lines.append(line)
+
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        return text[: max(1, max_chars - 20)].rstrip() + "\n- ...（资产库过长，已截断）"
+    return text
+
+
 def play_asset_text(row: dict[str, Any], evidence: dict[str, Any] | None = None) -> str:
     evidence = evidence or {}
     fields = (

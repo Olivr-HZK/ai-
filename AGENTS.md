@@ -11,6 +11,21 @@
 - `.gitignore`：补充忽略筛选看板 HTML、`reports/assets/` 封面缓存、验收报告、方向卡片 md 与本地抓取调试文件，避免自动产物继续进入 git status；已发现仓库中仍有旧的 tracked 报告/调试文件，后续可单独做一次 git rm 清理。
 - 项目安全清理：删除已废弃且无代码引用的 tracked 调试/报告/旧配置产物，包括根目录抓包 HTML/PNG/JSON、`config/style_filters.json`、`config/twitter_input.*`、旧 `data/ua_suggestion_workflow_video_enhancer_*.md`、旧 `reports/workflow_video_enhancer_*_acceptance.md`。未删除当前筛选看板 HTML 与 `reports/assets/` 封面缓存，避免影响正在浏览的复核页面。
 
+### [VE] 内部特效上线记录合并到玩法资产库
+
+- `config/ve_play_assets.json`：通过 Chrome/Computer Use 从 Google Sheet `AI产品热点排期表 / 特效上线记录`（2025-11-17～2026-05-14，364 条）复制解析内部上线主题，并入 VE 玩法资产库。资产数从 25 扩到 27，子标签从约 100 扩到 144；新增稳定基类「照片生成直播间/主播 PK 场景」和「照片生成密集场景寻人/找自己」。
+- `config/ve_play_assets.json`：把 Stadium/Stands Cam、Soccer Minis、Pet Dance、Warm Reunion/Alive Again/Still Here、Find Me/Where’s Me、Go Live/Live Queen/Live Battle、Chibi Emojis/Chibi Doll、Hairstyle Lookbook、Best Mom/Mother’s Day、Floral/Chinese/Graduation 等内部上线主题沉到现有玩法的 aliases、关键词、example_effects 和 subtags，作为新变种判断依据，而不是在代码里补产品特判。
+- `ua_workflows/video_enhancer/play_asset_doc_sync.py` / `docs/ve-play-assets.md`：云文档渲染头部新增内部上线记录来源、记录数、日期范围和 Google Sheet 入口；本地文档补充该 Google Sheet 是玩法资产库的内部上线主题来源。
+- 已验证 `config/ve_play_assets.json` JSON 合法，`match_play_asset` 可正确命中 Stadium Cam、Find Me/Where’s Me、Go Live/Live Battle、Pet Dance、Warm Reunion、Chibi Emojis 等代表样例；已渲染云文档 Markdown 预览 `/tmp/ve_play_assets_doc.md`。
+
+### [VE] 视频分析阶段直接输出玩法资产判断
+
+- `ua_workflows/video_enhancer/analyze.py` / `play_assets.py`：VE 视频/图片分析 prompt 现在会注入压缩后的玩法资产库候选清单，要求模型额外输出 `【玩法资产ID】`、`【玩法资产名称】`、`【玩法变种ID】`、`【玩法变种名称】`、`【玩法归类】`、`【玩法判断理由】`；其中已有玩法必须引用资产库 ID，不匹配时写 `new_play`，已有资产但新变种写 `new_variant`。分析子进程启动时会先尝试从飞书云文档拉取最新资产库，失败则使用本地 JSON。
+- `ua_workflows/shared/db/video_enhancer.py`：`daily_creative_insights` 与 `creative_library` 自动迁移新增 AI 玩法判断字段（资产 ID/名称、变种 ID/名称、新旧、来源、理由），单条分析入库和素材库回写都会保留这些字段，历史缓存复用时也不丢失。
+- `ua_workflows/video_enhancer/play_asset_report.py` / `sync.py`：玩法归类改为「AI 主判 + 规则兜底」。日报/同步优先使用分析阶段的 AI 资产判断；若 AI 缺失、ID 无效或不确定，再走关键词/别名/案例匹配。多维表新增「玩法判断来源」「玩法判断理由」字段，并在素材标签里写 `玩法判断:AI`，但「新玩法 / 新变种 / 已沉淀」仍会结合历史库重新计算，避免只相信单条素材自报。
+- `README.md` / `docs/workflows.md` / `docs/setup-and-data.md` / `docs/ve-play-assets.md`：补充 VE 玩法资产库、AI 玩法判断、主表新增字段、内部上线记录来源和本地/云文档兜底关系，方便后续按文档接手维护。
+- 已验证 prompt 中包含 `photoshoot_noir_vintage` 等变种 ID，解析器能正确抽取 AI 玩法字段，临时 SQLite upsert/readback 可保留 `play_asset_id`，`git diff --check` 通过。
+
 ## 2026-05-14
 
 ### [VE] 2026-05-13 筛选复核看板刷新与 CLIP 日内展示修正

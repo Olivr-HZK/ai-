@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, timedelta
+import re
 from typing import Any
 
 from ua_workflows.shared.db.video_enhancer import (
@@ -48,6 +49,114 @@ def _fallback_variant_key(item: dict[str, Any]) -> str:
     return f"unmatched::{str(item.get('ad_key') or '')[:16]}"
 
 
+def _split_label_list(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return [x.strip() for x in re.split(r"[、,，;/；\s]+", text) if x.strip()]
+
+
+def _asset_lookup(assets: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(asset.get("asset_id") or "").strip(): asset for asset in assets if asset.get("asset_id")}
+
+
+def _subtag_lookup(asset: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for subtag in asset.get("subtags") or []:
+        if isinstance(subtag, dict) and subtag.get("tag_id"):
+            rows[str(subtag.get("tag_id") or "").strip()] = subtag
+    return rows
+
+
+def _new_variant_key(item: dict[str, Any], asset_id: str, variant_name: str) -> str:
+    compact = normalize_effect_one_liner(
+        " ".join(
+            str(item.get(key) or "").strip()
+            for key in ("play_fingerprint", "effect_one_liner", "differentiator")
+            if str(item.get(key) or "").strip()
+        )
+        or variant_name
+    )
+    suffix = compact[:80] if compact else str(item.get("ad_key") or "")[:16]
+    return f"{asset_id}::new_variant::{suffix}"
+
+
+def _apply_ai_asset_choice(item: dict[str, Any], assets: list[dict[str, Any]]) -> bool:
+    raw_asset_id = str(item.get("play_asset_id") or "").strip()
+    raw_label = str(item.get("play_asset_novelty_label") or "").strip()
+    if not raw_asset_id and not raw_label:
+        return False
+
+    normalized_asset_id = raw_asset_id.lower()
+    if normalized_asset_id in {"new_play", "新玩法", "待沉淀", "none", "null", "-"} or raw_label == "新玩法":
+        variant_key = _fallback_variant_key(item)
+        proposed_name = str(item.get("play_asset_name") or "").strip()
+        proposed_variant = str(item.get("play_asset_subtag_names") or proposed_name or "待沉淀变种").strip()
+        if proposed_name or proposed_variant:
+            compact = normalize_effect_one_liner(
+                " ".join(
+                    x
+                    for x in (
+                        proposed_name,
+                        proposed_variant,
+                        str(item.get("play_fingerprint") or ""),
+                        str(item.get("effect_one_liner") or ""),
+                    )
+                    if x
+                )
+            )
+            if compact:
+                variant_key = f"new_play::{compact[:80]}"
+        item["play_asset_id"] = ""
+        item["play_asset_name"] = proposed_name or "待沉淀"
+        item["play_asset_confidence"] = "AI"
+        item["play_asset_matched_keywords"] = ""
+        item["play_asset_subtag_ids"] = ""
+        item["play_asset_subtag_names"] = proposed_variant
+        item["play_asset_variant_key"] = variant_key
+        item["play_asset_variant_name"] = proposed_variant
+        item["play_asset_match_source"] = "ai"
+        return True
+
+    assets_by_id = _asset_lookup(assets)
+    asset = assets_by_id.get(raw_asset_id)
+    if not asset:
+        return False
+
+    subtag_by_id = _subtag_lookup(asset)
+    raw_subtag_ids = _split_label_list(item.get("play_asset_subtag_ids"))
+    known_subtag_ids = [tag_id for tag_id in raw_subtag_ids if tag_id in subtag_by_id]
+    new_variant_requested = any(tag.lower() in {"new_variant", "新变种", "待沉淀变种"} for tag in raw_subtag_ids) or raw_label == "新变种"
+
+    subtag_names = [
+        str(subtag_by_id[tag_id].get("name") or "").strip()
+        for tag_id in known_subtag_ids
+        if str(subtag_by_id[tag_id].get("name") or "").strip()
+    ]
+    ai_names = _split_label_list(item.get("play_asset_subtag_names"))
+    variant_name = "、".join(subtag_names) if subtag_names else "、".join(ai_names)
+    if not variant_name:
+        variant_name = "待沉淀变种" if new_variant_requested else "基础变体"
+
+    if known_subtag_ids:
+        variant_key = f"{raw_asset_id}::{','.join(known_subtag_ids)}"
+    elif new_variant_requested:
+        variant_key = _new_variant_key(item, raw_asset_id, variant_name)
+    else:
+        variant_key = f"{raw_asset_id}::base"
+
+    item["play_asset_id"] = raw_asset_id
+    item["play_asset_name"] = str(item.get("play_asset_name") or asset.get("name") or "").strip()
+    item["play_asset_confidence"] = "AI"
+    item["play_asset_matched_keywords"] = ""
+    item["play_asset_subtag_ids"] = "、".join(known_subtag_ids)
+    item["play_asset_subtag_names"] = variant_name if known_subtag_ids else ("" if variant_name == "基础变体" else variant_name)
+    item["play_asset_variant_key"] = variant_key
+    item["play_asset_variant_name"] = variant_name
+    item["play_asset_match_source"] = "ai"
+    return True
+
+
 def _apply_asset_match(item: dict[str, Any], match: dict[str, Any] | None) -> None:
     if not match:
         variant_key = _fallback_variant_key(item)
@@ -90,6 +199,8 @@ def annotate_items_with_play_assets(
     for item in items:
         if not isinstance(item, dict):
             continue
+        if _apply_ai_asset_choice(item, assets):
+            continue
         _apply_asset_match(item, match_play_asset(item, assets=assets, evidence=item))
     return items
 
@@ -125,6 +236,8 @@ def _historical_rows(
                    COALESCE(cl.title, '') AS title,
                    COALESCE(cl.body, '') AS body,
                    d.effect_one_liner, d.play_fingerprint, d.differentiator,
+                   d.play_asset_id, d.play_asset_name, d.play_asset_subtag_ids, d.play_asset_subtag_names,
+                   d.play_asset_novelty_label, d.play_asset_match_source, d.play_asset_classification_reason,
                    d.material_tags
             FROM daily_creative_insights d
             LEFT JOIN creative_library cl ON cl.ad_key = d.ad_key
