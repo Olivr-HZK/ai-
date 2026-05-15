@@ -191,11 +191,6 @@ def init_db() -> None:
             )
         if "insight_cover_style" not in cl_cols:
             cur.execute("ALTER TABLE creative_library ADD COLUMN insight_cover_style TEXT")
-        # 语义嵌入去重
-        cur.execute("PRAGMA table_info(creative_library)")
-        cl_cols2 = {str(r["name"]) for r in cur.fetchall()}
-        if "analysis_embedding" not in cl_cols2:
-            cur.execute("ALTER TABLE creative_library ADD COLUMN analysis_embedding BLOB")
         cur.execute("PRAGMA table_info(creative_library)")
         cl_cols3 = {str(r["name"]) for r in cur.fetchall()}
         if "cover_embedding" not in cl_cols3:
@@ -1496,7 +1491,7 @@ def load_cover_style_rows_for_dates_grouped_by_appid(
         ph = ",".join(["?"] * len(dlist))
         cur.execute(
             f"""
-            SELECT ad_key, appid, insight_cover_style, COALESCE(all_exposure_value, 0) AS exp
+            SELECT target_date, ad_key, appid, insight_cover_style, COALESCE(all_exposure_value, 0) AS exp
             FROM daily_creative_insights
             WHERE target_date IN ({ph})
               AND COALESCE(TRIM(insight_cover_style), '') <> ''
@@ -1520,6 +1515,7 @@ def load_cover_style_rows_for_dates_grouped_by_appid(
                 continue
             by_app[aid].append(
                 {
+                    "target_date": str(row["target_date"] or ""),
                     "ad_key": ak,
                     "style_json": obj,
                     "exposure": int(row["exp"] or 0),
@@ -1757,6 +1753,13 @@ def crossday_filter_items_against_creative_library(
                         "matched_ad_key": hit_ak,
                         "matched_date": hit_date,
                         "appid": appid,
+                        "product": str(item.get("product") or "").strip(),
+                        "preview_img_url": str(c.get("preview_img_url") or "").strip(),
+                        "image_url": _pick_image_url_from_raw(c),
+                        "video_url": _pick_video_url_from_raw(c),
+                        "all_exposure_value": int(c.get("all_exposure_value") or 0),
+                        "title": str(c.get("title") or "").strip(),
+                        "body": str(c.get("body") or "").strip(),
                     }
                 )
             else:
@@ -2049,28 +2052,6 @@ def get_deduped_items_for_analysis(
     return deduped_items, report
 
 
-# ---------------------------------------------------------------------------
-# 语义嵌入：存储与查询
-# ---------------------------------------------------------------------------
-SEMANTIC_DEDUP_THRESHOLD = 0.92  # cosine similarity 阈值
-
-def upsert_analysis_embedding(ad_key: str, embedding_blob: bytes) -> bool:
-    """将分析文本的嵌入向量写入 creative_library。"""
-    init_db()
-    conn = _get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE creative_library SET analysis_embedding = ?, "
-            "updated_at_local = datetime('now','localtime') WHERE ad_key = ?",
-            (embedding_blob, ad_key),
-        )
-        conn.commit()
-        return cur.rowcount > 0
-    finally:
-        conn.close()
-
-
 def upsert_effect_one_liner_embedding(ad_key: str, embedding_blob: bytes) -> bool:
     """将 effect_one_liner 的嵌入向量写入 creative_library。"""
     init_db()
@@ -2086,113 +2067,6 @@ def upsert_effect_one_liner_embedding(ad_key: str, embedding_blob: bytes) -> boo
         return cur.rowcount > 0
     finally:
         conn.close()
-
-
-def load_embeddings_for_crossday(
-    target_date: str,
-    appid_filter: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    加载 creative_library 中「早于 target_date」且有嵌入向量的记录。
-    返回 [{ad_key, appid, analysis_embedding(bytes), first_target_date}]。
-    """
-    init_db()
-    conn = _get_conn()
-    try:
-        cur = conn.cursor()
-        sql = """
-        SELECT ad_key, appid, analysis_embedding, first_target_date
-        FROM creative_library
-        WHERE first_target_date < ?
-          AND first_target_date IS NOT NULL
-          AND analysis_embedding IS NOT NULL
-        """
-        params: list = [target_date]
-        if appid_filter:
-            sql += " AND appid = ?"
-            params.append(appid_filter)
-        cur.execute(sql, params)
-        return [
-            {
-                "ad_key": r["ad_key"],
-                "appid": r["appid"],
-                "analysis_embedding": bytes(r["analysis_embedding"]),
-                "first_target_date": r["first_target_date"],
-            }
-            for r in cur.fetchall()
-            if r["analysis_embedding"]
-        ]
-    finally:
-        conn.close()
-
-
-def semantic_crossday_filter(
-    target_date: str,
-    items_with_analysis: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    语义嵌入去重：对已有 analysis 的素材，与历史嵌入做 cosine similarity 比较。
-    仅在同 appid 内比较。
-    返回 (kept_items, semantic_removed)。
-    """
-    from ua_workflows.shared.llm.client import bytes_to_embedding, call_embedding, cosine_similarity, embedding_to_bytes
-
-    init_db()
-    kept: List[Dict[str, Any]] = []
-    removed: List[Dict[str, Any]] = []
-
-    by_app: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for it in items_with_analysis:
-        appid = str(it.get("appid") or "").strip()
-        by_app[appid].append(it)
-
-    for appid, bucket in by_app.items():
-        hist = load_embeddings_for_crossday(target_date, appid_filter=appid if appid else None)
-        if not hist:
-            kept.extend(bucket)
-            continue
-
-        hist_vecs = [(h["ad_key"], h["first_target_date"], bytes_to_embedding(h["analysis_embedding"])) for h in hist]
-
-        for it in bucket:
-            c = it.get("creative") or {}
-            ad_key = str(c.get("ad_key") or "").strip()
-            analysis_text = str(it.get("_analysis_text") or "").strip()
-            if not analysis_text or not ad_key:
-                kept.append(it)
-                continue
-
-            try:
-                vec = call_embedding(analysis_text[:2000])
-            except Exception as e:
-                print(f"[semantic-dedup] embedding failed ad_key={ad_key[:12]}: {e}")
-                kept.append(it)
-                continue
-
-            upsert_analysis_embedding(ad_key, embedding_to_bytes(vec))
-
-            best_sim = 0.0
-            best_match = ""
-            best_date = ""
-            for h_ak, h_dt, h_vec in hist_vecs:
-                sim = cosine_similarity(vec, h_vec)
-                if sim > best_sim:
-                    best_sim = sim
-                    best_match = h_ak
-                    best_date = h_dt
-
-            if best_sim >= SEMANTIC_DEDUP_THRESHOLD:
-                removed.append({
-                    "ad_key": ad_key,
-                    "reason": f"semantic(sim={best_sim:.3f})",
-                    "matched_ad_key": best_match,
-                    "matched_date": best_date,
-                    "appid": appid,
-                })
-            else:
-                kept.append(it)
-
-    return kept, removed
 
 
 # ---------------------------------------------------------------------------

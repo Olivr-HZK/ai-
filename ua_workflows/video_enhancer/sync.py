@@ -1,9 +1,9 @@
 """
 把 raw + 灵感分析写入指定飞书多维表，并把统一 UA 建议推送到飞书卡片。
 
-主表同步：仅写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]），
-且 exclude_from_bitable 不为真（命中老玩法、embedding 玩法重复、成人风险或「我方已经投过」的素材不同步主表）。
-同步前会补跑老玩法/embedding 玩法重复/成人风险/已投放匹配，为结果补全 exclude 与补标。
+主表同步：写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]）。
+成人风险、低适配主题、已投放等硬风险仍不同步；玩法重复默认仅打标/归类，避免主表过瘦。
+同步前会补跑玩法资产、成人风险、低适配、已投放等匹配，为结果补全标签与字段。
 封面图、**视频**均尽量下载为附件上传（`VIDEO_BITABLE_MAX_MB` 限制大小；
 `VIDEO_BITABLE_UPLOAD=0` 可关视频上传）。
 不写入 raw 中仅入库、未分析或分析失败的条目。聚类表逻辑不变。
@@ -48,12 +48,16 @@ from ua_workflows.shared.db.video_enhancer import (
     apply_intraday_effect_bitable_filter,
     apply_old_effect_bitable_filter,
     init_db as init_pipeline_db,
-    load_daily_material_report,
     update_push_status,
 )
 from ua_workflows.video_enhancer.content_filters import (
     apply_adult_content_filter,
     apply_low_fit_theme_filter,
+)
+from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
+from ua_workflows.video_enhancer.play_asset_report import (
+    annotate_daily_play_asset_novelty,
+    build_daily_asset_variant_report,
 )
 
 load_dotenv()
@@ -97,6 +101,13 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "核心卖点", "type": 1},
     {"field_name": "Hook解析", "type": 1},
     {"field_name": "脚本/口播", "type": 1},
+    {"field_name": "玩法资产", "type": 1},
+    {"field_name": "玩法变种", "type": 1},
+    {"field_name": "玩法新旧", "type": 1},
+    {"field_name": "玩法资产ID", "type": 1},
+    {"field_name": "玩法变种ID", "type": 1},
+    {"field_name": "玩法指纹", "type": 1},
+    {"field_name": "差异点", "type": 1},
     {
         "field_name": "风险等级",
         "type": 3,
@@ -647,6 +658,29 @@ def _extract_card_media(
     return v_out, i_out
 
 
+def _analysis_exclusion_is_hard(row: Dict[str, Any]) -> bool:
+    if not row.get("exclude_from_bitable"):
+        return False
+    hard_keys = (
+        "adult_content_filter_match",
+        "low_fit_theme_filter_match",
+        "launched_effect_match",
+    )
+    if any(row.get(key) for key in hard_keys):
+        return True
+    soft_play_keys = (
+        "intraday_effect_match",
+        "old_effect_match",
+        "effect_embedding_duplicate_match",
+    )
+    if any(row.get(key) for key in soft_play_keys) and _env_enabled(
+        "BITABLE_SYNC_INCLUDE_PLAY_DUPLICATE_EXCLUDES",
+        "1",
+    ):
+        return False
+    return True
+
+
 def raw_items_with_successful_analysis(
     raw: Dict[str, Any],
     analysis: Dict[str, Any],
@@ -677,7 +711,7 @@ def raw_items_with_successful_analysis(
             continue
         if not a.strip() or a.startswith("[ERROR]"):
             continue
-        if it.get("exclude_from_bitable"):
+        if _analysis_exclusion_is_hard(it):
             continue
         item = raw_by_ad.get(k)
         if item is None:
@@ -753,24 +787,43 @@ def build_daily_bitable_tag_map(target_date: str) -> Dict[str, List[str]]:
         "BITABLE_DAILY_PLAY_TAG_LOOKBACK_DAYS",
         _env_int("OLD_EFFECT_LOOKBACK_DAYS", 7),
     )
-    report = load_daily_material_report(target_date, lookback_days=lookback)
+    report = build_daily_asset_variant_report(target_date, lookback_days=lookback)
     tag_map: Dict[str, List[str]] = {}
 
-    for cluster in report.get("new_play_clusters") or []:
+    for item in report.get("asset_variant_items") or []:
+        if not isinstance(item, dict):
+            continue
+        tags: List[str] = []
+        asset_name = _short_tag_text(item.get("play_asset_name"))
+        variant_name = _short_tag_text(item.get("play_asset_variant_name"))
+        novelty = str(item.get("play_asset_novelty_label") or "").strip()
+        if asset_name:
+            tags.append(f"玩法资产:{asset_name}")
+        if variant_name:
+            tags.append(f"玩法变种:{variant_name}")
+        if novelty == "新玩法":
+            tags.append("日报:新玩法资产")
+        elif novelty == "新变种":
+            tags.append("日报:新玩法变种")
+        elif novelty:
+            tags.append("日报:已沉淀玩法")
+        _add_tags(tag_map, item.get("ad_key"), tags)
+
+    for cluster in report.get("new_asset_variant_clusters") or []:
         if not isinstance(cluster, dict):
             continue
-        cluster_key = _short_tag_text(
-            cluster.get("play_cluster_key")
-            or cluster.get("effect_one_liner")
-            or cluster.get("play_fingerprint")
-        )
+        asset_name = _short_tag_text(cluster.get("play_asset_name"))
+        variant_name = _short_tag_text(cluster.get("play_asset_variant_name"))
         count = int(cluster.get("material_count") or 1)
         rep_ad_key = str(cluster.get("representative_ad_key") or "").strip()
-        base_tags = ["日报:新玩法"]
-        if cluster_key:
-            base_tags.append(f"玩法族:{cluster_key}")
+        novelty_label = str(cluster.get("novelty_label") or "新变种")
+        base_tags = ["日报:新玩法" if novelty_label == "新玩法" else "日报:新玩法变种"]
+        if asset_name:
+            base_tags.append(f"玩法资产:{asset_name}")
+        if variant_name:
+            base_tags.append(f"玩法变种:{variant_name}")
         if count > 1:
-            base_tags.append(f"同玩法素材数:{count}")
+            base_tags.append(f"同资产变种素材数:{count}")
 
         members = cluster.get("members") or []
         for member in members:
@@ -779,18 +832,28 @@ def build_daily_bitable_tag_map(target_date: str) -> Dict[str, List[str]]:
             member_ad_key = str(member.get("ad_key") or "").strip()
             member_tags = list(base_tags)
             if member_ad_key and member_ad_key == rep_ad_key:
-                member_tags.insert(0, "日报:新玩法代表")
+                member_tags.insert(0, "日报:新玩法/新变种代表")
             else:
-                member_tags.append("日报:同玩法素材")
+                member_tags.append("日报:同资产变种素材")
             _add_tags(tag_map, member_ad_key, member_tags)
 
         if rep_ad_key:
-            _add_tags(tag_map, rep_ad_key, ["日报:新玩法代表", *base_tags])
+            _add_tags(tag_map, rep_ad_key, ["日报:新玩法/新变种代表", *base_tags])
 
     for item in report.get("old_play_items") or []:
         if not isinstance(item, dict):
             continue
-        tags = ["日报:老玩法换素材"]
+        current_tags = tag_map.get(str(item.get("ad_key") or "").strip(), [])
+        has_asset_novelty = any(
+            tag in current_tags
+            for tag in (
+                "日报:新玩法资产",
+                "日报:新玩法变种",
+                "日报:新玩法",
+                "日报:新玩法/新变种代表",
+            )
+        )
+        tags = ["一句话口径:老玩法"] if has_asset_novelty else ["日报:老玩法换素材"]
         first_seen = str(item.get("effect_first_seen_date") or "").strip()
         if first_seen:
             tags.append(f"玩法首次:{first_seen}")
@@ -832,14 +895,17 @@ def should_skip_bitable_same_play_member(
     daily_tags: List[str],
 ) -> bool:
     """
-    Keep Bitable review focused on one representative per same-day new-play
-    cluster. The Feishu push already shows representatives only; syncing all
-    same-play members creates review noise and is commonly marked as duplicate.
+    Optional legacy narrow-sync mode. The default is now to sync more rows into
+    Bitable and use play asset / variant fields for review grouping.
     """
-    if not _env_enabled("BITABLE_SYNC_DAILY_PLAY_REPRESENTATIVES_ONLY", "1"):
+    if not _env_enabled("BITABLE_SYNC_DAILY_PLAY_REPRESENTATIVES_ONLY", "0"):
         return False
     tag_set = {str(t or "").strip() for t in daily_tags}
-    return "日报:同玩法素材" in tag_set and "日报:新玩法代表" not in tag_set
+    return (
+        ("日报:同玩法素材" in tag_set or "日报:同资产变种素材" in tag_set)
+        and "日报:新玩法代表" not in tag_set
+        and "日报:新玩法/新变种代表" not in tag_set
+    )
 
 
 _HIGH_ACCEPTANCE_THEME_PATTERNS: List[tuple[str, str, int]] = [
@@ -886,7 +952,7 @@ def acceptance_priority_tags(
     tags: List[str] = []
     tag_set = {str(t or "").strip() for t in daily_tags}
 
-    if "日报:新玩法代表" in tag_set:
+    if "日报:新玩法代表" in tag_set or "日报:新玩法/新变种代表" in tag_set:
         score += 3
         tags.append("采纳优先:新玩法代表")
     if "日报:老玩法换素材" in tag_set:
@@ -910,11 +976,11 @@ def should_skip_low_acceptance_candidate(
     score: int,
     daily_tags: List[str],
 ) -> bool:
-    if not _env_enabled("BITABLE_ACCEPTANCE_PRIORITY_SYNC_ENABLED", "1"):
+    if not _env_enabled("BITABLE_ACCEPTANCE_PRIORITY_SYNC_ENABLED", "0"):
         return False
     tag_set = {str(t or "").strip() for t in daily_tags}
     # New-play representatives are already sparse and useful for calibration.
-    if "日报:新玩法代表" in tag_set:
+    if "日报:新玩法代表" in tag_set or "日报:新玩法/新变种代表" in tag_set:
         return False
     threshold = _env_int(
         "BITABLE_ACCEPTANCE_PRIORITY_MIN_SCORE",
@@ -978,6 +1044,7 @@ def sync_cluster_cards_to_bitable(
 
 def main() -> None:
     args = parse_args()
+    maybe_pull_play_asset_doc()
     app_token, table_id = parse_bitable_url(args.url)
 
     raw = json.loads(Path(args.raw).read_text(encoding="utf-8"))
@@ -996,6 +1063,8 @@ def main() -> None:
     effect_by_ad: Dict[str, str] = {}
     hook_by_ad: Dict[str, str] = {}
     voiceover_by_ad: Dict[str, str] = {}
+    play_fingerprint_by_ad: Dict[str, str] = {}
+    differentiator_by_ad: Dict[str, str] = {}
     meta_by_ad = build_meta_by_ad_from_analysis_payload(analysis)
     for it in analysis.get("results") or []:
         if isinstance(it, dict):
@@ -1005,6 +1074,8 @@ def main() -> None:
                 effect_by_ad[k] = str(it.get("effect_one_liner") or "")
                 hook_by_ad[k] = str(it.get("hook_one_liner") or "")
                 voiceover_by_ad[k] = str(it.get("voiceover_script") or "")
+                play_fingerprint_by_ad[k] = str(it.get("play_fingerprint") or "")
+                differentiator_by_ad[k] = str(it.get("differentiator") or "")
 
     need_raw_sync = args.sync_target in ("both", "raw")
     need_cluster_sync = args.sync_target in ("both", "cluster")
@@ -1029,7 +1100,7 @@ def main() -> None:
                 if n_low_fit:
                     print(f"[sync] 低采纳主题处理 {n_low_fit} 条（排除/补标）")
 
-            intraday_effect_on = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "1").strip().lower() not in (
+            intraday_effect_on = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "0").strip().lower() not in (
                 "0",
                 "false",
                 "no",
@@ -1044,7 +1115,7 @@ def main() -> None:
                 except Exception as e:
                     print(f"[sync] intraday_effect_filter 跳过: {e}")
 
-            old_effect_on = (os.getenv("OLD_EFFECT_BITABLE_FILTER_ENABLED") or "1").strip().lower() not in (
+            old_effect_on = (os.getenv("OLD_EFFECT_BITABLE_FILTER_ENABLED") or "0").strip().lower() not in (
                 "0",
                 "false",
                 "no",
@@ -1059,7 +1130,7 @@ def main() -> None:
                 except Exception as e:
                     print(f"[sync] old_effect_filter 跳过: {e}")
 
-            effect_embedding_dup_on = (os.getenv("EFFECT_EMBEDDING_DUP_FILTER_ENABLED") or "1").strip().lower() not in (
+            effect_embedding_dup_on = (os.getenv("EFFECT_EMBEDDING_DUP_FILTER_ENABLED") or "0").strip().lower() not in (
                 "0",
                 "false",
                 "no",
@@ -1100,6 +1171,29 @@ def main() -> None:
                         print(f"[sync] 我方已投放（关键词/embedding）处理 {n_le} 条（排除/补标）")
                 except Exception as e:
                     print(f"[sync] launched_effects 跳过: {e}")
+
+    play_asset_by_ad: Dict[str, Dict[str, Any]] = {}
+    res_list_for_assets = analysis.get("results")
+    if isinstance(res_list_for_assets, list) and res_list_for_assets:
+        try:
+            annotate_daily_play_asset_novelty(res_list_for_assets, target_date)
+            for it in res_list_for_assets:
+                if not isinstance(it, dict):
+                    continue
+                k = str(it.get("ad_key") or "").strip()
+                if k:
+                    play_asset_by_ad[k] = {
+                        "play_asset_name": str(it.get("play_asset_name") or ""),
+                        "play_asset_variant_name": str(it.get("play_asset_variant_name") or ""),
+                        "play_asset_novelty_label": str(it.get("play_asset_novelty_label") or ""),
+                        "play_asset_id": str(it.get("play_asset_id") or ""),
+                        "play_asset_variant_key": str(it.get("play_asset_variant_key") or ""),
+                        "play_asset_matched_keywords": str(it.get("play_asset_matched_keywords") or ""),
+                    }
+            if play_asset_by_ad:
+                print(f"[sync] 已补全玩法资产/变种字段 {len(play_asset_by_ad)} 条。")
+        except Exception as e:
+            print(f"[sync] 玩法资产/变种补全失败，已跳过: {e}")
 
     material_tags_by_ad: Dict[str, List[str]] = {}
     risk_level_by_ad: Dict[str, str] = {}
@@ -1183,6 +1277,7 @@ def main() -> None:
                 continue
             base_material_tags = material_tags_by_ad.get(ad_key, [])
             risk_level = risk_level_by_ad.get(ad_key, "")
+            play_asset_info = play_asset_by_ad.get(ad_key, {})
             priority_score, priority_tags = acceptance_priority_tags(
                 creative=c,
                 analysis_text=analysis_by_ad.get(ad_key, ""),
@@ -1219,6 +1314,13 @@ def main() -> None:
                 "核心卖点": effect_by_ad.get(ad_key, ""),
                 "Hook解析": hook_by_ad.get(ad_key, ""),
                 "脚本/口播": voiceover_by_ad.get(ad_key, ""),
+                "玩法资产": play_asset_info.get("play_asset_name", ""),
+                "玩法变种": play_asset_info.get("play_asset_variant_name", ""),
+                "玩法新旧": play_asset_info.get("play_asset_novelty_label", ""),
+                "玩法资产ID": play_asset_info.get("play_asset_id", ""),
+                "玩法变种ID": play_asset_info.get("play_asset_variant_key", ""),
+                "玩法指纹": play_fingerprint_by_ad.get(ad_key, ""),
+                "差异点": differentiator_by_ad.get(ad_key, ""),
                 "风险等级": risk_level,
                 "视频时长": int(c.get("video_duration") or 0),
                 "接受情况": "待定",
@@ -1234,6 +1336,10 @@ def main() -> None:
             tag_list.extend(base_material_tags)
             tag_list.extend(daily_tag_list)
             tag_list.extend(priority_tags)
+            if play_asset_info.get("play_asset_name"):
+                tag_list.append(f"玩法资产:{play_asset_info.get('play_asset_name')}")
+            if play_asset_info.get("play_asset_variant_name"):
+                tag_list.append(f"玩法变种:{play_asset_info.get('play_asset_variant_name')}")
             fields["素材标签"] = "、".join(dict.fromkeys(tag_list))
             created_ms = to_ms_from_unix_sec(c.get("created_at"))
             first_seen_ms = to_ms_from_unix_sec(c.get("first_seen"))

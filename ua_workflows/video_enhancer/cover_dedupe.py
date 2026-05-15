@@ -6,7 +6,7 @@
 1) 指纹（默认开）：与 creative_library 早于当日的记录比对（与灵感分析 Step B 一致），见
    video_enhancer_pipeline_db.crossday_filter_items_against_creative_library。
 2) 向量（默认开）：过去 N 日同 appid 的 insight_cover_style + 库内 cover_embedding 与今日向量并查集；
-   历史估值更高时剔除今日重复（reason: cover_style_cluster_vs_yesterday）。
+   只要今日封面命中历史 CLIP 簇，即判定为跨日旧封面并剔除（reason: cover_style_cluster_vs_yesterday）。
 
 环境变量同 Arrow2 / .env.example：COVER_STYLE_INTRADAY_ENABLED、COVER_VISUAL_DEDUP_THRESHOLD、
 COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED、COVER_STYLE_CROSS_DAY_ENABLED、COVER_STYLE_HISTORY_LOOKBACK_DAYS 等。
@@ -239,6 +239,8 @@ def _cluster_clip_dedupe(
                 "kind": "today",
                 "ad_key": r["ad_key"],
                 "exposure": int(r["exposure"]),
+                "product": str(r.get("product") or ""),
+                "cover_url": str(r.get("cover_url") or ""),
                 "vec": r["vec"],
             }
         )
@@ -255,6 +257,7 @@ def _cluster_clip_dedupe(
             {
                 "kind": "history",
                 "ad_key": ak,
+                "target_date": str(h.get("target_date") or ""),
                 "exposure": int(h.get("exposure") or 0),
                 "vec": vec,
             }
@@ -281,13 +284,18 @@ def _cluster_clip_dedupe(
         groups[uf.find(i)].append(i)
 
     for _root, idxs in groups.items():
-        best_i = max(idxs, key=lambda ii: nodes[ii]["exposure"])
-        best = nodes[best_i]
         today_in = [ii for ii in idxs if nodes[ii]["kind"] == "today"]
+        history_in = [ii for ii in idxs if nodes[ii]["kind"] == "history"]
         if not today_in:
             continue
-        if best["kind"] == "history":
+        if history_in:
             for ii in today_in:
+                best_h_i = max(
+                    history_in,
+                    key=lambda hi: cosine_similarity(nodes[ii]["vec"], nodes[hi]["vec"]),
+                )
+                best = nodes[best_h_i]
+                sim = cosine_similarity(nodes[ii]["vec"], best["vec"])
                 ak = nodes[ii]["ad_key"]
                 removed_detail.append(
                     {
@@ -295,9 +303,16 @@ def _cluster_clip_dedupe(
                         "reason": "cover_style_cluster_vs_yesterday",
                         "cluster_label": f"CLIP≥{threshold}",
                         "kept_ad_key": best["ad_key"],
+                        "matched_date": best.get("target_date") or "",
+                        "similarity": round(float(sim), 4),
+                        "product": str(nodes[ii].get("product") or ""),
+                        "all_exposure_value": int(nodes[ii].get("exposure") or 0),
+                        "cover_url": str(nodes[ii].get("cover_url") or ""),
                     }
                 )
         else:
+            best_i = max(idxs, key=lambda ii: nodes[ii]["exposure"])
+            best = nodes[best_i]
             bk = best["ad_key"]
             kept_today.add(bk)
             for ii in today_in:
@@ -309,6 +324,9 @@ def _cluster_clip_dedupe(
                             "reason": "cover_style_cluster",
                             "cluster_label": f"CLIP≥{threshold}",
                             "kept_ad_key": bk,
+                            "product": str(nodes[ii].get("product") or ""),
+                            "all_exposure_value": int(nodes[ii].get("exposure") or 0),
+                            "cover_url": str(nodes[ii].get("cover_url") or ""),
                         }
                     )
 
@@ -456,6 +474,7 @@ def apply_intraday_cover_style_dedupe(
                     "ad_key": ad_key,
                     "cover_url": cover,
                     "exposure": _exposure_value(c),
+                    "product": str(item.get("product") or ""),
                     "style_json": None,
                     "style_error": "",
                     "vec": None,
@@ -566,6 +585,7 @@ def apply_intraday_cover_style_dedupe(
                 "product": product,
                 "action": per_action,
                 "history_ref_count": len(hist),
+                "history_embedding_count": len(history_emb),
                 "yesterday_ref_count": len(hist),
                 "input": len(bucket),
                 "kept": len(kept_keys),
