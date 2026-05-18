@@ -234,6 +234,9 @@ async def main():
     per_product_before: dict[str, int] = {}
     per_product_after: dict[str, int] = {}
     per_product_truncated: dict[str, bool] = {}
+    per_product_date_hits: dict[str, int] = {}
+    per_product_resume_excluded: dict[str, int] = {}
+    per_product_duplicate_excluded: dict[str, int] = {}
 
     for r in results:
         kw = str(r.get("keyword") or "")
@@ -252,21 +255,33 @@ async def main():
             )
         ]
 
-        # 先按日期命中筛选（若指定 target_date）
+        product_key = comp.product or kw
+
+        # 先按日期命中筛选（若指定 target_date），再按 ad_key 做最终去重。
         candidates: list[dict[str, Any]] = []
+        seen_candidate_ad_keys: set[str] = set()
+        date_hit_cnt = 0
+        resume_excluded_cnt = 0
+        duplicate_excluded_cnt = 0
         for c in filtered:
             if args.target_date:
                 hit, _ = _creative_hits_target_date(c, args.target_date)
                 if not hit:
                     continue
+                date_hit_cnt += 1
 
                 # 重投素材一律不纳入
                 if _is_resume_advertising(c):
+                    resume_excluded_cnt += 1
                     continue
 
+            ad_key = str(c.get("ad_key") or "").strip()
+            if ad_key in seen_candidate_ad_keys:
+                duplicate_excluded_cnt += 1
+                continue
+            seen_candidate_ad_keys.add(ad_key)
             candidates.append(c)
 
-        product_key = comp.product or kw
         before_cnt = len(candidates)
         truncated = False
         if (
@@ -285,6 +300,13 @@ async def main():
         per_product_before[product_key] = per_product_before.get(product_key, 0) + before_cnt
         per_product_after[product_key] = per_product_after.get(product_key, 0) + after_cnt
         per_product_truncated[product_key] = per_product_truncated.get(product_key, False) or truncated
+        per_product_date_hits[product_key] = per_product_date_hits.get(product_key, 0) + date_hit_cnt
+        per_product_resume_excluded[product_key] = (
+            per_product_resume_excluded.get(product_key, 0) + resume_excluded_cnt
+        )
+        per_product_duplicate_excluded[product_key] = (
+            per_product_duplicate_excluded.get(product_key, 0) + duplicate_excluded_cnt
+        )
 
         for c in candidates:
             _apply_relaunch_pipeline_tag(c)
@@ -315,6 +337,9 @@ async def main():
         for k in sorted(per_product_after.keys()):
             print(
                 f"[filter] product={k} before={per_product_before.get(k,0)} after={per_product_after.get(k,0)} "
+                f"date_hits={per_product_date_hits.get(k,0)} "
+                f"resume_excluded={per_product_resume_excluded.get(k,0)} "
+                f"duplicate_excluded={per_product_duplicate_excluded.get(k,0)} "
                 f"truncated={per_product_truncated.get(k, False)}"
             )
 
@@ -345,6 +370,9 @@ async def main():
                 k: {
                     "before": per_product_before.get(k, 0),
                     "after": per_product_after.get(k, 0),
+                    "date_hits": per_product_date_hits.get(k, 0),
+                    "resume_excluded": per_product_resume_excluded.get(k, 0),
+                    "duplicate_excluded": per_product_duplicate_excluded.get(k, 0),
                     "truncated": per_product_truncated.get(k, False),
                 }
                 for k in sorted(set(per_product_after.keys()) | set(per_product_before.keys()))

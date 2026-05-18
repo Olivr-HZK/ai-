@@ -104,6 +104,43 @@ class CrawlSmokeCliTest(unittest.TestCase):
             },
         )
 
+    def test_dom_detail_merge_keeps_same_preview_distinct_ad_keys(self) -> None:
+        from ua_workflows.shared.guangdada.search import _merge_dom_cards_with_details
+
+        same_preview = "https://cdn.example/cover.jpg"
+        dom_cards = [
+            {"_result_page": 1, "_dom_idx": 0, "preview_img_url": same_preview},
+            {"_result_page": 1, "_dom_idx": 1, "preview_img_url": same_preview},
+        ]
+        detail_rows = [
+            {
+                "_result_page": 1,
+                "_dom_idx": 0,
+                "ad_key": "ad_a",
+                "preview_img_url": same_preview,
+                "first_seen": 1,
+            },
+            {
+                "_result_page": 1,
+                "_dom_idx": 1,
+                "ad_key": "ad_b",
+                "preview_img_url": same_preview,
+                "first_seen": 2,
+            },
+            {
+                "_result_page": 1,
+                "_dom_idx": 1,
+                "ad_key": "ad_b",
+                "preview_img_url": same_preview,
+                "first_seen": 2,
+            },
+        ]
+
+        merged = _merge_dom_cards_with_details(dom_cards, detail_rows)
+
+        self.assertEqual([x.get("ad_key") for x in merged], ["ad_a", "ad_b"])
+        self.assertTrue(all(x.get("_source") == "dom_detail" for x in merged))
+
 
 if __name__ == "__main__":
     unittest.main()

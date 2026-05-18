@@ -1731,6 +1731,7 @@ async def _search_one_keyword(
     # 重要：先关闭采集，避免把“搜索触发的相关性/其他请求”混进来
     capture_state["enabled"] = False
     batches_ref.clear()
+    await _reset_result_pagination_to_first_page(page, log_prefix=log_prefix, log_quiet=log_quiet)
     # 找搜索框（针对工具 Tab，根据你提供的 HTML 优先锁定 #rc_select_1）
     inp = None
     candidates = [
@@ -2725,8 +2726,13 @@ def _merge_prefer_dom_detail(
 
 
 def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]) -> list[dict]:
-    """以当前页面 DOM 卡片为底，按 preview_img_url 尽量用 detail 行覆盖；不以 napi 作为主结果源。"""
-    detail_by_preview: dict[str, dict] = {}
+    """
+    以当前页面 DOM 卡片为底，按卡片位置尽量用 detail 行覆盖；不以 napi 作为主结果源。
+
+    注意：同一批 Pixverse 模板会出现多条不同 ad_key 共用同一 preview_img_url。
+    因此 preview 只能作为“唯一匹配”兜底，不能作为素材身份或主去重 key。
+    """
+    detail_by_preview: dict[str, list[dict]] = {}
     detail_by_page_idx: dict[tuple[int, int], dict] = {}
     extra_details: list[dict] = []
     for d in detail_rows:
@@ -2734,7 +2740,7 @@ def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]
             continue
         prev = str(d.get("preview_img_url") or "").split("?")[0]
         if prev:
-            detail_by_preview[prev] = d
+            detail_by_preview.setdefault(prev, []).append(d)
         try:
             page_no = int(d.get("_result_page") or 1)
             dom_idx = int(d.get("_dom_idx"))
@@ -2746,40 +2752,49 @@ def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]
         extra_details.append(d)
 
     merged: list[dict] = []
-    seen_keys: set[str] = set()
+    seen_dom_keys: set[str] = set()
     seen_page_idx: set[tuple[int, int]] = set()
+    seen_previews: set[str] = set()
+    seen_ad_keys: set[str] = set()
     for card in dom_cards:
         if not isinstance(card, dict):
             continue
         prev = str(card.get("preview_img_url") or "").split("?")[0]
         page_no = card.get("_result_page") or 1
-        key = prev or f"_dom_page_{page_no}_idx_{card.get('_dom_idx', id(card))}"
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
         try:
             page_idx_key = (int(page_no), int(card.get("_dom_idx")))
         except Exception:
-            page_idx_key = (-1, -1)
-        seen_page_idx.add(page_idx_key)
-        detail = detail_by_preview.get(prev) if prev else None
+            page_idx_key = None
+        if page_idx_key is not None:
+            dom_key = f"page:{page_idx_key[0]}:{page_idx_key[1]}"
+        else:
+            dom_key = f"preview:{prev}" if prev else f"obj:{id(card)}"
+        if dom_key in seen_dom_keys:
+            continue
+        seen_dom_keys.add(dom_key)
+        if page_idx_key is not None:
+            seen_page_idx.add(page_idx_key)
+        if prev:
+            seen_previews.add(prev)
+        detail = detail_by_page_idx.get(page_idx_key) if page_idx_key is not None else None
         if not detail:
-            detail = detail_by_page_idx.get(page_idx_key)
+            preview_matches = detail_by_preview.get(prev) if prev else None
+            if preview_matches and len(preview_matches) == 1:
+                detail = preview_matches[0]
         if detail:
             item = dict(card)
             item.update(detail)
             item["_source"] = "dom_detail"
-            merged.append(item)
         else:
             item = dict(card)
             item.setdefault("_source", "dom")
-            merged.append(item)
+        ak = str(item.get("ad_key") or "")
+        if ak:
+            if ak in seen_ad_keys:
+                continue
+            seen_ad_keys.add(ak)
+        merged.append(item)
 
-    seen_ad_keys = {
-        str(x.get("ad_key") or "")
-        for x in merged
-        if isinstance(x, dict) and x.get("ad_key")
-    }
     for d in detail_rows:
         if not isinstance(d, dict):
             continue
@@ -2787,21 +2802,23 @@ def _merge_dom_cards_with_details(dom_cards: list[dict], detail_rows: list[dict]
         if ak and ak in seen_ad_keys:
             continue
         prev = str(d.get("preview_img_url") or "").split("?")[0]
-        if prev and prev in seen_keys:
-            continue
         try:
             page_idx_key = (int(d.get("_result_page") or 1), int(d.get("_dom_idx")))
             if page_idx_key in seen_page_idx:
                 continue
         except Exception:
-            pass
+            page_idx_key = None
+        if (not ak) and prev and prev in seen_previews:
+            continue
         d2 = dict(d)
         d2.setdefault("_source", "dom_detail")
         merged.append(d2)
         if ak:
             seen_ad_keys.add(ak)
+        if page_idx_key is not None:
+            seen_page_idx.add(page_idx_key)
         if prev:
-            seen_keys.add(prev)
+            seen_previews.add(prev)
     return merged
 
 
@@ -3101,6 +3118,86 @@ async def _collect_keyword_crawl_result_latest_dom_detail(
     if not (result_for_kw.get("all_creatives") or []) and not log_quiet:
         print(f"{log_prefix}[提醒] 点卡主路径抓取后仍无素材。", file=sys.stderr)
     return result_for_kw
+
+
+async def _reset_result_pagination_to_first_page(
+    page,
+    log_prefix: str = "    ",
+    log_quiet: bool = False,
+) -> bool:
+    """
+    广大大搜索结果会在同一 SPA 页面里保留分页状态。上一个关键词翻到后页后，
+    下一个关键词若直接搜索，偶发会落在空页，导致 DOM 和 napi 都为空。
+    搜索新关键词前先回到第 1 页，避免跨产品继承旧分页。
+    """
+    try:
+        active = await page.evaluate(
+            """
+() => {
+  const item = document.querySelector('li.ant-pagination-item-active');
+  return item ? (item.textContent || '').trim() : '';
+}
+"""
+        )
+    except Exception:
+        active = ""
+    if str(active or "").strip() in ("", "1"):
+        return False
+
+    selectors = [
+        "li.ant-pagination-item-1:not(.ant-pagination-item-active) a",
+        "li.ant-pagination-item-1:not(.ant-pagination-item-active)",
+        "li[title='1']:not(.ant-pagination-item-active) a",
+        "li[title='1']:not(.ant-pagination-item-active)",
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() <= 0:
+                continue
+            if not await loc.is_visible(timeout=800):
+                continue
+            await loc.click(timeout=1500, force=True)
+            await page.wait_for_timeout(1500)
+            try:
+                await page.evaluate("window.scrollTo(0, 0)")
+            except Exception:
+                pass
+            _p(f"{log_prefix}[分页] 搜索前已重置到第 1 页", log_quiet=log_quiet)
+            return True
+        except Exception:
+            continue
+
+    try:
+        clicked = await page.evaluate(
+            """
+() => {
+  const items = Array.from(document.querySelectorAll('li.ant-pagination-item, li[title], button, a'));
+  const one = items.find(el => {
+    const text = (el.textContent || '').trim();
+    const title = (el.getAttribute('title') || '').trim();
+    const cls = el.className ? String(el.className) : '';
+    const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true' || cls.includes('disabled');
+    if (disabled || cls.includes('ant-pagination-item-active')) return false;
+    return text === '1' || title === '1';
+  });
+  if (!one) return false;
+  one.click();
+  return true;
+}
+"""
+        )
+        if clicked:
+            await page.wait_for_timeout(1500)
+            try:
+                await page.evaluate("window.scrollTo(0, 0)")
+            except Exception:
+                pass
+            _p(f"{log_prefix}[分页] 搜索前已重置到第 1 页", log_quiet=log_quiet)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 async def _collect_keyword_crawl_result_arrow2_latest_dom(
@@ -3476,6 +3573,29 @@ async def run_batch(
                             check_payload.append(_check_item(idx0, c0))
                         for idx0, c0 in enumerate(date_filtered_rows, 1):
                             date_filtered_payload.append(_check_item(idx0, c0))
+                        print(f"[summary] 产品={label!r} 正式素材数量={len(check_payload)}")
+
+                        def _print_edge_material(edge_label: str, item0: dict) -> None:
+                            print(
+                                f"[summary:{edge_label}] "
+                                f"index={int(item0.get('index') or 0):03d} "
+                                f"ad_key={item0.get('ad_key') or ''} "
+                                f"first_seen={item0.get('first_seen_utc8') or ''} "
+                                f"created_at={item0.get('created_at_utc8') or ''} "
+                                f"人气={item0.get('impression') or 0} "
+                                f"热度={item0.get('heat') or 0} "
+                                f"展示估值={item0.get('all_exposure_value') or 0} "
+                                f"title={str(item0.get('title') or '')[:90]!r} "
+                                f"preview={item0.get('preview_img_url') or ''} "
+                                f"media={item0.get('media_url') or ''}"
+                            )
+
+                        if check_payload:
+                            _print_edge_material("first", check_payload[0])
+                            _print_edge_material("last", check_payload[-1])
+                        else:
+                            print("[summary:first] 无正式素材")
+                            print("[summary:last] 无正式素材")
                         sample_payload = (
                             check_payload
                             if len(check_payload) <= 6
