@@ -61,7 +61,7 @@ def format_play_asset_catalog_for_prompt(
     """
     assets = assets if assets is not None else load_play_assets()
     if not assets:
-        return "（当前未读取到多维表格玩法标签；若无法归类，请在【玩法资产ID】写 new_play，并给出稳定中文玩法名。）"
+        return "（当前未读取到多维表格玩法标签；若无法归类，请在【玩法资产ID】写 unmatched_play，并将【玩法资产名称】留空。）"
     lines: list[str] = []
     for asset in assets:
         if str(asset.get("status") or "active").strip().lower() not in ("active", ""):

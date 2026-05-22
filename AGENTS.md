@@ -4,6 +4,13 @@
 
 ## 2026-05-22
 
+### [VE] 多维表玩法字段收口为只同步正式标签
+
+- `ua_workflows/video_enhancer/analyze.py` / `ua_workflows/video_enhancer/play_assets.py`：VE 灵感分析提示词改为只从多维表格「玩法」字段候选标签中选择；未命中时写 `unmatched_play`、玩法资产名称留空、玩法归类为「未命中」，不再要求模型生成 `new_play` 或自造新玩法名。
+- `ua_workflows/video_enhancer/play_asset_report.py`：AI 明确给出 `unmatched_play` / 「未命中」时停止规则兜底匹配，保持玩法标签为空，避免后续自动补回不确定标签。
+- `ua_workflows/video_enhancer/sync.py`：不删除多维表字段，但主表同步不再产出「玩法资产 / 玩法变种 / 玩法新旧 / 玩法资产ID / 玩法变种ID / 玩法判断来源 / 玩法判断理由 / 狭义新判断 / 狭义新理由」等内部列；仅继续写「玩法」「玩法指纹」「差异点」「模板指纹」等筛选需要字段，且「玩法」只有命中正式标签时才写。
+- `tests/test_ve_template_normalization.py`：新增回归测试覆盖未命中玩法不产出正式标签、同步字段不包含冗余内部列、`unmatched_play` 不触发规则兜底补标。
+
 ### [VE] 筛选看板改为三层漏斗与多维表实数对账
 
 - `ua_workflows/video_enhancer/review_dashboard.py`：筛选复核看板新增「三层筛选漏斗」，按爬取资格、封面/指纹去重、入表前业务筛选展示每层输入、输出和剔除原因；产品明细表同步展示抓到数、第一层后、指纹、跨日 CLIP、日内 CLIP、第二层后、业务硬拦、同模板、应入表与表内实际。

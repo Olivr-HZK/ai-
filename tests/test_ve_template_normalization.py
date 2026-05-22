@@ -674,6 +674,91 @@ class VeTemplateNormalizationTest(unittest.TestCase):
         self.assertEqual(reasons["pet_bad"], "non_human_photo_effect")
         self.assertEqual(reasons["room_bad"], "non_human_photo_effect")
 
+    def test_ve_prompt_leaves_unmatched_play_labels_blank(self) -> None:
+        from ua_workflows.video_enhancer.analyze import _ve_fixed_footer
+
+        footer = _ve_fixed_footer()
+
+        self.assertIn("若没有任何标签能覆盖核心玩法，玩法资产ID写 unmatched_play", footer)
+        self.assertIn("玩法资产名称留空", footer)
+        self.assertNotIn("写 new_play", footer)
+
+    def test_bitable_play_fields_do_not_emit_redundant_internal_columns(self) -> None:
+        from ua_workflows.video_enhancer.sync import _build_bitable_play_fields
+
+        fields = _build_bitable_play_fields(
+            {
+                "play_asset_id": "play_existing",
+                "play_asset_name": "赛场转播",
+                "play_asset_variant_name": "基础变体",
+                "play_asset_novelty_label": "已沉淀玩法",
+                "narrow_novelty_label": "老玩法换皮",
+                "play_asset_variant_key": "play_existing::base",
+                "play_asset_match_source": "ai",
+                "play_asset_classification_reason": "命中多维表玩法标签",
+                "template_fingerprint": "自拍开场生成球员卡定格模板",
+            },
+            play_fingerprint="自拍生成球员卡",
+            differentiator="无",
+            template_fingerprint="",
+        )
+
+        self.assertEqual(
+            fields,
+            {
+                "玩法": "赛场转播",
+                "玩法指纹": "自拍生成球员卡",
+                "差异点": "无",
+                "模板指纹": "自拍开场生成球员卡定格模板",
+            },
+        )
+
+    def test_bitable_play_fields_leave_unmatched_play_blank(self) -> None:
+        from ua_workflows.video_enhancer.sync import _build_bitable_play_fields
+
+        fields = _build_bitable_play_fields(
+            {
+                "play_asset_id": "new_play",
+                "play_asset_name": "AI 图片转视频",
+                "template_fingerprint": "自拍开场生成动态视频模板",
+            },
+            play_fingerprint="自拍生成动态视频",
+            differentiator="无",
+            template_fingerprint="",
+        )
+
+        self.assertEqual(fields["玩法"], "")
+        self.assertEqual(fields["玩法指纹"], "自拍生成动态视频")
+        self.assertEqual(fields["模板指纹"], "自拍开场生成动态视频模板")
+
+    def test_unmatched_play_choice_does_not_fallback_to_rule_label(self) -> None:
+        from ua_workflows.video_enhancer.play_asset_report import annotate_items_with_play_assets
+
+        items = [
+            {
+                "ad_key": "unmatched_a",
+                "play_asset_id": "unmatched_play",
+                "play_asset_name": "",
+                "play_asset_novelty_label": "未命中",
+                "effect_one_liner": "自拍生成球员卡",
+                "play_fingerprint": "自拍生成球员卡",
+            }
+        ]
+        assets = [
+            {
+                "asset_id": "sports_card",
+                "name": "赛场转播",
+                "include_keywords": ["球员卡"],
+                "min_score": 1,
+            }
+        ]
+
+        annotate_items_with_play_assets(items, assets=assets)
+
+        self.assertEqual(items[0]["play_asset_id"], "")
+        self.assertEqual(items[0]["play_asset_name"], "")
+        self.assertEqual(items[0]["play_asset_variant_name"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1369,9 +1369,35 @@ def _template_text_similarity(a: str, b: str) -> float:
 
 def _valid_play_asset_id(value: Any) -> str:
     text = str(value or "").strip()
-    if not text or text.lower() in {"none", "null", "unknown", "new_play"}:
+    if not text or text.lower() in {
+        "none",
+        "null",
+        "unknown",
+        "new_play",
+        "unmatched_play",
+        "unmatched",
+        "待沉淀",
+        "待人工归类",
+    }:
         return ""
     return text
+
+
+def _build_bitable_play_fields(
+    play_asset_info: Dict[str, Any],
+    *,
+    play_fingerprint: str = "",
+    differentiator: str = "",
+    template_fingerprint: str = "",
+) -> Dict[str, Any]:
+    asset_id = _valid_play_asset_id(play_asset_info.get("play_asset_id"))
+    play_name = str(play_asset_info.get("play_asset_name") or "").strip() if asset_id else ""
+    return {
+        "玩法": play_name,
+        "玩法指纹": str(play_fingerprint or "").strip(),
+        "差异点": str(differentiator or "").strip(),
+        "模板指纹": str(play_asset_info.get("template_fingerprint") or template_fingerprint or "").strip(),
+    }
 
 
 def _template_dedup_context(
@@ -2171,6 +2197,12 @@ def main() -> None:
                 own_product_line = f"{category}产品线"
             else:
                 own_product_line = "unknown产品线"
+            play_fields = _build_bitable_play_fields(
+                play_asset_info,
+                play_fingerprint=play_fingerprint_by_ad.get(ad_key, ""),
+                differentiator=differentiator_by_ad.get(ad_key, ""),
+                template_fingerprint=template_fingerprint_by_ad.get(ad_key, ""),
+            )
             fields: Dict[str, Any] = {
                 "标题": str(c.get("title") or ""),
                 "类目": category,
@@ -2186,19 +2218,7 @@ def main() -> None:
                 "核心卖点": effect_by_ad.get(ad_key, ""),
                 "Hook解析": hook_by_ad.get(ad_key, ""),
                 "脚本/口播": voiceover_by_ad.get(ad_key, ""),
-                "玩法": play_asset_info.get("play_asset_name", ""),
-                "玩法资产": play_asset_info.get("play_asset_name", ""),
-                "玩法变种": play_asset_info.get("play_asset_variant_name", ""),
-                "玩法新旧": play_asset_info.get("narrow_novelty_label") or play_asset_info.get("play_asset_novelty_label", ""),
-                "玩法资产ID": play_asset_info.get("play_asset_id", ""),
-                "玩法变种ID": play_asset_info.get("play_asset_variant_key", ""),
-                "玩法判断来源": play_asset_info.get("play_asset_match_source", ""),
-                "玩法判断理由": play_asset_info.get("play_asset_classification_reason", ""),
-                "玩法指纹": play_fingerprint_by_ad.get(ad_key, ""),
-                "差异点": differentiator_by_ad.get(ad_key, ""),
-                "模板指纹": play_asset_info.get("template_fingerprint") or template_fingerprint_by_ad.get(ad_key, ""),
-                "狭义新判断": play_asset_info.get("narrow_novelty_label") or play_asset_info.get("play_asset_novelty_label", ""),
-                "狭义新理由": play_asset_info.get("narrow_novelty_reason", ""),
+                **play_fields,
                 "日内相似素材数": int(daily_similarity_count_by_ad.get(ad_key) or 1),
                 "风险等级": risk_level,
                 "视频时长": int(c.get("video_duration") or 0),
