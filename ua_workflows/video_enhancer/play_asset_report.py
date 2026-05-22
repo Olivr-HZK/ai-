@@ -123,6 +123,18 @@ def _apply_ai_asset_choice(item: dict[str, Any], assets: list[dict[str, Any]]) -
         return False
 
     normalized_asset_id = raw_asset_id.lower()
+    if normalized_asset_id in {"unmatched_play", "unmatched"} or raw_label == "未命中":
+        item["play_asset_id"] = ""
+        item["play_asset_name"] = ""
+        item["play_asset_confidence"] = "AI"
+        item["play_asset_matched_keywords"] = ""
+        item["play_asset_subtag_ids"] = ""
+        item["play_asset_subtag_names"] = ""
+        item["play_asset_variant_key"] = _fallback_variant_key(item)
+        item["play_asset_variant_name"] = ""
+        item["play_asset_match_source"] = "ai"
+        return True
+
     if normalized_asset_id in {"new_play", "新玩法", "待沉淀", "none", "null", "-"} or raw_label == "新玩法":
         variant_key = _fallback_variant_key(item)
         proposed_name = str(item.get("play_asset_name") or "").strip()
