@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,27 @@ DEFAULT_PLAY_ASSET_PATH = PROJECT_ROOT / "config" / "ve_play_assets.json"
 LEGACY_PLAY_ASSET_PATH = DATA_DIR / "ve_play_assets.json"
 
 
+def _play_library_source() -> str:
+    return (os.getenv("VE_PLAY_LIBRARY_SOURCE") or "bitable").strip().lower()
+
+
+def legacy_play_library_enabled() -> bool:
+    return _play_library_source() in {"legacy", "legacy_json", "json", "local_json"}
+
+
 def load_play_assets(path: Path | None = None) -> list[dict[str, Any]]:
+    if path is None and not legacy_play_library_enabled():
+        try:
+            from ua_workflows.video_enhancer.bitable_play_labels import load_bitable_play_assets
+
+            assets = load_bitable_play_assets()
+            if assets or not os.getenv("VE_PLAY_LIBRARY_LEGACY_FALLBACK"):
+                return assets
+        except Exception as e:
+            if not os.getenv("VE_PLAY_LIBRARY_LEGACY_FALLBACK"):
+                print(f"[play-assets] 多维表格玩法库读取失败，返回空玩法库: {e}", flush=True)
+                return []
+
     asset_path = path or DEFAULT_PLAY_ASSET_PATH
     if path is None and not asset_path.exists() and LEGACY_PLAY_ASSET_PATH.exists():
         asset_path = LEGACY_PLAY_ASSET_PATH
@@ -39,6 +60,8 @@ def format_play_asset_catalog_for_prompt(
     detailed keyword lists stay in JSON for deterministic fallback matching.
     """
     assets = assets if assets is not None else load_play_assets()
+    if not assets:
+        return "（当前未读取到多维表格玩法标签；若无法归类，请在【玩法资产ID】写 new_play，并给出稳定中文玩法名。）"
     lines: list[str] = []
     for asset in assets:
         if str(asset.get("status") or "active").strip().lower() not in ("active", ""):

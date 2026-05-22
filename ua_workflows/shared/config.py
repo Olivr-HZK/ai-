@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dotenv import dotenv_values, load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_DIR = PROJECT_ROOT / "data"
@@ -24,3 +26,16 @@ def data_path(name: str) -> Path:
 
 def report_path(name: str) -> Path:
     return REPORTS_DIR / name
+
+
+def project_env_path() -> Path:
+    return PROJECT_ROOT / ".env"
+
+
+def load_project_env(*, override: bool = True) -> bool:
+    """Load the repo .env, preferring it over stale shell/cron values by default."""
+    return load_dotenv(project_env_path(), override=override)
+
+
+def project_env_values() -> dict[str, str | None]:
+    return dict(dotenv_values(project_env_path()))

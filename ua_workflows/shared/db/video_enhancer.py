@@ -225,12 +225,16 @@ def init_db() -> None:
             cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN play_fingerprint TEXT")
         if "differentiator" not in dci_cols_play:
             cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN differentiator TEXT")
+        if "template_fingerprint" not in dci_cols_play:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN template_fingerprint TEXT")
         cur.execute("PRAGMA table_info(creative_library)")
         cl_cols_play = {str(r["name"]) for r in cur.fetchall()}
         if "play_fingerprint" not in cl_cols_play:
             cur.execute("ALTER TABLE creative_library ADD COLUMN play_fingerprint TEXT")
         if "differentiator" not in cl_cols_play:
             cur.execute("ALTER TABLE creative_library ADD COLUMN differentiator TEXT")
+        if "template_fingerprint" not in cl_cols_play:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN template_fingerprint TEXT")
         play_asset_columns = {
             "play_asset_id": "TEXT",
             "play_asset_name": "TEXT",
@@ -521,6 +525,7 @@ def upsert_creative_library(
                 ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
                 play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
                 differentiator = str(analysis_raw.get("differentiator") or "")
+                template_fingerprint = str(analysis_raw.get("template_fingerprint") or "")
                 play_asset_id = str(analysis_raw.get("play_asset_id") or "")
                 play_asset_name = str(analysis_raw.get("play_asset_name") or "")
                 play_asset_subtag_ids = str(analysis_raw.get("play_asset_subtag_ids") or "")
@@ -535,6 +540,7 @@ def upsert_creative_library(
                 ad_one_liner = ""
                 play_fingerprint = ""
                 differentiator = ""
+                template_fingerprint = ""
                 play_asset_id = ""
                 play_asset_name = ""
                 play_asset_subtag_ids = ""
@@ -595,6 +601,9 @@ def upsert_creative_library(
                          differentiator = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE differentiator END,
+                         template_fingerprint = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE template_fingerprint END,
                          play_asset_id = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE play_asset_id END,
@@ -632,6 +641,7 @@ def upsert_creative_library(
                      ad_one_liner, ad_one_liner,
                      play_fingerprint, play_fingerprint,
                      differentiator, differentiator,
+                     template_fingerprint, template_fingerprint,
                      play_asset_id, play_asset_id,
                      play_asset_name, play_asset_name,
                      play_asset_subtag_ids, play_asset_subtag_ids,
@@ -729,7 +739,7 @@ def upsert_creative_library(
                      first_target_date, last_target_date, appearance_count,
                      insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
                      effect_one_liner, ad_one_liner,
-                     play_fingerprint, differentiator,
+                     play_fingerprint, differentiator, template_fingerprint,
                      play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
                      play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
                      created_at_local, updated_at_local
@@ -744,7 +754,7 @@ def upsert_creative_library(
                      ?, ?, 1,
                      ?, ?, ?, ?,
                      ?, ?,
-                     ?, ?,
+                     ?, ?, ?,
                      ?, ?, ?, ?,
                      ?, ?, ?,
                      datetime('now','localtime'), datetime('now','localtime')
@@ -761,7 +771,7 @@ def upsert_creative_library(
                     target_date, target_date,
                     analysis, ua_single, cover_style_str, dedup_reason,
                     effect_one_liner, ad_one_liner,
-                    play_fingerprint, differentiator,
+                    play_fingerprint, differentiator, template_fingerprint,
                     play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
                     play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
                 ),
@@ -846,7 +856,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           country_codes_json, geo_targeting_json,
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
           effect_one_liner, ad_one_liner,
-          play_fingerprint, differentiator,
+          play_fingerprint, differentiator, template_fingerprint,
           play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
           play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
           effect_embedding_duplicate_json, embedding_duplicate_candidate_json,
@@ -860,7 +870,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?,
           ?, ?, ?, ?,
           ?, ?,
-          ?, ?,
+          ?, ?, ?,
           ?, ?, ?, ?,
           ?, ?, ?,
           ?, ?,
@@ -925,6 +935,11 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
             WHEN COALESCE(TRIM(excluded.differentiator), '') <> ''
             THEN excluded.differentiator
             ELSE daily_creative_insights.differentiator
+          END,
+          template_fingerprint=CASE
+            WHEN COALESCE(TRIM(excluded.template_fingerprint), '') <> ''
+            THEN excluded.template_fingerprint
+            ELSE daily_creative_insights.template_fingerprint
           END,
           play_asset_id=CASE
             WHEN COALESCE(TRIM(excluded.play_asset_id), '') <> ''
@@ -1042,6 +1057,7 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner = str(analysis_raw.get("ad_one_liner") or "")
         play_fingerprint = str(analysis_raw.get("play_fingerprint") or "")
         differentiator = str(analysis_raw.get("differentiator") or "")
+        template_fingerprint = str(analysis_raw.get("template_fingerprint") or "")
         play_asset_id = str(analysis_raw.get("play_asset_id") or "")
         play_asset_name = str(analysis_raw.get("play_asset_name") or "")
         play_asset_subtag_ids = str(analysis_raw.get("play_asset_subtag_ids") or "")
@@ -1071,6 +1087,7 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner = ""
         play_fingerprint = ""
         differentiator = ""
+        template_fingerprint = ""
         play_asset_id = ""
         play_asset_name = ""
         play_asset_subtag_ids = ""
@@ -1118,6 +1135,7 @@ def _params_tuple_for_daily_creative_insight(
         ad_one_liner,
         play_fingerprint,
         differentiator,
+        template_fingerprint,
         play_asset_id,
         play_asset_name,
         play_asset_subtag_ids,
@@ -1565,7 +1583,7 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
             SELECT
               category, product, appid, ad_key, platform,
               video_duration, video_url, raw_json, insight_analysis, insight_ua_suggestion,
-              effect_one_liner, ad_one_liner, play_fingerprint, differentiator,
+              effect_one_liner, ad_one_liner, play_fingerprint, differentiator, template_fingerprint,
               play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
               play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
               updated_at_local, id
@@ -1624,6 +1642,7 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                     "ad_one_liner": str(row["ad_one_liner"] or ""),
                     "play_fingerprint": str(row["play_fingerprint"] or ""),
                     "differentiator": str(row["differentiator"] or ""),
+                    "template_fingerprint": str(row["template_fingerprint"] or ""),
                     "play_asset_id": str(row["play_asset_id"] or ""),
                     "play_asset_name": str(row["play_asset_name"] or ""),
                     "play_asset_subtag_ids": str(row["play_asset_subtag_ids"] or ""),
@@ -2116,6 +2135,7 @@ def _row_from_item_and_patched_analysis(
         "effect_one_liner": str(ex_meta.get("effect_one_liner") or ""),
         "play_fingerprint": str(ex_meta.get("play_fingerprint") or ""),
         "differentiator": str(ex_meta.get("differentiator") or ""),
+        "template_fingerprint": str(ex_meta.get("template_fingerprint") or ""),
         "play_asset_id": str(ex_meta.get("play_asset_id") or ""),
         "play_asset_name": str(ex_meta.get("play_asset_name") or ""),
         "play_asset_subtag_ids": str(ex_meta.get("play_asset_subtag_ids") or ""),
@@ -2173,6 +2193,7 @@ def combined_analysis_results_for_pipeline(
                         "ad_one_liner": ex.get("ad_one_liner", ""),
                         "play_fingerprint": ex.get("play_fingerprint", ""),
                         "differentiator": ex.get("differentiator", ""),
+                        "template_fingerprint": ex.get("template_fingerprint", ""),
                         "play_asset_id": ex.get("play_asset_id", ""),
                         "play_asset_name": ex.get("play_asset_name", ""),
                         "play_asset_subtag_ids": ex.get("play_asset_subtag_ids", ""),
@@ -2224,6 +2245,7 @@ def combined_analysis_results_for_pipeline(
                         "ad_one_liner": ex0.get("ad_one_liner", ""),
                         "play_fingerprint": ex0.get("play_fingerprint", ""),
                         "differentiator": ex0.get("differentiator", ""),
+                        "template_fingerprint": ex0.get("template_fingerprint", ""),
                         "play_asset_id": ex0.get("play_asset_id", ""),
                         "play_asset_name": ex0.get("play_asset_name", ""),
                         "play_asset_subtag_ids": ex0.get("play_asset_subtag_ids", ""),
@@ -2542,6 +2564,20 @@ _EFFECT_SYNONYM_REPLACEMENTS = [
     ("动画", "视频"),
 ]
 
+_EFFECT_GENDER_TRANSFORM_PATTERNS = [
+    r"男(?:性|人|生|孩|士)?\s*(?:变|转|转换|变成|变为|成为|to)\s*女(?:性|人|生|孩|士)?",
+    r"女(?:性|人|生|孩|士)?\s*(?:变|转|转换|变成|变为|成为|to)\s*男(?:性|人|生|孩|士)?",
+    r"\b(?:male|man|boy)\s*(?:to|into|becomes?)\s*(?:female|woman|girl)\b",
+    r"\b(?:female|woman|girl)\s*(?:to|into|becomes?)\s*(?:male|man|boy)\b",
+]
+
+_EFFECT_DEMOGRAPHIC_PATTERNS = [
+    r"\b(?:male|female|man|woman|men|women|boy|girl|boys|girls|guy|guys|lady|ladies|gentleman|gentlemen)\b",
+    r"\b(?:black|white|asian|latina|latino|hispanic|indian|african|caucasian|arab|middle\s*eastern)\b",
+    r"(?:男性|女性|男人|女人|男生|女生|男孩|女孩|男童|女童|男士|女士|男模|女模|男主角|女主角|男主|女主|帅哥|美女)",
+    r"(?:黑人|白人|亚裔|亚洲人|拉丁裔|印度人|非裔|中东人|欧美人|黄种人|白种人|黑皮肤|白皮肤|棕色皮肤|深肤色|浅肤色)",
+]
+
 
 def normalize_effect_one_liner(text: str) -> str:
     """Normalize short effect descriptions for cross-day play matching."""
@@ -2552,6 +2588,10 @@ def normalize_effect_one_liner(text: str) -> str:
     s = re.sub(r"[【】\[\]{}<>《》\"'“”‘’]", "", s)
     for src, dst in _EFFECT_SYNONYM_REPLACEMENTS:
         s = s.replace(src, dst)
+    for pat in _EFFECT_GENDER_TRANSFORM_PATTERNS:
+        s = re.sub(pat, "性别转换", s, flags=re.I)
+    for pat in _EFFECT_DEMOGRAPHIC_PATTERNS:
+        s = re.sub(pat, "", s, flags=re.I)
     s = re.sub(r"[\s,，.。:：;；!！?？/\\|_+\-—~·•]+", "", s)
     for pat in _EFFECT_FILLER_PATTERNS:
         s = re.sub(pat, "", s, flags=re.I)
@@ -3659,7 +3699,7 @@ def compute_sustained_effort_signals(
     lookback_days: int = 7,
 ) -> Dict[str, Any]:
     """
-    基于去重流程中被去掉的素材，汇总持续发力信号。
+    基于去重流程中被去掉的素材，以及 7 天外历史簇被当天代表更新的素材，汇总持续发力信号。
 
     三个来源：
       1. 封面跨日指纹去掉的素材（从 cover_style 报告 JSON 读取）
@@ -3902,6 +3942,42 @@ def compute_sustained_effort_signals(
                             entry["matched_preview_img_url"] = str(krow["preview_img_url"] or "")
                             entry["matched_video_duration"] = int(krow["video_duration"] or 0)
                         cover_crossday.append(entry)
+                    # 1c: 7 天外历史簇更新，当天代表保留，用作「仍在发力」信号。
+                    for ref in pa.get("history_refresh", []):
+                        if not isinstance(ref, dict):
+                            continue
+                        kept_key = str(ref.get("ad_key") or ref.get("kept_ad_key") or "")
+                        matched_key = str(ref.get("matched_ad_key") or "")
+                        if not kept_key or not matched_key:
+                            continue
+                        entry = {
+                            "ad_key": kept_key,
+                            "reason": str(ref.get("reason") or "cover_style_cluster_history_refresh"),
+                            "kept_ad_key": kept_key,
+                            "matched_ad_key": matched_key,
+                            "matched_date": str(ref.get("matched_date") or ""),
+                            "history_age_days": ref.get("history_age_days"),
+                            "similarity": ref.get("similarity"),
+                            "report_date": ds,
+                            "source": "clip_history_refresh",
+                            "product": pa_product,
+                        }
+                        _cur2.execute(
+                            "SELECT effect_one_liner, product, video_url, preview_img_url, "
+                            "video_duration FROM creative_library WHERE ad_key = ? LIMIT 1",
+                            (matched_key,),
+                        )
+                        mrow = _cur2.fetchone()
+                        if mrow:
+                            eff = str(mrow["effect_one_liner"] or "")
+                            if eff == "None":
+                                eff = ""
+                            entry["matched_effect_one_liner"] = eff
+                            entry["matched_product"] = str(mrow["product"] or pa_product)
+                            entry["matched_video_url"] = str(mrow["video_url"] or "")
+                            entry["matched_preview_img_url"] = str(mrow["preview_img_url"] or "")
+                            entry["matched_video_duration"] = int(mrow["video_duration"] or 0)
+                        cover_crossday.append(entry)
     except Exception:
         pass
     finally:
@@ -3941,7 +4017,7 @@ def load_new_creatives_for_date(
             """
             SELECT cl.ad_key, cl.product, cl.appid, cl.platform, cl.creative_type,
                    cl.title, cl.best_heat, cl.best_impression, cl.best_all_exposure_value,
-                   cl.effect_one_liner, cl.play_fingerprint, cl.differentiator,
+                   cl.effect_one_liner, cl.play_fingerprint, cl.differentiator, cl.template_fingerprint,
                    cl.play_asset_id, cl.play_asset_name, cl.play_asset_subtag_ids, cl.play_asset_subtag_names,
                    cl.play_asset_novelty_label, cl.play_asset_match_source, cl.play_asset_classification_reason,
                    cl.first_target_date, cl.dedup_group_id,
@@ -4393,7 +4469,7 @@ def load_daily_material_report(
             effect = _play_cluster_text(item)
             if (not effect or effect == "None") and ad_key:
                 cur.execute(
-                    "SELECT insight_analysis, effect_one_liner, play_fingerprint FROM daily_creative_insights "
+                    "SELECT insight_analysis, effect_one_liner, play_fingerprint, template_fingerprint FROM daily_creative_insights "
                     "WHERE ad_key LIKE ? AND target_date = ? LIMIT 1",
                     (ad_key[:16] + "%", target_date),
                 )
@@ -4401,6 +4477,8 @@ def load_daily_material_report(
                 if row:
                     effect = _coarse_play_cluster_key(row["play_fingerprint"], row["effect_one_liner"])
                     item["_analysis_one_liner"] = str(row["insight_analysis"] or "")
+                    if not str(item.get("template_fingerprint") or "").strip():
+                        item["template_fingerprint"] = str(row["template_fingerprint"] or "")
             if effect == "None":
                 effect = ""
             item["daily_play_cluster_key"] = effect

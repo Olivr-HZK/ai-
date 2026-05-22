@@ -2,6 +2,93 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-05-22
+
+### [VE] 筛选看板改为三层漏斗与多维表实数对账
+
+- `ua_workflows/video_enhancer/review_dashboard.py`：筛选复核看板新增「三层筛选漏斗」，按爬取资格、封面/指纹去重、入表前业务筛选展示每层输入、输出和剔除原因；产品明细表同步展示抓到数、第一层后、指纹、跨日 CLIP、日内 CLIP、第二层后、业务硬拦、同模板、应入表与表内实际。
+- `ua_workflows/video_enhancer/review_dashboard.py`：看板会用项目 `.env` 中的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `VIDEO_ENHANCER_BITABLE_URL` 只读扫描主表，并按 `抓取日期` 的 UTC+8 显示日期统计当日多维表实际记录数；失败时只在看板备注错误，不阻塞本地看板生成。
+- `ua_workflows/video_enhancer/review_dashboard.py`：第三层新增两块明细，「业务硬拦（不进多维表）」和「同玩法同模板（不进多维表）」。同模板明细展示保留代表、封面相似度、模板相似度和原因，便于人工复核最终入表前剔除。
+- 已刷新 `2026-05-21` 看板：本地应入多维表 32 条（40 条成功分析 - 6 条业务硬拦 - 2 条同玩法同模板），飞书主表实际 `抓取日期=2026-05-21` 为 0 条，说明当天主表同步尚未落表或同步中断。
+- 根据人工查看习惯，顶部漏斗收窄为核心两块：「封面图去重」与「同玩法同模板去重」；第一层爬取资格不再作为主视线展示，只在备注中说明“封面前”已经过广告主、日期和重投过滤。
+- 看板中「玩法资产库」改名为「多维表玩法标签库（字段：玩法）」，避免误读为旧 JSON 资产库；新增「筛选后素材 · 每条玩法标签（应入多维表）」表格，逐条展示最终应入表素材的多维表玩法标签、AI 建议玩法、产品、广告 ID、核心卖点、玩法指纹与模板指纹。`new_play` 未命中多维表标签时在「玩法标签」列统一显示「待沉淀」，AI 建议名单独放在「AI建议玩法」列。
+- `ua_workflows/video_enhancer/analyze.py`：收紧 AI 新玩法建议名，禁止把「AI图片转视频」「图片转视频」「AI视频生成」「照片生成动态视频」等底层能力词自动当作新玩法沉淀；若模型只给出这类泛词，解析兜底会把玩法名和变种名改为「待人工归类」，并在玩法判断理由里保留原始建议，等待业务人员确认。
+- `tests/test_ve_template_normalization.py`：新增泛玩法名清洗回归测试，覆盖「AI 图片转视频」被置为「待人工归类」、具体可复用模板名仍保留。
+- `ua_workflows/video_enhancer/sync.py`：修复主表「玩法」字段已从文本变为多选后导致的同步失败。同步写记录前会读取真实字段类型；多选字段写成字符串数组，并且只保留飞书字段已有选项，AI 新建议/待沉淀玩法不会自动创建为正式「玩法」选项。`tests/test_ve_template_normalization.py` 新增多选字段值格式与未知选项过滤测试。
+- 2026-05-21 VE 同步排查：同步命令目标确认仍是 `CivwbJ2HkazcKTsKnbGclA5RnWc / tblrZZvVuFcjL0kE / vewGH7cmSs`，不是写错表；原始失败为「玩法」多选字段值格式错误。后续一度出现 `403 Forbidden (91403)`，根因是外层进程环境里残留旧 `FEISHU_APP_ID`（末位 `8dcca`），`load_dotenv()` 默认不覆盖，导致没用项目 `.env` 中正确应用（末位 `c1cb3`）。已将 VE 关键入口改为 `load_dotenv(PROJECT_ROOT / ".env", override=True)`；正确 app 下假字段 `batch_create` 不再 403，而是返回预期字段不存在错误。
+- 已用项目 `.env` 正确应用补跑 `2026-05-21` VE 主表同步，写入 32/32 条；多维表实际 `抓取日期=2026-05-21` 读数为 32 条（Pixverse 21、AI Mirror 6、DreamFace 2、Glam 1、Remini 1、GIO 1），并刷新 `reports/ve_filter_review_2026-05-21.html`。
+- `ua_workflows/shared/config.py`：新增 `load_project_env()` / `project_env_values()`，用于统一让项目 `.env` 覆盖外层 shell/cron 残留环境变量；`ua_workflows/video_enhancer/pipeline.py` 的子进程环境也会用 `.env` 值覆盖，避免同步、看板、玩法标签读取吃到旧 app id。
+- `ua_workflows/video_enhancer/cover_dedupe.py` / `ua_workflows/arrow2/cover_dedupe.py`：封面 CLIP 跨日历史改为双窗口。历史检索窗口默认 60 天（`COVER_STYLE_HISTORY_LOOKBACK_DAYS`，上限 60），硬去重窗口默认 7 天（`COVER_STYLE_HISTORY_HARD_DEDUPE_DAYS`）。7 天内命中历史仍按 `cover_style_cluster_vs_yesterday` 剔除今日素材；7 天外命中历史不直接丢弃，而是保留当天最高展示估值代表，并在报告 `history_refresh` 记录为 `cover_style_cluster_history_refresh`，用于表达「这个旧素材/旧模板又在发力」。
+- 2026-05-21 人工复核素材 `300c5d6a2ecdc432aaa4ac4013eace49` 与 2026-05-08 历史素材 `8f2943975b7a180603b6ea249454cf6e` 封面相似度 `0.7554`，超过阈值 `0.75`，但旧 7 天历史检索窗口没加载 5/8。新逻辑会把它归为 13 天前历史簇的持续发力代表，而不是当作全新素材，也不是直接删掉。
+- `ua_workflows/video_enhancer/sync.py` / `crawl_similarity.py` / `shared/db/video_enhancer.py`：多维表同步会给 7 天外历史簇代表写入「历史簇持续发力」「历史命中:日期」「历史间隔:N天」「历史封面相似度:X」标签；同一历史刷新簇里被日内合并的素材继续计入代表行「日内相似素材数」；持续发力日报信号也会读取 `history_refresh`。
+- `tests/test_ve_template_normalization.py`：新增封面历史窗口默认 60 天、上限 60 天、7 天外历史刷新保留代表、7 天内历史硬去重、历史刷新标签写入的回归测试。
+
+## 2026-05-21
+
+### [VE] Retake 暂停抓取与人物照片特效硬拦截
+
+- `config/ai_product.json`：从 VE 默认 `photo` 竞品列表移除 `Retake AI Face & Selfie Editor`，日常默认抓取暂不再包含 Retake；如需恢复可重新加回对应 appid。
+- `ua_workflows/video_enhancer/content_filters.py`：新增“只保留用户上传人物照片加工特效”硬拦截；电商/商品广告、宠物/动物、房间装修、风景、食物、车辆、纯文字/Logo/海报等非人物照片加工素材会标记 `exclude_from_bitable` / `exclude_from_cluster`，标签为 `非人物照片加工特效`。
+- `ua_workflows/video_enhancer/pipeline.py` / `sync.py` / `flow_report.py`：主流程与独立同步都会执行该硬拦截，并在同步/漏斗报告中记录 `ecommerce_effect`、`non_human_photo_effect`、`missing_human_photo_input` 等原因。
+- `tests/test_ve_template_normalization.py`：新增回归测试，覆盖电商商品图、宠物跳舞、房间装修应拦截，自拍生成生日写真应保留。
+
+### [VE/Arrow2] CLIP 封面去重默认阈值下调
+
+- `ua_workflows/video_enhancer/cover_dedupe.py`：`COVER_VISUAL_DEDUP_THRESHOLD` 未在 `.env` 显式覆盖时，默认值从 `0.8` 下调到 `0.75`；VE 与复用该 helper 的 Arrow2 封面 CLIP 日内 / 跨日向量去重都会使用新默认阈值。若需临时回退，可在 `.env` 设置 `COVER_VISUAL_DEDUP_THRESHOLD=0.8`。
+- 注意：历史已生成的 `*_cover_style_intraday.json` 与本地 HTML 看板仍记录当时运行的 `cosine_threshold`，不会因默认值变更自动改写；需要重跑对应日期流程才会按 `0.75` 重新筛。
+
+### [VE] 同玩法同模板换人合并增强
+
+- `ua_workflows/video_enhancer/sync.py`：主表同步前的同模板去重从 exact key 升级为同产品/同玩法桶内并查集聚类；同玩法优先用玩法资产 ID，模板 exact 命中继续保留，同时新增可选模板文本相似（阈值 `BITABLE_TEMPLATE_DEDUP_TEXT_SIMILARITY_THRESHOLD=0.78`）和默认封面 CLIP 相似（阈值 `BITABLE_TEMPLATE_DEDUP_CLIP_THRESHOLD=0.70`）两类边，专门补掉同一模板只换人种、性别或模特导致的漏筛。跳过明细会记录 `match_reason`、`match_ad_key`、模板相似度和封面相似度，链式聚类也能看到直接证据。
+- `tests/test_ve_template_normalization.py`：新增同步前模板模糊合并回归测试，覆盖同一模板不同描述应合并、同玩法但不同模板应保留。
+- 已对 `2026-05-20` 本地样本做只读 dry-run：成功分析候选 95 条；旧 exact 逻辑删除 1 条、剩 94 条；新逻辑删除 15 条、剩 80 条，额外多筛 14 条（候选池额外压缩 14.74%）。产物：`data/workflow_video_enhancer_2026-05-20_template_dedup_dry_run.json`、`reports/ve_template_dedup_dry_run_2026-05-20.html`。
+- 根据人工复核结论，模板文本相似不再默认作为自动合并证据；仅当 `BITABLE_TEMPLATE_DEDUP_TEXT_SIMILARITY_ENABLED=1` 时才开启。默认自动合并保留 exact 模板和同玩法内封面 CLIP 相似。
+
+### [VE] 玩法库切到多维表格「玩法」字段
+
+- `ua_workflows/video_enhancer/bitable_play_labels.py`（新增）：从 `VE_PLAY_LABEL_BITABLE_URL` 或 `VIDEO_ENHANCER_BITABLE_URL` 指向的多维表读取「玩法」字段（可用 `VE_PLAY_LABEL_FIELD_NAME` 覆盖字段名），优先取单选/多选字段选项，取不到选项时扫描记录里的历史值；标签会转成旧代码兼容的 `play_<sha1>` 玩法 ID，并缓存到 `data/ve_bitable_play_labels.json`。
+- `ua_workflows/video_enhancer/play_assets.py`：默认 `VE_PLAY_LIBRARY_SOURCE=bitable`，不再使用 `config/ve_play_assets.json` 作为主玩法库；如需临时回退旧 JSON，可设置 `VE_PLAY_LIBRARY_SOURCE=legacy_json`。
+- `ua_workflows/video_enhancer/analyze.py`：分析 prompt 改为「多维表格玩法标签库候选清单」，要求 AI 直接从多维表格「玩法」标签中选择玩法；旧 `玩法资产名称` 字段现在语义上就是多维表格「玩法」标签，`玩法变种` 固定为基础变体/新玩法兼容值。
+- `ua_workflows/video_enhancer/sync.py`：主表字段新增「玩法」，同步时写入 AI 选择的多维表格玩法标签；保留「玩法资产」等旧字段用于兼容历史看板/报表。
+- 当前本地 `lark-cli` bot 读取表结构/记录缺少 `base:field:read` / `base:record:read` scope，user 身份也未授权；代码已支持读取，实际拉取标签需先给应用开通对应权限或提供 `VE_PLAY_LABELS` 临时标签列表。
+
+## 2026-05-19
+
+### [Arrow2] 最新素材切到 UI 指定日期抓取
+
+- `ua_workflows/arrow2/crawl.py`：`latest_yesterday` 默认改为和 VE 一样先在广大大 UI 选择 `target_date ~ target_date`，再逐张点卡 detail-v2 并用本地 `first_seen == target_date` 校验；保留 `--no-ui-date-range` 作为旧 7 天池口径调试回退，raw 产物新增 `ui_date_range`。
+- `ua_workflows/arrow2/crawl.py` / `ua_workflows/shared/guangdada/search.py`：搜索按钮点击超时时增加 force click / Enter 兜底；单产品爬取异常时会重登、重设筛选并重试一次，重试仍失败则记录空结果后继续后续产品，避免一个产品页面状态异常中断整天同步。
+- 已用新 UI 日期口径补跑 `2026-05-17` 与 `2026-05-18` Arrow2 latest：分别同步 45 条、40 条到多维表；本地 `data/arrow2_pipeline.db` 对应日期分析完成数为 45/45、40/40。
+
+### [VE] 全流程产品漏斗报告与低量告警
+
+- `ua_workflows/video_enhancer/flow_report.py`（新增）：汇总当日 crawl、分析入队、分析结果、sync 与 acceptance 产物，生成 `data/workflow_video_enhancer_{date}_flow_report.json` 和 `reports/workflow_video_enhancer_{date}_flow_report.md`；默认读取 `VE_FLOW_REPORT_FEISHU_WEBHOOK` 推送飞书交互卡片。
+- `ua_workflows/video_enhancer/pipeline.py`：分析入队阶段新增 `data/workflow_video_enhancer_{date}_analysis_queue_report.json`，按产品记录封面后素材数、分析前去重、历史缓存复用、准入失败原因和实际 LLM 入队数；流程成功结束和分析成功率过低提前退出时都会补跑全流程报告。
+- `ua_workflows/video_enhancer/sync.py`：主表同步新增 `data/workflow_video_enhancer_{date}_sync_report.json`，按产品记录成功分析数、硬排除、同模板换人/性别合并、同玩法非代表、低采纳优先级跳过和最终主表写入数。
+- 全流程报告按产品展示点卡、抓到、爬取保留、封面后、分析去重后、LLM 入队、可用分析、同步候选、主表写入和主要筛掉/跳过原因；若某产品「封面后保留」或「主表写入」低于近 5 天均值 50%（且历史均值不低于 3 条），飞书卡片会给出人工确认用的单产品重试命令。
+
+### [VE] 相似素材数前移到爬取产物
+
+- `ua_workflows/video_enhancer/crawl_similarity.py`（新增）：相似素材数从 raw/crawl 阶段开始沉淀。standalone crawl 会按同产品/appid 下的 exact `image_ahash_md5`、封面 URL、视频 URL 先写入 `crawl_similarity_count_by_ad` 与每条 item/creative 的 `crawl_similarity_count`。
+- `ua_workflows/video_enhancer/pipeline.py`：封面 CLIP 日内聚类后调用 `merge_cover_similarity_counts`，把 `cover_style_cluster` 同日剔除成员计入代表素材的 raw 相似素材数；跨日旧封面不计入当天「日内相似素材数」。
+- `ua_workflows/video_enhancer/sync.py`：多维表「日内相似素材数」优先读取 raw 中的 `crawl_similarity_count_by_ad`，再用旧的同步时兜底逻辑和同模板换人/性别合并补充；避免最后同步阶段才临时开始计算。
+- `tests/test_ve_template_normalization.py`：新增 raw 阶段 exact 签名计数、封面 CLIP 日内簇合并计数回归测试。
+
+## 2026-05-18
+
+### [VE] 最新素材狭义新判断
+
+- `ua_workflows/video_enhancer/analyze.py`：VE 结构化输出新增 `【模板指纹】`，要求模型描述具体分镜/布局/脚本骨架，并忽略同模板只换人种、肤色、性别或男女模特；`analysis` 兼容短摘要同步包含模板指纹。
+- `ua_workflows/shared/db/video_enhancer.py` / `pipeline.py`：`daily_creative_insights` 与 `creative_library` 自动迁移新增 `template_fingerprint`，单条增量入库、素材库回写、历史缓存复用和日报候选读取都会保留该字段；主流程回写素材库时同步携带玩法资产判断与模板指纹。
+- `ua_workflows/video_enhancer/play_asset_report.py`：日报新口径从“新玩法/新变种”收敛为“新玩法/老玩法新迭代/老玩法换皮”。稳定玩法未见过算新玩法；稳定玩法已见过但模板指纹首次出现算老玩法新迭代；稳定玩法与模板指纹均见过（包括同模板换人种/性别）算老玩法换皮，不进入推送代表。
+- `ua_workflows/video_enhancer/sync.py` / `push_feishu.py` / `review_dashboard.py`：多维表新增「模板指纹」「狭义新判断」「狭义新理由」字段；日报标签和飞书卡片改为狭义新素材口径。未改动 Arrow2 定时或数据流。
+- `ua_workflows/video_enhancer/pipeline.py`：移除日常主流程里的二次 `dom_enrich` 详情补全节点；VE 抓取已默认走 DOM 点卡 detail 主路径，raw 阶段已经拿到详情，`dom_enrich.py` 仅保留作手动排障工具。
+- `ua_workflows/video_enhancer/content_filters.py` / `pipeline.py` / `sync.py`：移除「低采纳主题/家居装修」硬拦截，空房间、豪华装修、家居设计等不再仅因主题被写 `exclude_from_bitable`。
+- `ua_workflows/video_enhancer/sync.py`：多维表「日内相似素材数」计数补入同日封面 CLIP 聚类排除成员；仅统计 `cover_style_cluster` 日内封面重复，不把跨日旧封面 `cover_style_cluster_vs_yesterday` 算入当天扎堆数。
+- `ua_workflows/video_enhancer/sync.py`：主表同步新增默认开启的 `BITABLE_TEMPLATE_DEDUP_ENABLED` 模板级硬筛。同步前按同产品/appid、人口/性别归一后的玩法指纹、人口/性别归一后的模板指纹分组，只保留展示估值/曝光/热度最高代表；被同模板合并的素材仍会计入代表行「日内相似素材数」。已清理 2026-05-17 GIO 主表中 4 条同模板换人重复行，并回填 3 条代表素材的相似素材数。
+- `ua_workflows/video_enhancer/crawl.py` / `pipeline.py`：新增每日产品级抓取保留漏斗。爬取 raw 的 `filter_report.per_product` 增加点卡详情数、页面卡片数、抓到素材数、广告主不匹配、非目标日、截断剔除等计数；主流程生成 `crawl_product_retention_report` 与 `data/workflow_video_enhancer_{date}_crawl_product_retention.json`，合并封面跨日/日内去重原因和最终保留数。
+- `tests/test_ve_template_normalization.py`：新增狭义新回归测试，覆盖同模板人口属性替换不推送、老玩法新模板进入“老玩法新迭代”、全新稳定玩法进入“新玩法”。
+
 ## 2026-05-15
 
 ### [VE] 审核多维表反馈训练链路（独立于正常工作流）
@@ -13,6 +100,18 @@
 - `scripts/run_ve_feedback_training.py` / `scripts/cron_ve_feedback_training_daily.sh`（新增）：支持 `run`（拉取+入库+导出+训练）、`pull`、`train`、`export`；cron 建议每天 09:40 运行，日志 `logs/cron_ve_feedback_training.log`。该链路不触发广大大爬取、VE 分析、多维表主表同步或日报推送。
 - `.gitignore`：忽略反馈训练本地产物（SQLite、JSONL、模型 JSON、日报 Markdown），避免每日训练输出进入版本管理。
 - `docs/ve-feedback-training.md` / `docs/workflows.md` / `docs/cron-schedules.md` / `docs/README.md`：补充独立反馈训练链路说明、字段口径、产物和定时任务。
+
+### [VE] 目标日最新创意滚动深度修复
+
+- 飞书迭代日志人工复核确认：2026-05-14 PixVerse 若干图片素材的 exact `ad_key` 未进入本地 raw / `daily_creative_insights` / `creative_library`，不是后续封面阈值或玩法筛选误杀；本地 PixVerse 目标日素材时间从 `18:29` 跳到 `14:33`，漏掉了用户截图中的 `17:xx` 区间。
+- `ua_workflows/shared/guangdada/search.py`：`run_batch` / `_collect_keyword_crawl_result` 新增可配置 `max_scroll_rounds` 与 `stop_scroll_if_oldest_first_seen_before_ymd`，复用已有 `_search_one_keyword` 的“滚到早于目标日即停”能力。
+- `ua_workflows/video_enhancer/crawl.py`：VE 在 `--target-date` 模式下默认把最新创意滚动上限从固定 16 轮提高到 56 轮，可通过 `VIDEO_ENHANCER_MAX_SCROLL_ROUNDS` 覆盖。因广大大初始 NAPI 响应会混入很老的历史素材，`first_seen < target_date` 早停容易误触发并导致只抓首屏，现默认关闭该早停；如需临时打开可设 `VIDEO_ENHANCER_TARGET_DATE_EARLY_STOP_ENABLED=1`。原封面 CLIP 阈值仍保持默认 `0.8`。
+
+### [VE] 同模板人种/性别差异不再拆新素材
+
+- `ua_workflows/shared/db/video_enhancer.py`：玩法文本归一化新增人口属性抹平规则，黑人/白人/亚裔、男性/女性、男模/女模等同一模板换人差异会归为同一玩法文本，从而影响日内玩法重复、老玩法重复、日报新素材/新变种 key、玩法资产 fallback 匹配等后续判重入口；`男变女` / `女变男` 等性别转换机制会先规整为 `性别转换`，避免误删核心玩法。
+- `ua_workflows/video_enhancer/analyze.py`：VE 分析 prompt 新增模板级去重规则，要求模型不要因为同一模板只替换人种、肤色或性别就输出新玩法/新变种，也不要把这些人口属性写进玩法指纹/玩法变种名。
+- `tests/test_ve_template_normalization.py`：新增回归测试，覆盖“黑人女性 vs 白人男性同模板”为同一玩法，以及性别转换机制仍被保留。
 
 ### [VE] 视频分析结构化收敛与 analysis embedding 去重下线
 
@@ -58,7 +157,7 @@
 - `ua_workflows/video_enhancer/review_dashboard.py`：复核看板读取玩法资产库，统计「玩法资产命中 / 待沉淀」，并新增「玩法资产库（历史沉淀）」与「未筛掉素材 · 按玩法资产归类」板块，方便每天把新类目继续沉淀为资产，而不是在代码里继续补产品特判。
 - `ua_workflows/video_enhancer/play_asset_report.py` / `push_feishu.py` / `push_multichannel.py`：新增「新玩法 / 新玩法变种」日报口径。日报先给当日候选素材命中玩法资产与子标签，再与历史全量素材比对：玩法基类历史没见过算「新玩法」，基类已见过但子标签组合没见过算「新玩法变种」；飞书/企微日报默认只推这两类代表素材，不再把持续发力或普通老玩法换素材混入推送。2026-05-13 当前口径为新玩法 0 个、新玩法变种 13 个、代表素材 13 条。
 - `ua_workflows/video_enhancer/sync.py`：主表新增「玩法资产」「玩法变种」「玩法新旧」「玩法资产ID」「玩法变种ID」「玩法指纹」「差异点」字段，并把玩法资产/变种/新旧标签写入「素材标签」，方便在多维表格里按稳定玩法和 trend 变体筛选复核。
-- `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：主表同步默认放宽，日内玩法重复、老玩法重复、embedding 玩法重复不再默认作为 `exclude_from_bitable` 硬拦截；`BITABLE_SYNC_DAILY_PLAY_REPRESENTATIVES_ONLY` 与 `BITABLE_ACCEPTANCE_PRIORITY_SYNC_ENABLED` 默认改为关闭，主表尽可能同步更多成功分析素材。成人/色情、低适配主题、已投放等硬风险仍保留拦截；如需恢复旧的窄同步，可显式打开对应环境变量。
+- `ua_workflows/video_enhancer/pipeline.py` / `sync.py`：主表同步默认放宽，日内玩法重复、老玩法重复、embedding 玩法重复不再默认作为 `exclude_from_bitable` 硬拦截；`BITABLE_SYNC_DAILY_PLAY_REPRESENTATIVES_ONLY` 与 `BITABLE_ACCEPTANCE_PRIORITY_SYNC_ENABLED` 默认改为关闭，主表尽可能同步更多成功分析素材。成人/色情、已投放等硬风险仍保留拦截；如需恢复旧的窄同步，可显式打开对应环境变量。
 - `ua_workflows/video_enhancer/review_dashboard.py`：筛选复核看板的「日报推送筛选逻辑」切换到新玩法资产/变种口径，新增「日报新玩法 / 新变种推送段」和「日报新口径未推送素材」板块；未推送素材会标注「同资产变种非代表」或「已沉淀玩法/变种」，并展示封面、玩法资产、子标签、变种 ID，方便复核为什么没有进入每日推送。
 - `ua_workflows/video_enhancer/play_asset_doc_sync.py` / `scripts/sync_ve_play_assets_doc.py` / `docs/ve-play-assets.md`：将飞书云文档 `https://www.feishu.cn/docx/HrxAdmiN6o7S4BxSNpXcT8h2n1n` 升级为「人可编辑、机器可解析」的玩法资产库源。文档中每个玩法块含 YAML 字段；项目默认尝试从云文档拉取并覆盖 `config/ve_play_assets.json`，失败则使用本地 JSON 兜底。支持 `pull-doc`、`push-doc`、`render`、`append-drafts --date YYYY-MM-DD`；5/13 当前无待沉淀草稿需要追加。
 - `ua_workflows/video_enhancer/cover_dedupe.py`：未来 CLIP 日内剔除明细也会写入 `product`、`all_exposure_value`、`cover_url`，后续看板不再需要同簇代表图兜底。
@@ -236,7 +335,7 @@
 | **定时任务**                  | 每天 10:30 crontab                                                                    | `**daily_video_enhancer_workflow.sh` / `daily_ua_job.sh` 注释为手动执行**；若本机仍挂 crontab 为旧配置，以实际 shell 为准。                                                                                                                                                                                                                                                                                                                |
 | **OpenRouter 用量**         | 仅 shell 内 `curl`                                                                    | **主流程**在 `workflow_video_enhancer_full_pipeline.py` 内调用 `llm_client.print_openrouter_key_meter`（工作流开始/结束）；与 `.env` 中 `OPENROUTER_METER` 等一致。                                                                                                                                                                                                                                                                       |
 | **特效库语义阈值**               | 文档某处写默认 0.80                                                                        | `**launched_effects_db.py` 中默认 `LAUNCHED_EFFECTS_MATCH_THRESHOLD` 为 0.65**（以代码与环境变量为准）。                                                                                                                                                                                                                                                                                                                            |
-| **封面日内 / 跨日向量去重**         | 多模态抽封面 + 文本 LLM 聚类；跨日仅载入「昨日」`insight_cover_style` 与今日同 appid 比较                     | **CLIP**（`clip-ViT-B-32`）封面向量并查集，`cosine ≥ COVER_VISUAL_DEDUP_THRESHOLD`（默认 **0.8**），无 LLM。跨日参照为 `**target_date` 之前连续 N 个日历日**（默认 **7**，`COVER_STYLE_HISTORY_LOOKBACK_DAYS`，上限 60），`load_cover_style_rows_for_dates_grouped_by_appid` 批量读库；簇内历史胜出时 `reason` 仍为 `**cover_style_cluster_vs_yesterday`**（兼容旧筛选）。指纹层不变：`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED` + `crossday_filter_items_against_creative_library`。 |
+| **封面日内 / 跨日向量去重**         | 多模态抽封面 + 文本 LLM 聚类；跨日仅载入「昨日」`insight_cover_style` 与今日同 appid 比较                     | **CLIP**（`clip-ViT-B-32`）封面向量并查集，`cosine ≥ COVER_VISUAL_DEDUP_THRESHOLD`（默认 **0.75**），无 LLM。跨日参照为 `**target_date` 之前连续 N 个日历日**（默认 **7**，`COVER_STYLE_HISTORY_LOOKBACK_DAYS`，上限 60），`load_cover_style_rows_for_dates_grouped_by_appid` 批量读库；簇内历史胜出时 `reason` 仍为 `**cover_style_cluster_vs_yesterday`**（兼容旧筛选）。指纹层不变：`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED` + `crossday_filter_items_against_creative_library`。 |
 
 
 ---
@@ -281,7 +380,7 @@
 - **指纹**（默认开，`COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED`）：在算 CLIP 前仍调用 `crossday_filter_items_against_creative_library`，与文首「封面跨日指纹」一致。
 - **向量**：优先读库 `load_cover_embedding_blob_map_by_ad_keys`；缺失则 `cover_embedding.compute_cover_embedding_vector_from_url` 仅算向量、不写库（当日首轮入库前新 `ad_key` 可能无行；后续 `run_cover_embedding_job` 等仍会补 `cover_embedding`）。
 - **占位入库**：`insight_cover_style` 写入 CLIP 占位 JSON（如 `style_type`: 「CLIP视觉」），`upsert_single_cover_style_insight` 逐条更新。
-- **聚类**：同 `appid` 内并查集，边条件 `cosine_similarity ≥` `**COVER_VISUAL_DEDUP_THRESHOLD`**（默认 0.8）；簇内保留 `all_exposure_value` 最大一条；若最优来自**历史窗口**则剔今日（`cover_style_cluster_vs_yesterday`），若最优为今日则日内互斥（`cover_style_cluster`）。报告 `cover_dedupe_mode`: `**clip_visual`**。
+- **聚类**：同 `appid` 内并查集，边条件 `cosine_similarity ≥` `**COVER_VISUAL_DEDUP_THRESHOLD`**（默认 0.75）；簇内保留 `all_exposure_value` 最大一条；若最优来自**历史窗口**则剔今日（`cover_style_cluster_vs_yesterday`），若最优为今日则日内互斥（`cover_style_cluster`）。报告 `cover_dedupe_mode`: `**clip_visual`**。
 - **历史窗口**：`COVER_STYLE_CROSS_DAY_ENABLED` 开启时，加载 `**target_date` 前连续 N 日**（`**COVER_STYLE_HISTORY_LOOKBACK_DAYS`**，默认 **7**，即 T-1…T-7）内非空 `insight_cover_style`；`video_enhancer_pipeline_db.load_cover_style_rows_for_dates_grouped_by_appid` 合并多日，同一 `ad_key` 取 exposure 更高的一条。报告含 `cross_day_history_dates`、`cross_day_history_lookback_days`；`cross_day_prev_date` 仍为 **T-1**（兼容旧读者）；`per_appid` 增加 `history_ref_count`，并保留 `yesterday_ref_count` 与同长度（兼容）。
 
 **环境变量**（`.env.example` 已列）：`COVER_VISUAL_DEDUP_THRESHOLD`、`COVER_STYLE_HISTORY_LOOKBACK_DAYS`；其余 `COVER_STYLE_INTRADAY_ENABLED`、`COVER_STYLE_CROSS_DAY_*`、`COVER_STYLE_WORKERS` 仍适用。
@@ -817,7 +916,7 @@ workflow_arrow2_full_pipeline.py --pull-only <pull_id> [--analyze]
  ├─ Step 3  封面 CLIP 去重
  │     apply_arrow2_cover_style_dedupe
  │       ├─ 跨日指纹过滤：ad_key / URL / preview_img_url / ahash 汉明 ≤ 8
- │       └─ CLIP 向量聚类：cosine ≥ 0.8，7 日历史窗口，保留 exposure 最高者
+ │       └─ CLIP 向量聚类：cosine ≥ 0.75，7 日历史窗口，保留 exposure 最高者
  │
  ├─ Step 4  灵感分析（需 --analyze，默认跳过）
  │     analyze_video_from_raw_json.py --arrow2
@@ -973,7 +1072,7 @@ daily_ua_job.sh（可选）
            ├─ Step 2  可选封面日内 CLIP 去重（COVER_STYLE_INTRADAY_ENABLED；--skip-cover-dedupe 跳过）
            │     apply_intraday_cover_style_dedupe → 写回 raw + *_cover_style_intraday.json
            │
-           ├─ Step 3  可选 DOM 详情补全（--skip-dom-enrich 跳过）+ 灵感准入统计
+           ├─ Step 3  灵感准入统计
            │
            ├─ Step 4  原始落库
            │     upsert_daily_creative_insights（仅 raw，无 analysis）

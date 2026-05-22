@@ -30,6 +30,7 @@ from ua_workflows.video_enhancer.cover_dedupe import (  # noqa: E402
     _cluster_clip_dedupe,
     _clip_style_json,
     _count_cover_encode_needed,
+    _cover_history_hard_dedupe_days,
     _cover_history_lookback_days,
     _cover_visual_threshold,
     _exposure_value,
@@ -207,6 +208,7 @@ def apply_arrow2_cover_style_dedupe(
 
     out: List[Dict[str, Any]] = []
     lookback = _cover_history_lookback_days() if is_cover_style_cross_day_enabled() else 0
+    hard_dedupe_days = min(_cover_history_hard_dedupe_days(), lookback) if lookback else 0
     history_dates = _history_reference_dates(target_date, lookback)
     history_by_app: Dict[str, List[Dict[str, Any]]] = {}
     if history_dates:
@@ -235,6 +237,7 @@ def apply_arrow2_cover_style_dedupe(
         "cross_day_fingerprint_removed": cross_fp_removed,
         "cross_day_history_dates": list(history_dates),
         "cross_day_history_lookback_days": lookback,
+        "cross_day_history_hard_dedupe_days": hard_dedupe_days,
         "cross_day_rows_loaded": sum(len(v) for v in history_by_app.values()) if history_by_app else 0,
         "pipeline": "arrow2",
     }
@@ -338,11 +341,13 @@ def apply_arrow2_cover_style_dedupe(
         idx_holder[0] += len(need_enc)
 
         ad_to_row = {r["ad_key"]: r for r in with_cover}
-        kept_today, removed_detail = _cluster_clip_dedupe(
+        kept_today, removed_detail, history_refresh_detail = _cluster_clip_dedupe(
             threshold=threshold,
             today_rows=with_cover,
             history_hist=hist,
             history_emb=history_emb,
+            target_date=target_date,
+            hard_dedupe_days=hard_dedupe_days,
         )
 
         kept_keys: Set[str] = set(kept_today)
@@ -376,6 +381,7 @@ def apply_arrow2_cover_style_dedupe(
                 "input": len(bucket),
                 "kept": len(kept_keys),
                 "removed": removed_detail,
+                "history_refresh": history_refresh_detail,
             }
         )
         report["removed_total"] += len(removed_detail)

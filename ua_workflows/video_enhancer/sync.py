@@ -2,9 +2,9 @@
 把 raw + 灵感分析写入指定飞书多维表，并把统一 UA 建议推送到飞书卡片。
 
 主表同步：写入本次 analysis JSON 中「成功灵感分析」的素材（analysis 非空且非 [ERROR]）。
-成人风险、低适配主题、已投放等硬风险仍不同步；玩法重复默认仅打标/归类，避免主表过瘦。
+成人风险、已投放等硬风险仍不同步；玩法重复默认仅打标/归类，避免主表过瘦。
 同步前会优先使用视频分析阶段的 AI 玩法资产判断；缺失或无效时补跑规则玩法资产匹配，
-并继续补成人风险、低适配、已投放等匹配，为结果补全标签与字段。
+并继续补成人风险、已投放等匹配，为结果补全标签与字段。
 封面图、**视频**均尽量下载为附件上传（`VIDEO_BITABLE_MAX_MB` 限制大小；
 `VIDEO_BITABLE_UPLOAD=0` 可关视频上传）。
 不写入 raw 中仅入库、未分析或分析失败的条目。聚类表逻辑不变。
@@ -27,7 +27,9 @@ import os
 import re
 import time
 import uuid
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List
@@ -35,33 +37,39 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 
 import lark_oapi as lark
 import requests
-from dotenv import load_dotenv
 from lark_oapi.api.drive.v1.model import (
     UploadAllMediaRequest,
     UploadAllMediaRequestBody,
     UploadAllMediaResponse,
 )
 
-from ua_workflows.shared.config import DATA_DIR
+from ua_workflows.shared.config import DATA_DIR, load_project_env
 from ua_workflows.shared.db.video_enhancer import (
     apply_embedding_duplicate_candidate_tags,
     apply_effect_embedding_duplicate_filter,
     apply_intraday_effect_bitable_filter,
     apply_old_effect_bitable_filter,
     init_db as init_pipeline_db,
+    load_cover_embedding_blob_map_by_ad_keys,
+    normalize_effect_one_liner,
     update_push_status,
 )
+from ua_workflows.shared.llm.client import bytes_to_embedding, cosine_similarity
 from ua_workflows.video_enhancer.content_filters import (
     apply_adult_content_filter,
-    apply_low_fit_theme_filter,
+    apply_human_photo_effect_filter,
+)
+from ua_workflows.video_enhancer.crawl_similarity import (
+    build_crawl_similarity_count_map,
 )
 from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
+from ua_workflows.video_enhancer.play_assets import legacy_play_library_enabled
 from ua_workflows.video_enhancer.play_asset_report import (
     annotate_daily_play_asset_novelty,
     build_daily_asset_variant_report,
 )
 
-load_dotenv()
+load_project_env()
 
 
 def normalize_cover_image_url_for_bitable(url: str) -> str:
@@ -102,6 +110,7 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "核心卖点", "type": 1},
     {"field_name": "Hook解析", "type": 1},
     {"field_name": "脚本/口播", "type": 1},
+    {"field_name": "玩法", "type": 1},
     {"field_name": "玩法资产", "type": 1},
     {"field_name": "玩法变种", "type": 1},
     {"field_name": "玩法新旧", "type": 1},
@@ -111,6 +120,10 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "玩法判断理由", "type": 1},
     {"field_name": "玩法指纹", "type": 1},
     {"field_name": "差异点", "type": 1},
+    {"field_name": "模板指纹", "type": 1},
+    {"field_name": "狭义新判断", "type": 1},
+    {"field_name": "狭义新理由", "type": 1},
+    {"field_name": "日内相似素材数", "type": 2},
     {
         "field_name": "风险等级",
         "type": 3,
@@ -187,10 +200,10 @@ def get_tenant_access_token() -> str:
     return data["tenant_access_token"]
 
 
-def get_existing_field_names(access_token: str, app_token: str, table_id: str) -> set[str]:
+def get_existing_field_map(access_token: str, app_token: str, table_id: str) -> Dict[str, Dict[str, Any]]:
     url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=utf-8"}
-    out: set[str] = set()
+    out: Dict[str, Dict[str, Any]] = {}
     page_token: str | None = None
     while True:
         params: Dict[str, Any] = {}
@@ -206,11 +219,15 @@ def get_existing_field_names(access_token: str, app_token: str, table_id: str) -
         for it in items:
             name = it.get("field_name")
             if name:
-                out.add(name)
+                out[str(name)] = it
         if not data_obj.get("has_more"):
             break
         page_token = data_obj.get("page_token")
     return out
+
+
+def get_existing_field_names(access_token: str, app_token: str, table_id: str) -> set[str]:
+    return set(get_existing_field_map(access_token, app_token, table_id).keys())
 
 
 def create_field(access_token: str, app_token: str, table_id: str, field: Dict[str, Any]) -> None:
@@ -386,12 +403,88 @@ def upload_video_as_attachment(video_url: str, app_token: str, ad_key: str = "")
     return None
 
 
+def _split_multi_option_text(value: str) -> List[str]:
+    parts = re.split(r"[、,，;；\n]+", value)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _field_option_names(field_info: Dict[str, Any] | None) -> set[str]:
+    if not isinstance(field_info, dict):
+        return set()
+    options: List[Any] = []
+    prop = field_info.get("property")
+    if isinstance(prop, dict) and isinstance(prop.get("options"), list):
+        options.extend(prop.get("options") or [])
+    if isinstance(field_info.get("options"), list):
+        options.extend(field_info.get("options") or [])
+    names: set[str] = set()
+    for option in options:
+        if isinstance(option, dict):
+            text = str(option.get("name") or option.get("text") or option.get("value") or "").strip()
+        else:
+            text = str(option or "").strip()
+        if text:
+            names.add(text)
+    return names
+
+
+def _normalize_bitable_field_value(field_name: str, value: Any, field_info: Dict[str, Any] | None) -> Any:
+    field_type = int((field_info or {}).get("type") or 0)
+    if field_type == 4:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            out: List[str] = []
+            for item in value:
+                if item is None:
+                    continue
+                if isinstance(item, dict):
+                    text = str(item.get("text") or item.get("name") or item.get("value") or "").strip()
+                else:
+                    text = str(item).strip()
+                if text:
+                    out.append(text)
+            values = list(dict.fromkeys(out))
+        else:
+            text = str(value or "").strip()
+            values = _split_multi_option_text(text) if text else []
+        option_names = _field_option_names(field_info)
+        if option_names:
+            values = [v for v in values if v in option_names]
+        return values
+    return value
+
+
 def batch_create_records(access_token: str, app_token: str, table_id: str, records: List[Dict[str, Any]]) -> None:
     url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=utf-8"}
     params = {"user_id_type": "open_id", "client_token": str(uuid.uuid4())}
+    existing_field_map = get_existing_field_map(access_token, app_token, table_id)
+    existing_fields = set(existing_field_map.keys())
+    missing_fields: set[str] = set()
+    filtered_records: List[Dict[str, Any]] = []
+    for record in records:
+        fields = record.get("fields") if isinstance(record, dict) else None
+        if not isinstance(fields, dict):
+            filtered_records.append(record)
+            continue
+        filtered_fields: Dict[str, Any] = {}
+        for k, v in fields.items():
+            if k not in existing_fields:
+                continue
+            field_info = existing_field_map.get(k)
+            normalized = _normalize_bitable_field_value(k, v, field_info)
+            if int((field_info or {}).get("type") or 0) == 4 and not normalized:
+                continue
+            filtered_fields[k] = normalized
+        missing_fields.update(k for k in fields if k not in existing_fields)
+        filtered_records.append({"fields": filtered_fields})
+    if missing_fields:
+        print(f"[sync] 跳过当前表不存在字段：{', '.join(sorted(missing_fields))}")
+    records = filtered_records
     resp = requests.post(url, headers=headers, params=params, json={"records": records}, timeout=20)
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f"batch_create http failed: status={resp.status_code} body={resp.text[:2000]}")
     data = resp.json()
     if data.get("code") != 0:
         raise RuntimeError(f"batch_create failed: {data}")
@@ -666,7 +759,7 @@ def _analysis_exclusion_is_hard(row: Dict[str, Any]) -> bool:
         return False
     hard_keys = (
         "adult_content_filter_match",
-        "low_fit_theme_filter_match",
+        "human_photo_effect_filter_match",
         "launched_effect_match",
     )
     if any(row.get(key) for key in hard_keys):
@@ -724,6 +817,125 @@ def raw_items_with_successful_analysis(
     return out
 
 
+def _sync_product_from_item(item: Dict[str, Any]) -> str:
+    c = item.get("creative") or {}
+    if not isinstance(c, dict):
+        c = {}
+    return str(
+        item.get("product")
+        or c.get("product")
+        or c.get("advertiser_name")
+        or item.get("keyword")
+        or "未知产品"
+    ).strip() or "未知产品"
+
+
+def _sync_report_row(rows: Dict[str, Dict[str, Any]], product: str) -> Dict[str, Any]:
+    p = product or "未知产品"
+    if p not in rows:
+        rows[p] = {
+            "product": p,
+            "successful_analysis": 0,
+            "hard_excluded": 0,
+            "after_hard_exclusion": 0,
+            "template_dedup_removed": 0,
+            "after_template_dedup": 0,
+            "same_play_non_representative_removed": 0,
+            "low_acceptance_removed": 0,
+            "synced_records": 0,
+            "removed_total": 0,
+            "removed_reasons": {},
+        }
+    return rows[p]
+
+
+def _sync_report_add_reason(
+    reasons: Dict[str, Counter[str]],
+    product: str,
+    reason: str,
+    count: int = 1,
+) -> None:
+    if count <= 0:
+        return
+    reasons[product or "未知产品"][reason or "unknown"] += int(count)
+
+
+def _sync_exclude_reason(row: Dict[str, Any]) -> str:
+    if row.get("adult_content_filter_match"):
+        return "adult_content"
+    if row.get("human_photo_effect_filter_match"):
+        match = row.get("human_photo_effect_filter_match") or {}
+        if isinstance(match, dict):
+            reason = str(match.get("reason") or "").strip()
+            if reason:
+                return reason
+        return "non_human_photo_effect"
+    if row.get("launched_effect_match"):
+        return "launched_effect"
+    if row.get("intraday_effect_match"):
+        return "intraday_effect_duplicate"
+    if row.get("old_effect_match"):
+        return "old_effect_duplicate"
+    if row.get("effect_embedding_duplicate_match"):
+        return "effect_embedding_duplicate"
+    return "exclude_from_bitable_other"
+
+
+def _write_sync_report(
+    *,
+    target_date: str,
+    sync_target: str,
+    need_raw_sync: bool,
+    rows_by_product: Dict[str, Dict[str, Any]],
+    reasons_by_product: Dict[str, Counter[str]],
+) -> Path:
+    per_product: List[Dict[str, Any]] = []
+    for product, row in sorted(rows_by_product.items()):
+        reasons = {
+            key: int(value)
+            for key, value in sorted(reasons_by_product.get(product, Counter()).items())
+            if int(value) > 0
+        }
+        out = dict(row)
+        out["removed_reasons"] = reasons
+        out["removed_total"] = int(sum(reasons.values()))
+        per_product.append(out)
+    totals: Dict[str, Any] = {}
+    numeric_keys = (
+        "successful_analysis",
+        "hard_excluded",
+        "after_hard_exclusion",
+        "template_dedup_removed",
+        "after_template_dedup",
+        "same_play_non_representative_removed",
+        "low_acceptance_removed",
+        "synced_records",
+        "removed_total",
+    )
+    for key in numeric_keys:
+        totals[key] = sum(int(row.get(key) or 0) for row in per_product)
+    reason_totals: Counter[str] = Counter()
+    for row in per_product:
+        for key, value in (row.get("removed_reasons") or {}).items():
+            reason_totals[str(key)] += int(value or 0)
+    totals["removed_reasons"] = {
+        key: int(value)
+        for key, value in sorted(reason_totals.items())
+        if int(value) > 0
+    }
+    payload = {
+        "target_date": target_date,
+        "sync_target": sync_target,
+        "main_sync_enabled": bool(need_raw_sync),
+        "totals": totals,
+        "per_product": per_product,
+    }
+    path = DATA_DIR / f"workflow_video_enhancer_{target_date}_sync_report.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[sync-report] 已写 {path.name}")
+    return path
+
+
 def normalize_risk_level_for_bitable(value: Any, tags: List[str] | None = None) -> str:
     s = str(value or "").strip()
     if "高" in s:
@@ -749,6 +961,14 @@ def _env_enabled(name: str, default: str = "1") -> bool:
 def _env_int(name: str, default: int, *, min_value: int = 1, max_value: int = 60) -> int:
     try:
         value = int(os.getenv(name) or default)
+    except ValueError:
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _env_float(name: str, default: float, *, min_value: float = 0.0, max_value: float = 1.0) -> float:
+    try:
+        value = float(os.getenv(name) or default)
     except ValueError:
         value = default
     return max(min_value, min(max_value, value))
@@ -799,15 +1019,17 @@ def build_daily_bitable_tag_map(target_date: str) -> Dict[str, List[str]]:
         tags: List[str] = []
         asset_name = _short_tag_text(item.get("play_asset_name"))
         variant_name = _short_tag_text(item.get("play_asset_variant_name"))
-        novelty = str(item.get("play_asset_novelty_label") or "").strip()
+        novelty = str(item.get("narrow_novelty_label") or item.get("play_asset_novelty_label") or "").strip()
         if asset_name:
             tags.append(f"玩法资产:{asset_name}")
         if variant_name:
             tags.append(f"玩法变种:{variant_name}")
         if novelty == "新玩法":
-            tags.append("日报:新玩法资产")
-        elif novelty == "新变种":
-            tags.append("日报:新玩法变种")
+            tags.append("日报:新玩法")
+        elif novelty == "老玩法新迭代":
+            tags.append("日报:老玩法新迭代")
+        elif novelty == "老玩法换皮":
+            tags.append("日报:老玩法换皮")
         elif novelty:
             tags.append("日报:已沉淀玩法")
         _add_tags(tag_map, item.get("ad_key"), tags)
@@ -819,14 +1041,19 @@ def build_daily_bitable_tag_map(target_date: str) -> Dict[str, List[str]]:
         variant_name = _short_tag_text(cluster.get("play_asset_variant_name"))
         count = int(cluster.get("material_count") or 1)
         rep_ad_key = str(cluster.get("representative_ad_key") or "").strip()
-        novelty_label = str(cluster.get("novelty_label") or "新变种")
-        base_tags = ["日报:新玩法" if novelty_label == "新玩法" else "日报:新玩法变种"]
+        novelty_label = str(cluster.get("novelty_label") or "老玩法新迭代")
+        if novelty_label == "新玩法":
+            base_tags = ["日报:新玩法"]
+        elif novelty_label == "老玩法新迭代":
+            base_tags = ["日报:老玩法新迭代"]
+        else:
+            base_tags = [f"日报:{novelty_label}"]
         if asset_name:
             base_tags.append(f"玩法资产:{asset_name}")
         if variant_name:
             base_tags.append(f"玩法变种:{variant_name}")
         if count > 1:
-            base_tags.append(f"同资产变种素材数:{count}")
+            base_tags.append(f"同狭义新素材数:{count}")
 
         members = cluster.get("members") or []
         for member in members:
@@ -835,13 +1062,13 @@ def build_daily_bitable_tag_map(target_date: str) -> Dict[str, List[str]]:
             member_ad_key = str(member.get("ad_key") or "").strip()
             member_tags = list(base_tags)
             if member_ad_key and member_ad_key == rep_ad_key:
-                member_tags.insert(0, "日报:新玩法/新变种代表")
+                member_tags.insert(0, "日报:狭义新代表")
             else:
-                member_tags.append("日报:同资产变种素材")
+                member_tags.append("日报:同狭义新素材")
             _add_tags(tag_map, member_ad_key, member_tags)
 
         if rep_ad_key:
-            _add_tags(tag_map, rep_ad_key, ["日报:新玩法/新变种代表", *base_tags])
+            _add_tags(tag_map, rep_ad_key, ["日报:狭义新代表", *base_tags])
 
     for item in report.get("old_play_items") or []:
         if not isinstance(item, dict):
@@ -853,7 +1080,8 @@ def build_daily_bitable_tag_map(target_date: str) -> Dict[str, List[str]]:
                 "日报:新玩法资产",
                 "日报:新玩法变种",
                 "日报:新玩法",
-                "日报:新玩法/新变种代表",
+                "日报:老玩法新迭代",
+                "日报:狭义新代表",
             )
         )
         tags = ["一句话口径:老玩法"] if has_asset_novelty else ["日报:老玩法换素材"]
@@ -905,10 +1133,581 @@ def should_skip_bitable_same_play_member(
         return False
     tag_set = {str(t or "").strip() for t in daily_tags}
     return (
-        ("日报:同玩法素材" in tag_set or "日报:同资产变种素材" in tag_set)
+        ("日报:同玩法素材" in tag_set or "日报:同资产变种素材" in tag_set or "日报:同狭义新素材" in tag_set)
         and "日报:新玩法代表" not in tag_set
         and "日报:新玩法/新变种代表" not in tag_set
+        and "日报:狭义新代表" not in tag_set
     )
+
+
+def _daily_similarity_group_key(
+    item: Dict[str, Any],
+    *,
+    play_asset_info: Dict[str, Any],
+    effect_by_ad: Dict[str, str],
+    play_fingerprint_by_ad: Dict[str, str],
+) -> str:
+    c = item.get("creative") or {}
+    if not isinstance(c, dict):
+        c = {}
+    ad_key = str(c.get("ad_key") or "").strip()
+    appid = str(c.get("appid") or item.get("appid") or "").strip()
+    product = str(item.get("product") or c.get("advertiser_name") or "").strip()
+    scope = appid or product or "unknown"
+
+    variant_key = str(play_asset_info.get("play_asset_variant_key") or "").strip()
+    if variant_key and not variant_key.startswith("unmatched::"):
+        return f"{scope}::variant::{variant_key}"
+
+    normalized = normalize_effect_one_liner(
+        play_fingerprint_by_ad.get(ad_key) or effect_by_ad.get(ad_key) or ""
+    )
+    if normalized:
+        return f"{scope}::text::{normalized[:120]}"
+    return f"{scope}::ad::{ad_key}"
+
+
+def build_daily_similarity_count_map(
+    items: List[Dict[str, Any]],
+    *,
+    play_asset_by_ad: Dict[str, Dict[str, Any]],
+    effect_by_ad: Dict[str, str],
+    play_fingerprint_by_ad: Dict[str, str],
+    cover_intraday_report: Dict[str, Any] | None = None,
+) -> Dict[str, int]:
+    """
+    Count same-day similar materials for each synced candidate.
+
+    The count is intentionally intraday only: same app/product scope, same play
+    asset variant first; unclassified rows fall back to normalized play text.
+    Same-day cover CLIP removals are added to the kept representative's group,
+    because those removed cards are still evidence that a template is crowded.
+    A value of 1 means this material has no same-day similar sibling.
+    """
+    groups: Dict[str, List[str]] = defaultdict(list)
+    group_key_by_ad: Dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        c = item.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        ad_key = str(c.get("ad_key") or "").strip()
+        if not ad_key:
+            continue
+        key = _daily_similarity_group_key(
+            item,
+            play_asset_info=play_asset_by_ad.get(ad_key, {}),
+            effect_by_ad=effect_by_ad,
+            play_fingerprint_by_ad=play_fingerprint_by_ad,
+        )
+        groups[key].append(ad_key)
+        group_key_by_ad[ad_key] = key
+
+    group_key_by_prefix = {
+        ad_key[:16]: group_key
+        for ad_key, group_key in group_key_by_ad.items()
+        if ad_key[:16]
+    }
+    synced_ad_keys = set(group_key_by_ad)
+    cover_removed_by_group: Dict[str, set[str]] = defaultdict(set)
+    if isinstance(cover_intraday_report, dict):
+        per_appid = cover_intraday_report.get("per_appid") or []
+        if isinstance(per_appid, dict):
+            buckets = per_appid.values()
+        elif isinstance(per_appid, list):
+            buckets = per_appid
+        else:
+            buckets = []
+        for bucket in buckets:
+            if not isinstance(bucket, dict):
+                continue
+            for removed in bucket.get("removed") or []:
+                if not isinstance(removed, dict):
+                    continue
+                if str(removed.get("reason") or "").strip() not in (
+                    "cover_style_cluster",
+                    "cover_style_cluster_history_refresh",
+                ):
+                    continue
+                removed_ad_key = str(removed.get("ad_key") or "").strip()
+                if removed_ad_key and removed_ad_key in synced_ad_keys:
+                    continue
+                kept_ad_key = str(removed.get("kept_ad_key") or "").strip()
+                group_key = group_key_by_ad.get(kept_ad_key)
+                if not group_key and kept_ad_key:
+                    group_key = group_key_by_prefix.get(kept_ad_key[:16])
+                if not group_key:
+                    continue
+                removed_key = removed_ad_key or str(removed.get("cover_url") or "").strip()
+                if not removed_key:
+                    removed_key = f"{kept_ad_key}:{len(cover_removed_by_group[group_key])}"
+                cover_removed_by_group[group_key].add(removed_key)
+
+    out: Dict[str, int] = {}
+    for group_key, ad_keys in groups.items():
+        count = len(set(ad_keys)) + len(cover_removed_by_group.get(group_key, set()))
+        for ad_key in ad_keys:
+            out[ad_key] = count
+    return out
+
+
+def build_cover_history_refresh_tag_map(
+    cover_intraday_report: Dict[str, Any] | None,
+) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = defaultdict(list)
+    if not isinstance(cover_intraday_report, dict):
+        return out
+    per_appid = cover_intraday_report.get("per_appid") or []
+    if isinstance(per_appid, dict):
+        buckets = per_appid.values()
+    elif isinstance(per_appid, list):
+        buckets = per_appid
+    else:
+        buckets = []
+    for bucket in buckets:
+        if not isinstance(bucket, dict):
+            continue
+        for row in bucket.get("history_refresh") or []:
+            if not isinstance(row, dict):
+                continue
+            ad_key = str(row.get("ad_key") or row.get("kept_ad_key") or "").strip()
+            if not ad_key:
+                continue
+            tags = out[ad_key]
+            tags.append("历史簇持续发力")
+            matched_date = str(row.get("matched_date") or "").strip()
+            if matched_date:
+                tags.append(f"历史命中:{matched_date}")
+            age = row.get("history_age_days")
+            if age not in (None, ""):
+                try:
+                    tags.append(f"历史间隔:{int(age)}天")
+                except Exception:
+                    pass
+            sim = row.get("similarity")
+            if sim not in (None, ""):
+                try:
+                    tags.append(f"历史封面相似度:{float(sim):.2f}")
+                except Exception:
+                    pass
+    return {ad_key: list(dict.fromkeys(tags)) for ad_key, tags in out.items()}
+
+
+def _template_dedup_score(item: Dict[str, Any]) -> tuple[int, int, int, str]:
+    c = item.get("creative") or {}
+    if not isinstance(c, dict):
+        c = {}
+
+    def as_int(key: str) -> int:
+        try:
+            return int(c.get(key) or item.get(key) or 0)
+        except Exception:
+            return 0
+
+    return (
+        as_int("all_exposure_value"),
+        as_int("impression"),
+        as_int("heat"),
+        str(c.get("ad_key") or ""),
+    )
+
+
+def _template_dedup_key(
+    item: Dict[str, Any],
+    *,
+    play_asset_info: Dict[str, Any],
+    effect_by_ad: Dict[str, str],
+    play_fingerprint_by_ad: Dict[str, str],
+    template_fingerprint_by_ad: Dict[str, str],
+) -> str:
+    c = item.get("creative") or {}
+    if not isinstance(c, dict):
+        c = {}
+    ad_key = str(c.get("ad_key") or "").strip()
+    appid = str(c.get("appid") or item.get("appid") or "").strip()
+    product = str(item.get("product") or c.get("advertiser_name") or "").strip()
+    scope = appid or product
+    if not scope or not ad_key:
+        return ""
+
+    play_text = play_fingerprint_by_ad.get(ad_key) or effect_by_ad.get(ad_key) or ""
+    play_key = normalize_effect_one_liner(play_text)[:140]
+    template_text = (
+        str(play_asset_info.get("template_fingerprint") or "").strip()
+        or template_fingerprint_by_ad.get(ad_key)
+        or ""
+    )
+    template_key = normalize_effect_one_liner(template_text)[:180]
+    if not play_key or not template_key:
+        return ""
+    return f"{scope}::play::{play_key}::template::{template_key}"
+
+
+def _template_dedup_text_similarity_threshold() -> float:
+    return _env_float("BITABLE_TEMPLATE_DEDUP_TEXT_SIMILARITY_THRESHOLD", 0.78, min_value=0.5)
+
+
+def _template_dedup_text_similarity_enabled() -> bool:
+    return _env_enabled("BITABLE_TEMPLATE_DEDUP_TEXT_SIMILARITY_ENABLED", "0")
+
+
+def _template_dedup_clip_threshold() -> float:
+    return _env_float("BITABLE_TEMPLATE_DEDUP_CLIP_THRESHOLD", 0.70, min_value=0.5)
+
+
+def _template_text_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    return max(
+        float(SequenceMatcher(None, a, b).ratio()),
+        float(SequenceMatcher(None, b, a).ratio()),
+    )
+
+
+def _valid_play_asset_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"none", "null", "unknown", "new_play"}:
+        return ""
+    return text
+
+
+def _template_dedup_context(
+    item: Dict[str, Any],
+    *,
+    play_asset_info: Dict[str, Any],
+    effect_by_ad: Dict[str, str],
+    play_fingerprint_by_ad: Dict[str, str],
+    template_fingerprint_by_ad: Dict[str, str],
+) -> Dict[str, Any]:
+    c = item.get("creative") or {}
+    if not isinstance(c, dict):
+        c = {}
+    ad_key = str(c.get("ad_key") or "").strip()
+    appid = str(c.get("appid") or item.get("appid") or "").strip()
+    product = str(item.get("product") or c.get("advertiser_name") or "").strip()
+    scope = appid or product
+    if not scope or not ad_key:
+        return {}
+
+    play_text = play_fingerprint_by_ad.get(ad_key) or effect_by_ad.get(ad_key) or ""
+    play_key = normalize_effect_one_liner(play_text)[:140]
+    asset_id = _valid_play_asset_id(play_asset_info.get("play_asset_id"))
+    if asset_id:
+        play_bucket = f"{scope}::asset::{asset_id}"
+    elif play_key:
+        play_bucket = f"{scope}::play::{play_key}"
+    else:
+        return {}
+
+    template_text = (
+        str(play_asset_info.get("template_fingerprint") or "").strip()
+        or template_fingerprint_by_ad.get(ad_key)
+        or ""
+    )
+    template_key = normalize_effect_one_liner(template_text)[:180]
+    if not template_key:
+        return {}
+    return {
+        "ad_key": ad_key,
+        "item": item,
+        "scope": scope,
+        "product": product,
+        "play_bucket": play_bucket,
+        "play_key": play_key,
+        "asset_id": asset_id,
+        "template_text": template_text,
+        "template_key": template_key,
+        "exact_key": f"{play_bucket}::template::{template_key}",
+    }
+
+
+def _template_dedup_clip_vectors(contexts: List[Dict[str, Any]]) -> Dict[str, List[float]]:
+    if not _env_enabled("BITABLE_TEMPLATE_DEDUP_CLIP_ENABLED", "1"):
+        return {}
+    ad_keys = [str(ctx.get("ad_key") or "") for ctx in contexts if ctx.get("ad_key")]
+    if not ad_keys:
+        return {}
+    out: Dict[str, List[float]] = {}
+    try:
+        blob_map = load_cover_embedding_blob_map_by_ad_keys(ad_keys)
+    except Exception:
+        return {}
+    for ad_key, blob in blob_map.items():
+        try:
+            out[str(ad_key)] = bytes_to_embedding(blob)
+        except Exception:
+            continue
+    return out
+
+
+def apply_template_dedup_for_bitable(
+    items: List[Dict[str, Any]],
+    *,
+    play_asset_by_ad: Dict[str, Dict[str, Any]],
+    effect_by_ad: Dict[str, str],
+    play_fingerprint_by_ad: Dict[str, str],
+    template_fingerprint_by_ad: Dict[str, str],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Hard-filter same-day template duplicates before Bitable sync.
+
+    This is stricter than the push/report novelty logic and only affects Bitable
+    rows. Same app/product + same normalized play fingerprint + same normalized
+    template fingerprint is treated as one material, so demographic swaps do not
+    create multiple review rows.
+    """
+    if not _env_enabled("BITABLE_TEMPLATE_DEDUP_ENABLED", "1"):
+        return items, []
+
+    contexts: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        c = item.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        ad_key = str(c.get("ad_key") or "").strip()
+        ctx = _template_dedup_context(
+            item,
+            play_asset_info=play_asset_by_ad.get(ad_key, {}),
+            effect_by_ad=effect_by_ad,
+            play_fingerprint_by_ad=play_fingerprint_by_ad,
+            template_fingerprint_by_ad=template_fingerprint_by_ad,
+        )
+        if not ctx:
+            continue
+        contexts.append(ctx)
+
+    if not contexts:
+        return items, []
+
+    parent: Dict[str, str] = {str(ctx["ad_key"]): str(ctx["ad_key"]) for ctx in contexts}
+    pair_evidence: Dict[frozenset[str], Dict[str, Any]] = {}
+
+    def find(ad_key: str) -> str:
+        while parent[ad_key] != ad_key:
+            parent[ad_key] = parent[parent[ad_key]]
+            ad_key = parent[ad_key]
+        return ad_key
+
+    def union(a: str, b: str) -> None:
+        ra = find(a)
+        rb = find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    def remember_pair_evidence(
+        a: str,
+        b: str,
+        *,
+        reason: str,
+        template_similarity: float | None = None,
+        cover_clip_similarity: float | None = None,
+    ) -> None:
+        key = frozenset((a, b))
+        existing = pair_evidence.get(key)
+        score = (
+            3 if reason == "template_exact" else 2 if reason == "template_fuzzy_text" else 1,
+            float(template_similarity or 0.0),
+            float(cover_clip_similarity or 0.0),
+        )
+        existing_score = (
+            3 if existing and existing.get("match_reason") == "template_exact" else 2 if existing and existing.get("match_reason") == "template_fuzzy_text" else 1,
+            float(existing.get("template_similarity") or 0.0) if existing else 0.0,
+            float(existing.get("cover_clip_similarity") or 0.0) if existing else 0.0,
+        )
+        if existing and existing_score >= score:
+            return
+        pair_evidence[key] = {
+            "match_reason": reason,
+            "template_similarity": round(float(template_similarity or 0.0), 4) if template_similarity is not None else None,
+            "cover_clip_similarity": round(float(cover_clip_similarity or 0.0), 4) if cover_clip_similarity is not None else None,
+        }
+
+    contexts_by_exact: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    contexts_by_bucket: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for ctx in contexts:
+        contexts_by_exact[str(ctx["exact_key"])].append(ctx)
+        contexts_by_bucket[str(ctx["play_bucket"])].append(ctx)
+
+    for rows in contexts_by_exact.values():
+        if len(rows) <= 1:
+            continue
+        first = str(rows[0]["ad_key"])
+        for ctx in rows[1:]:
+            right_key = str(ctx["ad_key"])
+            remember_pair_evidence(
+                first,
+                right_key,
+                reason="template_exact",
+                template_similarity=1.0,
+            )
+            union(first, right_key)
+
+    text_enabled = _template_dedup_text_similarity_enabled()
+    text_threshold = _template_dedup_text_similarity_threshold()
+    clip_threshold = _template_dedup_clip_threshold()
+    clip_vecs = _template_dedup_clip_vectors(contexts)
+    for rows in contexts_by_bucket.values():
+        if len(rows) <= 1:
+            continue
+        for i, left in enumerate(rows):
+            left_key = str(left["ad_key"])
+            for right in rows[i + 1 :]:
+                right_key = str(right["ad_key"])
+                text_sim = _template_text_similarity(str(left["template_key"]), str(right["template_key"]))
+                if text_enabled and text_sim >= text_threshold:
+                    remember_pair_evidence(
+                        left_key,
+                        right_key,
+                        reason="template_fuzzy_text",
+                        template_similarity=text_sim,
+                    )
+                    union(left_key, right_key)
+                    continue
+                left_vec = clip_vecs.get(left_key)
+                right_vec = clip_vecs.get(right_key)
+                clip_sim = float(cosine_similarity(left_vec, right_vec)) if left_vec and right_vec else 0.0
+                if clip_sim >= clip_threshold:
+                    remember_pair_evidence(
+                        left_key,
+                        right_key,
+                        reason="template_clip_same_play",
+                        template_similarity=text_sim,
+                        cover_clip_similarity=clip_sim,
+                    )
+                    union(left_key, right_key)
+
+    groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    context_by_ad: Dict[str, Dict[str, Any]] = {}
+    for ctx in contexts:
+        ad_key = str(ctx["ad_key"])
+        context_by_ad[ad_key] = ctx
+        groups[find(ad_key)].append(ctx)
+
+    kept_ad_keys: set[str] = set()
+    skipped: List[Dict[str, Any]] = []
+    for _key, rows in groups.items():
+        if len(rows) <= 1:
+            kept_ad_keys.add(str(rows[0].get("ad_key") or ""))
+            continue
+        rows_sorted = sorted(rows, key=lambda ctx: _template_dedup_score(ctx["item"]), reverse=True)
+        kept = rows_sorted[0]
+        kept_ad_key = str(kept.get("ad_key") or "").strip()
+        if kept_ad_key:
+            kept_ad_keys.add(kept_ad_key)
+        kept_template = str(kept.get("template_key") or "")
+        kept_vec = clip_vecs.get(kept_ad_key)
+        for ctx in rows_sorted[1:]:
+            ad_key = str(ctx.get("ad_key") or "").strip()
+            template_sim = _template_text_similarity(str(ctx.get("template_key") or ""), kept_template)
+            clip_sim = 0.0
+            vec = clip_vecs.get(ad_key)
+            if vec and kept_vec:
+                clip_sim = float(cosine_similarity(vec, kept_vec))
+            reason = "template_exact"
+            if str(ctx.get("exact_key") or "") != str(kept.get("exact_key") or ""):
+                reason = "template_fuzzy_text" if template_sim >= text_threshold else "template_clip_same_play"
+            match_ad_key = kept_ad_key
+            evidence = pair_evidence.get(frozenset((ad_key, kept_ad_key)))
+            if evidence is None:
+                best_evidence: tuple[tuple[int, float, float, int], str, Dict[str, Any]] | None = None
+                for other in rows_sorted:
+                    other_ad_key = str(other.get("ad_key") or "").strip()
+                    if not other_ad_key or other_ad_key == ad_key:
+                        continue
+                    ev = pair_evidence.get(frozenset((ad_key, other_ad_key)))
+                    if not ev:
+                        continue
+                    ev_reason = str(ev.get("match_reason") or "")
+                    ev_score = (
+                        3 if ev_reason == "template_exact" else 2 if ev_reason == "template_fuzzy_text" else 1,
+                        float(ev.get("template_similarity") or 0.0),
+                        float(ev.get("cover_clip_similarity") or 0.0),
+                        1 if other_ad_key == kept_ad_key else 0,
+                    )
+                    if best_evidence is None or ev_score > best_evidence[0]:
+                        best_evidence = (ev_score, other_ad_key, ev)
+                if best_evidence is not None:
+                    _, match_ad_key, evidence = best_evidence
+            if evidence is not None:
+                reason = str(evidence.get("match_reason") or reason)
+                if evidence.get("template_similarity") is not None:
+                    template_sim = float(evidence.get("template_similarity") or 0.0)
+                if evidence.get("cover_clip_similarity") is not None:
+                    clip_sim = float(evidence.get("cover_clip_similarity") or 0.0)
+            skipped.append(
+                {
+                    "ad_key": ad_key,
+                    "kept_ad_key": kept_ad_key,
+                    "match_ad_key": match_ad_key,
+                    "group_key": str(kept.get("play_bucket") or ""),
+                    "score": _template_dedup_score(ctx["item"]),
+                    "kept_score": _template_dedup_score(kept["item"]),
+                    "product": str(ctx.get("product") or ""),
+                    "match_reason": reason,
+                    "template_similarity": round(template_sim, 4),
+                    "cover_clip_similarity": round(clip_sim, 4) if clip_sim else None,
+                    "template_key": str(ctx.get("template_key") or ""),
+                    "kept_template_key": kept_template,
+                }
+            )
+
+    if not skipped:
+        return items, []
+
+    skipped_ad_keys = {str(row.get("ad_key") or "") for row in skipped}
+    filtered: List[Dict[str, Any]] = []
+    for item in items:
+        c = item.get("creative") or {}
+        ad_key = str(c.get("ad_key") or "").strip() if isinstance(c, dict) else ""
+        if ad_key in skipped_ad_keys:
+            continue
+        ctx = context_by_ad.get(ad_key)
+        group_key = find(ad_key) if ctx else ""
+        if ctx and ad_key not in kept_ad_keys and len(groups.get(group_key, [])) > 1:
+            continue
+        filtered.append(item)
+
+    group_count = len({str(row.get("group_key") or "") for row in skipped})
+    reason_counts = Counter(str(row.get("match_reason") or "unknown") for row in skipped)
+    print(
+        f"[sync] 同模板换人/性别去重：跳过 {len(skipped)} 条，"
+        f"保留 {group_count} 个模板代表；原因 {dict(reason_counts)}。"
+    )
+    for row in skipped[:20]:
+        print(
+            f"[sync] 同模板跳过 ad_key={str(row.get('ad_key') or '')[:12]} "
+            f"kept={str(row.get('kept_ad_key') or '')[:12]} product={row.get('product') or '-'} "
+            f"reason={row.get('match_reason') or '-'} "
+            f"text_sim={row.get('template_similarity') or '-'} clip_sim={row.get('cover_clip_similarity') or '-'}"
+        )
+    if len(skipped) > 20:
+        print(f"[sync] 同模板跳过明细仅展示前 20 条，剩余 {len(skipped) - 20} 条。")
+    return filtered, skipped
+
+
+def merge_template_dedup_similarity_counts(
+    daily_similarity_count_by_ad: Dict[str, int],
+    template_skipped: List[Dict[str, Any]],
+) -> None:
+    grouped: Dict[str, set[str]] = defaultdict(set)
+    for row in template_skipped:
+        kept_ad_key = str(row.get("kept_ad_key") or "").strip()
+        skipped_ad_key = str(row.get("ad_key") or "").strip()
+        if not kept_ad_key:
+            continue
+        grouped[kept_ad_key].add(kept_ad_key)
+        if skipped_ad_key:
+            grouped[kept_ad_key].add(skipped_ad_key)
+    for kept_ad_key, ad_keys in grouped.items():
+        daily_similarity_count_by_ad[kept_ad_key] = max(
+            int(daily_similarity_count_by_ad.get(kept_ad_key) or 1),
+            len(ad_keys),
+        )
 
 
 _HIGH_ACCEPTANCE_THEME_PATTERNS: List[tuple[str, str, int]] = [
@@ -955,9 +1754,9 @@ def acceptance_priority_tags(
     tags: List[str] = []
     tag_set = {str(t or "").strip() for t in daily_tags}
 
-    if "日报:新玩法代表" in tag_set or "日报:新玩法/新变种代表" in tag_set:
+    if "日报:新玩法代表" in tag_set or "日报:新玩法/新变种代表" in tag_set or "日报:狭义新代表" in tag_set:
         score += 3
-        tags.append("采纳优先:新玩法代表")
+        tags.append("采纳优先:狭义新代表")
     if "日报:老玩法换素材" in tag_set:
         score -= 1
 
@@ -983,7 +1782,7 @@ def should_skip_low_acceptance_candidate(
         return False
     tag_set = {str(t or "").strip() for t in daily_tags}
     # New-play representatives are already sparse and useful for calibration.
-    if "日报:新玩法代表" in tag_set or "日报:新玩法/新变种代表" in tag_set:
+    if "日报:新玩法代表" in tag_set or "日报:新玩法/新变种代表" in tag_set or "日报:狭义新代表" in tag_set:
         return False
     threshold = _env_int(
         "BITABLE_ACCEPTANCE_PRIORITY_MIN_SCORE",
@@ -1047,7 +1846,8 @@ def sync_cluster_cards_to_bitable(
 
 def main() -> None:
     args = parse_args()
-    maybe_pull_play_asset_doc()
+    if legacy_play_library_enabled():
+        maybe_pull_play_asset_doc()
     app_token, table_id = parse_bitable_url(args.url)
 
     raw = json.loads(Path(args.raw).read_text(encoding="utf-8"))
@@ -1068,6 +1868,7 @@ def main() -> None:
     voiceover_by_ad: Dict[str, str] = {}
     play_fingerprint_by_ad: Dict[str, str] = {}
     differentiator_by_ad: Dict[str, str] = {}
+    template_fingerprint_by_ad: Dict[str, str] = {}
     meta_by_ad = build_meta_by_ad_from_analysis_payload(analysis)
     for it in analysis.get("results") or []:
         if isinstance(it, dict):
@@ -1079,6 +1880,7 @@ def main() -> None:
                 voiceover_by_ad[k] = str(it.get("voiceover_script") or "")
                 play_fingerprint_by_ad[k] = str(it.get("play_fingerprint") or "")
                 differentiator_by_ad[k] = str(it.get("differentiator") or "")
+                template_fingerprint_by_ad[k] = str(it.get("template_fingerprint") or "")
 
     need_raw_sync = args.sync_target in ("both", "raw")
     need_cluster_sync = args.sync_target in ("both", "cluster")
@@ -1090,18 +1892,9 @@ def main() -> None:
             n_adult, _ = apply_adult_content_filter(res_list)
             if n_adult:
                 print(f"[sync] 成人/色情风险处理 {n_adult} 条（排除/补标）")
-
-            low_fit_on = (os.getenv("LOW_FIT_THEME_FILTER_ENABLED") or "1").strip().lower() not in (
-                "0",
-                "false",
-                "no",
-                "off",
-                "",
-            )
-            if low_fit_on:
-                n_low_fit, _ = apply_low_fit_theme_filter(res_list)
-                if n_low_fit:
-                    print(f"[sync] 低采纳主题处理 {n_low_fit} 条（排除/补标）")
+            n_human_photo, _ = apply_human_photo_effect_filter(res_list)
+            if n_human_photo:
+                print(f"[sync] 非人物照片加工/电商素材处理 {n_human_photo} 条（排除/补标）")
 
             intraday_effect_on = (os.getenv("INTRADAY_EFFECT_FILTER_ENABLED") or "0").strip().lower() not in (
                 "0",
@@ -1189,11 +1982,15 @@ def main() -> None:
                         "play_asset_name": str(it.get("play_asset_name") or ""),
                         "play_asset_variant_name": str(it.get("play_asset_variant_name") or ""),
                         "play_asset_novelty_label": str(it.get("play_asset_novelty_label") or ""),
+                        "asset_variant_novelty_label": str(it.get("asset_variant_novelty_label") or ""),
+                        "narrow_novelty_label": str(it.get("narrow_novelty_label") or it.get("play_asset_novelty_label") or ""),
+                        "narrow_novelty_reason": str(it.get("narrow_novelty_reason") or ""),
                         "play_asset_id": str(it.get("play_asset_id") or ""),
                         "play_asset_variant_key": str(it.get("play_asset_variant_key") or ""),
                         "play_asset_matched_keywords": str(it.get("play_asset_matched_keywords") or ""),
                         "play_asset_match_source": str(it.get("play_asset_match_source") or ""),
                         "play_asset_classification_reason": str(it.get("play_asset_classification_reason") or ""),
+                        "template_fingerprint": str(it.get("template_fingerprint") or ""),
                     }
             if play_asset_by_ad:
                 print(f"[sync] 已补全玩法资产/变种字段 {len(play_asset_by_ad)} 条。")
@@ -1230,6 +2027,31 @@ def main() -> None:
     target_ms = to_ms_from_date_str(target_date)
     # 卡片前置信息：仅保留日期（不展示筛选规则/计数/产品分布）
     raw_items = raw.get("items") or []
+    sync_rows_by_product: Dict[str, Dict[str, Any]] = {}
+    sync_reasons_by_product: Dict[str, Counter[str]] = defaultdict(Counter)
+    ad_product_by_ad: Dict[str, str] = {}
+    for it in raw_items:
+        if not isinstance(it, dict):
+            continue
+        c = it.get("creative") or {}
+        if not isinstance(c, dict):
+            continue
+        ad_key = str(c.get("ad_key") or "").strip()
+        if ad_key:
+            ad_product_by_ad[ad_key] = _sync_product_from_item(it)
+    for it in analysis.get("results") or []:
+        if not isinstance(it, dict):
+            continue
+        ad_key = str(it.get("ad_key") or "").strip()
+        text = str(it.get("analysis") or "").strip()
+        if not ad_key or not text or text.startswith("[ERROR]"):
+            continue
+        product = str(it.get("product") or ad_product_by_ad.get(ad_key) or "未知产品").strip() or "未知产品"
+        srow = _sync_report_row(sync_rows_by_product, product)
+        srow["successful_analysis"] += 1
+        if _analysis_exclusion_is_hard(it):
+            srow["hard_excluded"] += 1
+            _sync_report_add_reason(sync_reasons_by_product, product, _sync_exclude_reason(it))
     by_product: Dict[str, int] = {}
     for it in raw_items:
         if isinstance(it, dict):
@@ -1253,6 +2075,11 @@ def main() -> None:
     intro_lines: List[str] = [f"【Video Enhancer 日报】{target_date}"]
 
     intro_md = "\n".join(intro_lines)
+    items_to_sync: List[Dict[str, Any]] = []
+    daily_similarity_count_by_ad: Dict[str, int] = {}
+    cover_history_refresh_tags_by_ad: Dict[str, List[str]] = build_cover_history_refresh_tag_map(
+        raw.get("cover_style_intraday_report")
+    )
     if need_raw_sync:
         n_style_skip = sum(
             1
@@ -1262,6 +2089,40 @@ def main() -> None:
         if n_style_skip:
             print(f"[sync] 主表将跳过已标记排除素材 {n_style_skip} 条（不同步多维表）。")
         items_to_sync = raw_items_with_successful_analysis(raw, analysis)
+        for item in items_to_sync:
+            _sync_report_row(sync_rows_by_product, _sync_product_from_item(item))["after_hard_exclusion"] += 1
+        daily_similarity_count_by_ad = build_crawl_similarity_count_map(raw, items_to_sync)
+        fallback_similarity_count_by_ad = build_daily_similarity_count_map(
+            items_to_sync,
+            play_asset_by_ad=play_asset_by_ad,
+            effect_by_ad=effect_by_ad,
+            play_fingerprint_by_ad=play_fingerprint_by_ad,
+            cover_intraday_report=raw.get("cover_style_intraday_report"),
+        )
+        for ad_key, count in fallback_similarity_count_by_ad.items():
+            daily_similarity_count_by_ad[ad_key] = max(
+                int(daily_similarity_count_by_ad.get(ad_key) or 1),
+                int(count or 1),
+            )
+        items_to_sync, template_skipped = apply_template_dedup_for_bitable(
+            items_to_sync,
+            play_asset_by_ad=play_asset_by_ad,
+            effect_by_ad=effect_by_ad,
+            play_fingerprint_by_ad=play_fingerprint_by_ad,
+            template_fingerprint_by_ad=template_fingerprint_by_ad,
+        )
+        for skipped_row in template_skipped:
+            product = str(skipped_row.get("product") or "未知产品").strip() or "未知产品"
+            srow = _sync_report_row(sync_rows_by_product, product)
+            srow["template_dedup_removed"] += 1
+            _sync_report_add_reason(
+                sync_reasons_by_product,
+                product,
+                "same_template_demographic_or_gender_swap",
+            )
+        for item in items_to_sync:
+            _sync_report_row(sync_rows_by_product, _sync_product_from_item(item))["after_template_dedup"] += 1
+        merge_template_dedup_similarity_counts(daily_similarity_count_by_ad, template_skipped)
         n_raw_items = len(raw.get("items") or [])
         if n_raw_items > len(items_to_sync):
             print(
@@ -1278,6 +2139,9 @@ def main() -> None:
             ad_key = str(c.get("ad_key") or "")
             daily_tag_list = lookup_daily_bitable_tags(daily_tags_by_ad, ad_key)
             if should_skip_bitable_same_play_member(daily_tag_list):
+                product = _sync_product_from_item(item)
+                _sync_report_row(sync_rows_by_product, product)["same_play_non_representative_removed"] += 1
+                _sync_report_add_reason(sync_reasons_by_product, product, "same_play_non_representative")
                 print(f"[sync] 跳过同玩法非代表素材 ad_key={ad_key[:12]}（仅同步玩法代表）。")
                 continue
             base_material_tags = material_tags_by_ad.get(ad_key, [])
@@ -1294,6 +2158,9 @@ def main() -> None:
                 risk_level=risk_level,
             )
             if should_skip_low_acceptance_candidate(score=priority_score, daily_tags=daily_tag_list):
+                product = _sync_product_from_item(item)
+                _sync_report_row(sync_rows_by_product, product)["low_acceptance_removed"] += 1
+                _sync_report_add_reason(sync_reasons_by_product, product, "low_acceptance_priority")
                 print(
                     f"[sync] 跳过低采纳优先级素材 ad_key={ad_key[:12]} "
                     f"score={priority_score} tags={'/'.join(priority_tags) or '-'}"
@@ -1319,15 +2186,20 @@ def main() -> None:
                 "核心卖点": effect_by_ad.get(ad_key, ""),
                 "Hook解析": hook_by_ad.get(ad_key, ""),
                 "脚本/口播": voiceover_by_ad.get(ad_key, ""),
+                "玩法": play_asset_info.get("play_asset_name", ""),
                 "玩法资产": play_asset_info.get("play_asset_name", ""),
                 "玩法变种": play_asset_info.get("play_asset_variant_name", ""),
-                "玩法新旧": play_asset_info.get("play_asset_novelty_label", ""),
+                "玩法新旧": play_asset_info.get("narrow_novelty_label") or play_asset_info.get("play_asset_novelty_label", ""),
                 "玩法资产ID": play_asset_info.get("play_asset_id", ""),
                 "玩法变种ID": play_asset_info.get("play_asset_variant_key", ""),
                 "玩法判断来源": play_asset_info.get("play_asset_match_source", ""),
                 "玩法判断理由": play_asset_info.get("play_asset_classification_reason", ""),
                 "玩法指纹": play_fingerprint_by_ad.get(ad_key, ""),
                 "差异点": differentiator_by_ad.get(ad_key, ""),
+                "模板指纹": play_asset_info.get("template_fingerprint") or template_fingerprint_by_ad.get(ad_key, ""),
+                "狭义新判断": play_asset_info.get("narrow_novelty_label") or play_asset_info.get("play_asset_novelty_label", ""),
+                "狭义新理由": play_asset_info.get("narrow_novelty_reason", ""),
+                "日内相似素材数": int(daily_similarity_count_by_ad.get(ad_key) or 1),
                 "风险等级": risk_level,
                 "视频时长": int(c.get("video_duration") or 0),
                 "接受情况": "待定",
@@ -1343,6 +2215,7 @@ def main() -> None:
             tag_list.extend(base_material_tags)
             tag_list.extend(daily_tag_list)
             tag_list.extend(priority_tags)
+            tag_list.extend(cover_history_refresh_tags_by_ad.get(ad_key, []))
             if play_asset_info.get("play_asset_name"):
                 tag_list.append(f"玩法资产:{play_asset_info.get('play_asset_name')}")
             if play_asset_info.get("play_asset_variant_name"):
@@ -1359,11 +2232,12 @@ def main() -> None:
                 fields["创建时间"] = first_seen_ms
                 fields["更新时间"] = first_seen_ms
 
-            img_url = normalize_cover_image_url_for_bitable(
-                str(c.get("preview_img_url") or "")
-            )
-            if img_url:
-                ft = upload_image_as_attachment(img_url, app_token)
+            raw_img_url = str(c.get("preview_img_url") or "").strip()
+            img_url = normalize_cover_image_url_for_bitable(raw_img_url)
+            if raw_img_url or img_url:
+                ft = upload_image_as_attachment(raw_img_url, app_token) if raw_img_url else None
+                if not ft and img_url and img_url != raw_img_url:
+                    ft = upload_image_as_attachment(img_url, app_token)
                 if ft:
                     fields["封面图"] = [{"file_token": ft}]
 
@@ -1374,6 +2248,7 @@ def main() -> None:
                     fields["视频附件"] = [{"file_token": vf}]
 
             records.append({"fields": fields})
+            _sync_report_row(sync_rows_by_product, _sync_product_from_item(item))["synced_records"] += 1
 
         total = 0
         for i in range(0, len(records), BATCH_SIZE):
@@ -1389,6 +2264,15 @@ def main() -> None:
         )
     else:
         print("[sync] 已按参数跳过主表同步（--sync-target=cluster）。")
+
+    if target_date:
+        _write_sync_report(
+            target_date=target_date,
+            sync_target=args.sync_target,
+            need_raw_sync=need_raw_sync,
+            rows_by_product=sync_rows_by_product,
+            reasons_by_product=sync_reasons_by_product,
+        )
 
     if not args.no_card and (suggestion_md.strip() or suggestion_json):
         card_md = _render_card_markdown(

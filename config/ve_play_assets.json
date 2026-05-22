@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-15",
+  "updated_at": "2026-05-21",
   "description": "Video Enhancer 人工玩法资产库。当前版本基于本地库 2026-03-18 至 2026-05-13 的 VE 已分析素材，以及 Google Sheet「AI产品热点排期表 / 特效上线记录」2025-11-17 至 2026-05-14 的 364 条内部上线记录合并沉淀，用于把新素材归入稳定玩法资产，避免每天因热点、服装、发型、运动项目或文案差异被拆成过多新玩法。",
   "source_date_range": [
     "2026-03-18",
@@ -3507,7 +3507,6 @@
           "min_score": 1
         }
       ],
-      "representative_ad_keys": [],
       "example_effects": [
         "Go Live：单人照片生成开播/主播直播间画面",
         "Live Queen：单人照片生成直播女王风格图",
@@ -3518,7 +3517,8 @@
         "2026-05-09",
         "2026-05-11"
       ],
-      "notes": "2026-05-15 从内部特效上线记录沉淀。和体育直播转播不同，本资产关注社交直播间、主播身份、PK/连麦包装。"
+      "notes": "2026-05-15 从内部特效上线记录沉淀。和体育直播转播不同，本资产关注社交直播间、主播身份、PK/连麦包装。",
+      "representative_ad_keys": []
     },
     {
       "asset_id": "ve_play_crowd_find_me_scene",
@@ -3585,7 +3585,6 @@
           "min_score": 1
         }
       ],
-      "representative_ad_keys": [],
       "example_effects": [
         "Find Me：Scan the massive crowd and find you there",
         "Where’s Me?：Spot yourself within the busy cartoon scene"
@@ -3594,7 +3593,8 @@
         "2026-04-23",
         "2026-04-24"
       ],
-      "notes": "2026-05-15 从内部特效上线记录沉淀。该玩法不是封面相似，而是互动机制相同：把用户藏入复杂场景让用户找自己。"
+      "notes": "2026-05-15 从内部特效上线记录沉淀。该玩法不是封面相似，而是互动机制相同：把用户藏入复杂场景让用户找自己。",
+      "representative_ad_keys": []
     }
   ],
   "internal_launch_source": {

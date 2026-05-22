@@ -33,6 +33,7 @@ from ua_workflows.shared.guangdada.competitor_utils import (
     _is_resume_advertising,
     advertiser_matches_product,
 )
+from ua_workflows.video_enhancer.crawl_similarity import annotate_crawl_similarity_counts
 
 
 CONFIG_FILE = CONFIG_DIR / "ai_product.json"
@@ -77,6 +78,29 @@ def _load_workflow_competitors(products: list[str] | None = None):
         selected = [c for c in candidates if c.product.strip().lower() in wanted]
         return selected
     return candidates
+
+
+def _target_date_ymd(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    return raw[:10]
+
+
+def _resolve_max_scroll_rounds(target_date_ymd: str | None) -> int:
+    default = 56 if target_date_ymd else 16
+    raw = (os.getenv("VIDEO_ENHANCER_MAX_SCROLL_ROUNDS") or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, min(200, int(raw)))
+    except ValueError:
+        return default
+
+
+def _target_date_early_stop_enabled() -> bool:
+    raw = (os.getenv("VIDEO_ENHANCER_TARGET_DATE_EARLY_STOP_ENABLED") or "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _creative_online_ts(c: dict[str, Any]) -> int | None:
@@ -196,6 +220,22 @@ async def main():
     if ui_date_range:
         print(f"[2] UI 日期范围: {ui_date_range[0]} ~ {ui_date_range[1]}")
 
+    target_ymd = _target_date_ymd(args.target_date)
+    max_scroll_rounds = _resolve_max_scroll_rounds(target_ymd)
+    early_stop_enabled = bool(target_ymd and _target_date_early_stop_enabled())
+    stop_scroll_ymd = target_ymd if early_stop_enabled else None
+    if target_ymd:
+        if early_stop_enabled:
+            print(
+                f"[crawl] target_date 模式：max_scroll_rounds={max_scroll_rounds}；"
+                f"滚到 first_seen < {target_ymd} 后提前停滚。"
+            )
+        else:
+            print(
+                f"[crawl] target_date 模式：max_scroll_rounds={max_scroll_rounds}；"
+                "旧 first_seen 早停默认关闭，避免混合 NAPI 响应里的历史素材误触发。"
+            )
+
     results = await run_batch(
         keywords=keywords,
         debug=bool(os.environ.get("DEBUG")),
@@ -208,6 +248,8 @@ async def main():
         pause_per_keyword=bool(args.pause_per_product),
         keep_browser_open=bool(args.keep_browser_open),
         keyword_labels={c.appid: c.product for c in competitors},
+        max_scroll_rounds=max_scroll_rounds,
+        stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_ymd,
     )
 
 # 应用与主工作流一致的筛选：广告主匹配 + 可选日期命中；重投一律去掉。
@@ -237,13 +279,26 @@ async def main():
     per_product_date_hits: dict[str, int] = {}
     per_product_resume_excluded: dict[str, int] = {}
     per_product_duplicate_excluded: dict[str, int] = {}
+    per_product_clicked_detail_rows: dict[str, int] = {}
+    per_product_dom_cards: dict[str, int] = {}
+    per_product_captured: dict[str, int] = {}
+    per_product_advertiser_excluded: dict[str, int] = {}
+    per_product_date_filtered: dict[str, int] = {}
 
     for r in results:
         kw = str(r.get("keyword") or "")
         all_creatives = r.get("all_creatives") or []
         if not isinstance(all_creatives, list):
             continue
+        dom_creatives = r.get("dom_creatives") or []
+        if not isinstance(dom_creatives, list):
+            dom_creatives = []
+        dom_cards = r.get("dom_cards") or []
+        if not isinstance(dom_cards, list):
+            dom_cards = []
         comp = comp_map.get(kw) or Competitor(category="", product="", appid=kw)
+        product_key = comp.product or kw
+        captured_cnt = len([c for c in all_creatives if isinstance(c, dict)])
 
         filtered = [
             c
@@ -255,7 +310,7 @@ async def main():
             )
         ]
 
-        product_key = comp.product or kw
+        advertiser_excluded_cnt = max(0, captured_cnt - len(filtered))
 
         # 先按日期命中筛选（若指定 target_date），再按 ad_key 做最终去重。
         candidates: list[dict[str, Any]] = []
@@ -282,6 +337,7 @@ async def main():
             seen_candidate_ad_keys.add(ad_key)
             candidates.append(c)
 
+        date_filtered_cnt = max(0, len(filtered) - date_hit_cnt) if args.target_date else 0
         before_cnt = len(candidates)
         truncated = False
         if (
@@ -306,6 +362,21 @@ async def main():
         )
         per_product_duplicate_excluded[product_key] = (
             per_product_duplicate_excluded.get(product_key, 0) + duplicate_excluded_cnt
+        )
+        per_product_clicked_detail_rows[product_key] = (
+            per_product_clicked_detail_rows.get(product_key, 0)
+            + len([c for c in dom_creatives if isinstance(c, dict)])
+        )
+        per_product_dom_cards[product_key] = (
+            per_product_dom_cards.get(product_key, 0)
+            + len([c for c in dom_cards if isinstance(c, dict)])
+        )
+        per_product_captured[product_key] = per_product_captured.get(product_key, 0) + captured_cnt
+        per_product_advertiser_excluded[product_key] = (
+            per_product_advertiser_excluded.get(product_key, 0) + advertiser_excluded_cnt
+        )
+        per_product_date_filtered[product_key] = (
+            per_product_date_filtered.get(product_key, 0) + date_filtered_cnt
         )
 
         for c in candidates:
@@ -337,7 +408,11 @@ async def main():
         for k in sorted(per_product_after.keys()):
             print(
                 f"[filter] product={k} before={per_product_before.get(k,0)} after={per_product_after.get(k,0)} "
+                f"clicked={per_product_clicked_detail_rows.get(k,0)} "
+                f"captured={per_product_captured.get(k,0)} "
                 f"date_hits={per_product_date_hits.get(k,0)} "
+                f"advertiser_excluded={per_product_advertiser_excluded.get(k,0)} "
+                f"date_filtered={per_product_date_filtered.get(k,0)} "
                 f"resume_excluded={per_product_resume_excluded.get(k,0)} "
                 f"duplicate_excluded={per_product_duplicate_excluded.get(k,0)} "
                 f"truncated={per_product_truncated.get(k, False)}"
@@ -363,22 +438,42 @@ async def main():
             "filter_keep": filter_keep,
             "filter_sort_metric": filter_sort_metric,
             "per_product_truncation_enabled": per_product_truncation_enabled,
+            "max_scroll_rounds": max_scroll_rounds,
+            "target_date_early_stop_enabled": early_stop_enabled,
+            "stop_scroll_if_oldest_first_seen_before_ymd": stop_scroll_ymd,
             "resume_excluded_all": True,
             "pre_truncation_total": filter_pre_total,
             "post_truncation_total": filter_post_total,
             "per_product": {
                 k: {
+                    "clicked_detail_rows": per_product_clicked_detail_rows.get(k, 0),
+                    "dom_cards": per_product_dom_cards.get(k, 0),
+                    "captured": per_product_captured.get(k, 0),
                     "before": per_product_before.get(k, 0),
                     "after": per_product_after.get(k, 0),
                     "date_hits": per_product_date_hits.get(k, 0),
+                    "advertiser_excluded": per_product_advertiser_excluded.get(k, 0),
+                    "date_filtered": per_product_date_filtered.get(k, 0),
                     "resume_excluded": per_product_resume_excluded.get(k, 0),
                     "duplicate_excluded": per_product_duplicate_excluded.get(k, 0),
+                    "truncated_excluded": max(
+                        0,
+                        per_product_before.get(k, 0) - per_product_after.get(k, 0),
+                    )
+                    if per_product_truncated.get(k, False)
+                    else 0,
                     "truncated": per_product_truncated.get(k, False),
                 }
-                for k in sorted(set(per_product_after.keys()) | set(per_product_before.keys()))
+                for k in sorted(
+                    set(per_product_after.keys())
+                    | set(per_product_before.keys())
+                    | set(per_product_captured.keys())
+                    | set(per_product_clicked_detail_rows.keys())
+                )
             },
         },
     }
+    annotate_crawl_similarity_counts(raw_payload)
     with open(raw_path, "w", encoding="utf-8") as f:
         json.dump(raw_payload, f, ensure_ascii=False, indent=2)
     print(f"[3] 原始 JSON 已写: {raw_path.name}（{len(raw_items)} 条）")

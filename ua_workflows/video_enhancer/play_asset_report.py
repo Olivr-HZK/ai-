@@ -16,6 +16,9 @@ from ua_workflows.shared.db.video_enhancer import (
 from ua_workflows.video_enhancer.play_assets import load_play_assets, match_play_asset
 
 
+REPORTABLE_NARROW_LABELS = {"新玩法", "老玩法新迭代"}
+
+
 def _item_score(item: dict[str, Any]) -> tuple[int, int, int, str]:
     def as_int(key: str) -> int:
         try:
@@ -79,6 +82,38 @@ def _new_variant_key(item: dict[str, Any], asset_id: str, variant_name: str) -> 
     )
     suffix = compact[:80] if compact else str(item.get("ad_key") or "")[:16]
     return f"{asset_id}::new_variant::{suffix}"
+
+
+def _normalized_key(text: Any, max_chars: int = 140) -> str:
+    compact = normalize_effect_one_liner(str(text or ""))
+    return compact[:max_chars] if compact else ""
+
+
+def _stable_play_key(item: dict[str, Any]) -> str:
+    asset_id = str(item.get("play_asset_id") or "").strip()
+    if asset_id:
+        return f"asset::{asset_id}"
+    text = " ".join(
+        str(item.get(key) or "").strip()
+        for key in ("play_asset_name", "play_fingerprint", "effect_one_liner")
+        if str(item.get(key) or "").strip()
+    )
+    compact = _normalized_key(text, 120)
+    if compact:
+        return f"text::{compact}"
+    variant_key = str(item.get("play_asset_variant_key") or "").strip()
+    if variant_key.startswith("new_play::") or variant_key.startswith("unmatched::"):
+        return variant_key[:160]
+    return ""
+
+
+def _template_key(item: dict[str, Any]) -> str:
+    template = str(item.get("template_fingerprint") or "").strip()
+    if template and template not in {"无", "None", "none", "-"}:
+        compact = _normalized_key(template)
+        if compact:
+            return compact
+    return ""
 
 
 def _apply_ai_asset_choice(item: dict[str, Any], assets: list[dict[str, Any]]) -> bool:
@@ -235,7 +270,7 @@ def _historical_rows(
                    COALESCE(NULLIF(d.appid, ''), cl.appid, '') AS appid,
                    COALESCE(cl.title, '') AS title,
                    COALESCE(cl.body, '') AS body,
-                   d.effect_one_liner, d.play_fingerprint, d.differentiator,
+                   d.effect_one_liner, d.play_fingerprint, d.differentiator, d.template_fingerprint,
                    d.play_asset_id, d.play_asset_name, d.play_asset_subtag_ids, d.play_asset_subtag_names,
                    d.play_asset_novelty_label, d.play_asset_match_source, d.play_asset_classification_reason,
                    d.material_tags
@@ -247,6 +282,7 @@ def _historical_rows(
                 COALESCE(TRIM(d.effect_one_liner), '') <> ''
                 OR COALESCE(TRIM(d.play_fingerprint), '') <> ''
                 OR COALESCE(TRIM(d.differentiator), '') <> ''
+                OR COALESCE(TRIM(d.template_fingerprint), '') <> ''
               )
             """,
             params,
@@ -254,6 +290,65 @@ def _historical_rows(
         return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
+
+
+def _annotate_narrow_novelty(
+    items: list[dict[str, Any]],
+    history: list[dict[str, Any]],
+    target_date: str,
+) -> None:
+    play_first_seen: dict[str, str] = {}
+    templates_by_play: dict[str, set[str]] = defaultdict(set)
+
+    for row in history:
+        if not isinstance(row, dict):
+            continue
+        play_key = _stable_play_key(row)
+        if not play_key:
+            continue
+        seen_date = str(row.get("target_date") or "").strip()
+        if seen_date and (play_key not in play_first_seen or seen_date < play_first_seen[play_key]):
+            play_first_seen[play_key] = seen_date
+        template_key = _template_key(row)
+        if template_key:
+            templates_by_play[play_key].add(template_key)
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        play_key = _stable_play_key(item)
+        template_key = _template_key(item)
+        has_play_history = bool(play_key and play_key in play_first_seen)
+        historical_templates = templates_by_play.get(play_key, set()) if play_key else set()
+        asset_is_new = bool(item.get("play_asset_is_new"))
+        variant_is_new = bool(item.get("play_asset_variant_is_new"))
+        broad_label = str(item.get("asset_variant_novelty_label") or item.get("play_asset_novelty_label") or "").strip()
+
+        if asset_is_new or (not has_play_history and (variant_is_new or broad_label == "新玩法")):
+            label = "新玩法"
+            reason = "稳定玩法在历史库中未出现，按狭义新玩法处理。"
+        elif template_key and template_key not in historical_templates:
+            label = "老玩法新迭代"
+            reason = "稳定玩法已出现，但模板指纹首次出现；同模板仅换人种/性别不计为新。"
+        elif template_key and template_key in historical_templates:
+            label = "老玩法换皮"
+            reason = "稳定玩法和模板指纹均已出现；人物属性或主体替换不计为新。"
+        elif variant_is_new:
+            label = "老玩法新迭代"
+            reason = "稳定玩法已出现，变种键首次出现；模板指纹缺失，暂按老玩法新迭代。"
+        elif has_play_history:
+            label = "已沉淀玩法"
+            reason = "稳定玩法已沉淀，且缺少新的模板结构证据。"
+        else:
+            label = "玩法待复核"
+            reason = "缺少稳定玩法或模板指纹，无法自动判断狭义新旧。"
+
+        item["stable_play_key"] = play_key
+        item["template_fingerprint_key"] = template_key
+        item["narrow_novelty_label"] = label
+        item["narrow_novelty_reason"] = reason
+        item["narrow_novelty_is_reportable"] = label in REPORTABLE_NARROW_LABELS
+        item["play_asset_novelty_label"] = label
 
 
 def annotate_daily_play_asset_novelty(
@@ -293,11 +388,14 @@ def annotate_daily_play_asset_novelty(
         item["play_asset_first_seen_date"] = target_date if asset_is_new else asset_first_seen.get(asset_id, "")
         item["play_asset_variant_first_seen_date"] = target_date if variant_is_new else variant_first_seen.get(variant_key, "")
         if asset_is_new:
-            item["play_asset_novelty_label"] = "新玩法"
+            broad_label = "新玩法"
         elif variant_is_new:
-            item["play_asset_novelty_label"] = "新变种"
+            broad_label = "新变种"
         else:
-            item["play_asset_novelty_label"] = "已沉淀"
+            broad_label = "已沉淀"
+        item["asset_variant_novelty_label"] = broad_label
+        item["play_asset_novelty_label"] = broad_label
+    _annotate_narrow_novelty(items, history, target_date)
     return items
 
 
@@ -306,14 +404,15 @@ def _cluster_new_asset_variant_items(items: list[dict[str, Any]]) -> tuple[list[
     for item in items:
         if not isinstance(item, dict):
             continue
-        asset_new = bool(item.get("play_asset_is_new"))
-        variant_new = bool(item.get("play_asset_variant_is_new"))
-        if not asset_new and not variant_new:
+        label = str(item.get("narrow_novelty_label") or item.get("play_asset_novelty_label") or "").strip()
+        if label not in REPORTABLE_NARROW_LABELS:
             continue
-        if asset_new and str(item.get("play_asset_id") or "").strip():
-            group_key = f"asset::{item.get('play_asset_id')}"
+        play_key = str(item.get("stable_play_key") or _stable_play_key(item) or "").strip()
+        template_key = str(item.get("template_fingerprint_key") or _template_key(item) or "").strip()
+        if label == "新玩法":
+            group_key = f"narrow_play::{play_key or item.get('play_asset_variant_key') or item.get('ad_key')}"
         else:
-            group_key = f"variant::{item.get('play_asset_variant_key') or item.get('ad_key')}"
+            group_key = f"narrow_template::{play_key or 'unknown'}::{template_key or item.get('play_asset_variant_key') or item.get('ad_key')}"
         grouped[group_key].append(item)
 
     representatives: list[dict[str, Any]] = []
@@ -321,10 +420,11 @@ def _cluster_new_asset_variant_items(items: list[dict[str, Any]]) -> tuple[list[
     for group_key, rows in grouped.items():
         rows_sorted = sorted(rows, key=_item_score, reverse=True)
         representative = dict(rows_sorted[0])
-        label = "新玩法" if representative.get("play_asset_is_new") else "新变种"
+        label = str(representative.get("narrow_novelty_label") or representative.get("play_asset_novelty_label") or "老玩法新迭代")
         representative["daily_asset_variant_cluster_key"] = group_key
         representative["cluster_material_count"] = len(rows_sorted)
         representative["play_asset_novelty_label"] = label
+        representative["narrow_novelty_label"] = label
         representative["asset_variant_cluster_members"] = [
             {
                 "ad_key": str(row.get("ad_key") or ""),
@@ -333,6 +433,8 @@ def _cluster_new_asset_variant_items(items: list[dict[str, Any]]) -> tuple[list[
                 "play_asset_variant_name": str(row.get("play_asset_variant_name") or ""),
                 "effect_one_liner": str(row.get("effect_one_liner") or ""),
                 "play_fingerprint": str(row.get("play_fingerprint") or ""),
+                "template_fingerprint": str(row.get("template_fingerprint") or ""),
+                "narrow_novelty_label": str(row.get("narrow_novelty_label") or ""),
                 "best_impression": int(row.get("best_impression") or row.get("impression") or 0),
                 "best_all_exposure_value": int(row.get("best_all_exposure_value") or row.get("all_exposure_value") or 0),
                 "is_representative": str(row.get("ad_key") or "") == str(representative.get("ad_key") or ""),
@@ -348,6 +450,8 @@ def _cluster_new_asset_variant_items(items: list[dict[str, Any]]) -> tuple[list[
                 "play_asset_name": representative.get("play_asset_name") or "",
                 "play_asset_variant_key": representative.get("play_asset_variant_key") or "",
                 "play_asset_variant_name": representative.get("play_asset_variant_name") or "",
+                "template_fingerprint": representative.get("template_fingerprint") or "",
+                "narrow_novelty_reason": representative.get("narrow_novelty_reason") or "",
                 "representative_ad_key": representative.get("ad_key") or "",
                 "material_count": len(rows_sorted),
                 "members": representative["asset_variant_cluster_members"],
@@ -393,6 +497,16 @@ def build_daily_asset_variant_report(
         and not item.get("play_asset_is_new")
         and str(item.get("play_asset_variant_key") or "").strip()
     }
+    narrow_new_play_clusters = {
+        str(cluster.get("cluster_key") or "")
+        for cluster in clusters
+        if str(cluster.get("novelty_label") or "") == "新玩法"
+    }
+    old_play_iteration_clusters = {
+        str(cluster.get("cluster_key") or "")
+        for cluster in clusters
+        if str(cluster.get("novelty_label") or "") == "老玩法新迭代"
+    }
 
     summary = dict(report.get("summary") or {})
     summary.update(
@@ -400,6 +514,15 @@ def build_daily_asset_variant_report(
             "new_play_asset_count": len(new_asset_ids),
             "new_play_variant_count": len(new_variant_keys),
             "new_asset_variant_representative_count": len(representatives),
+            "narrow_new_play_count": len(narrow_new_play_clusters),
+            "old_play_new_iteration_count": len(old_play_iteration_clusters),
+            "narrow_new_representative_count": len(representatives),
+            "old_play_reskin_material_count": sum(
+                1 for item in items if str(item.get("narrow_novelty_label") or "") == "老玩法换皮"
+            ),
+            "narrow_reportable_material_count": sum(
+                1 for item in items if item.get("narrow_novelty_is_reportable")
+            ),
             "asset_variant_material_count": len(items),
             "known_asset_variant_material_count": sum(
                 1
@@ -412,5 +535,7 @@ def build_daily_asset_variant_report(
     report["asset_variant_items"] = items
     report["new_asset_variant_items"] = representatives
     report["new_asset_variant_clusters"] = clusters
+    report["narrow_new_items"] = representatives
+    report["narrow_new_clusters"] = clusters
     report["summary"] = summary
     return report

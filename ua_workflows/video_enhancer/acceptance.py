@@ -48,7 +48,7 @@ from ua_workflows.shared.db.video_enhancer import (
     should_persist_suggestion_to_push_table,
 )
 
-load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 
 def _env_bool(key: str, default: str = "0") -> bool:

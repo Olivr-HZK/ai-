@@ -301,7 +301,7 @@ def draft_assets_for_date(target_date: str) -> list[dict[str, Any]]:
 
 
 def maybe_pull_play_asset_doc() -> bool:
-    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / ".env", override=True)
     enabled = (os.getenv("VE_PLAY_ASSET_DOC_SYNC_ENABLED") or "1").strip().lower()
     if enabled in ("0", "false", "no", "off", ""):
         return False
@@ -316,7 +316,7 @@ def maybe_pull_play_asset_doc() -> bool:
 
 
 def main() -> None:
-    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / ".env", override=True)
     parser = argparse.ArgumentParser(description="同步 VE 玩法资产库与飞书云文档")
     parser.add_argument(
         "mode",

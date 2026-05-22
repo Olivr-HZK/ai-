@@ -43,7 +43,10 @@ from dotenv import load_dotenv
 
 from ua_workflows.shared.config import DATA_DIR
 from ua_workflows.shared.db.video_enhancer import upsert_single_daily_creative_insight
-from ua_workflows.video_enhancer.play_assets import format_play_asset_catalog_for_prompt
+from ua_workflows.video_enhancer.play_assets import (
+    format_play_asset_catalog_for_prompt,
+    legacy_play_library_enabled,
+)
 
 try:
     from ua_workflows.shared.db.arrow2 import upsert_arrow2_daily_insight_full
@@ -329,9 +332,13 @@ def _arrow2_fixed_footer() -> str:
 def _ve_fixed_footer() -> str:
     """VE（视频增强）流程的结构化输出要求。"""
     return (
-        "\n请先根据下方「玩法资产库候选清单」判断素材属于哪个稳定玩法资产/变种；"
-        "若没有任何资产能覆盖核心玩法，标为新玩法；若资产能覆盖但没有合适变种，标为新变种。\n"
-        "请**仅输出以下十三行**（固定格式，每行独立一行），不要输出编号正文、JSON、Markdown 代码围栏或其他解释：\n"
+        "\n请先根据下方「多维表格玩法标签库候选清单」判断素材属于哪个玩法；"
+        "候选清单来自多维表格「玩法」字段，优先从中选一个最贴近的完整玩法标签；"
+        "若没有任何标签能覆盖核心玩法，标为新玩法。\n"
+        "模板级去重规则：同一个模板只替换人物人种、肤色、性别或男女模特（如黑人/白人/亚裔、男性/女性）时，"
+        "仍视为同一个素材/同一变种，不要因此写成新玩法或新变种；这些人口属性不要写进【玩法指纹】或【玩法变种名称】。"
+        "只有素材核心机制本身就是性别转换、变龄或身份关系转换时，才把该机制写进玩法指纹。\n"
+        "请**仅输出以下十四行**（固定格式，每行独立一行），不要输出编号正文、JSON、Markdown 代码围栏或其他解释：\n"
         "【Hook解析】用一句中文（约20~40字）概括最前段抓人机制：先写画面/台词触发点，再写制造的悬念、痛点或承诺；"
         "避免泛泛写「吸引用户注意」。若开头无明确 Hook，写「无明确强 Hook」。\n"
         "【脚本口播】提炼视频中的旁白、口播、字幕或画中文字脚本；按出现顺序用短句串联，保留可借鉴的表达。"
@@ -344,17 +351,23 @@ def _ve_fixed_footer() -> str:
         "这类过泛描述；禁止写投放建议，只描述素材本身做了什么。\n"
         "【玩法指纹】给机器去重用，用一句中文（约8~18字）写稳定、可复用的「输入对象 + 关键变换 + 输出大类」；"
         "先归纳玩法机制，再决定是否保留视觉元素。不要因为热点话题、运动项目、节日、发型、服装、名人同款、画面文案不同就拆成新玩法；"
-        "这些只影响素材差异时放到【差异点】。只有缺少该视觉元素会导致玩法机制本身改变时，才写进玩法指纹。"
+        "这些只影响素材差异时放到【差异点】。同一模板只换人物人种、肤色或性别也不要拆成新玩法。"
+        "只有缺少该视觉元素会导致玩法机制本身改变时，才写进玩法指纹。"
         "不要写一键、AI、免费、好看、震撼、抓眼等营销词；不要写投放建议、Hook、脚本。"
         "示例：「单人照片生成赛事现场视频」「单人照片融入灾难电影场景」「自拍生成生日主题写真」「双人照片融合生成温馨合影」「老照片修复生成动态视频」。\n"
         "【差异点】写这条素材相对同类玩法不可省略的差异点，多个用顿号连接；没有明显差异写「无」。"
         "例如：亲属感、母亲节、逝者纪念、透明足球容器、手绘素描、涂鸦风、宝丽来名人合影、分屏滑动、派对场景。\n"
-        "【玩法资产ID】若命中已有玩法资产，只能写候选清单中的 asset_id；若不是任何已有资产，写 new_play。\n"
-        "【玩法资产名称】若命中已有资产，写候选清单中的资产中文名；若是新玩法，写一个稳定、泛化的中文玩法名，不要写产品名或单个热点标题。\n"
-        "【玩法变种ID】若命中已有变种，写候选清单中的 tag_id，多个用顿号；若已有资产但没有合适变种，写 new_variant；若是新玩法，写 new_play。\n"
-        "【玩法变种名称】若命中已有变种，写候选清单中的变种中文名，多个用顿号；若是新变种/新玩法，写一个稳定的中文变种名；若无变种，写 基础变体。\n"
-        "【玩法归类】只选一项：已沉淀玩法、新变种、新玩法、不确定。已有资产+已有变种=已沉淀玩法；已有资产+new_variant=新变种；new_play=新玩法。\n"
-        "【玩法判断理由】一句中文说明为什么这样归类，重点比较「输入对象、关键变换、输出形态」是否与资产库一致。\n"
+        "【模板指纹】给狭义新素材判断用，用一句中文（约12~28字）写这条素材的具体模板结构："
+        "开头触发方式、主体镜头/布局、关键转场或生成结果的组合。必须忽略只替换人物人种、肤色、性别、年龄段、男/女模特等人口属性；"
+        "同一分镜/布局/脚本骨架只换人物属性时输出同一个模板指纹。只有性别转换、变龄或身份关系转换是核心机制时，才写该机制，不写被替换人物属性。\n"
+        "【玩法资产ID】若命中已有玩法标签，只能写候选清单中的 asset_id；若不是任何已有玩法，写 new_play。\n"
+        "【玩法资产名称】若命中已有玩法标签，必须写候选清单中的完整中文标签；若是新玩法，写一个稳定的中文玩法名，不要写产品名或单个热点标题。"
+        "新玩法名必须描述可复用的画面模板/玩法机制，禁止写底层能力或泛技术词，例如「AI图片转视频」「图片转视频」「AI视频生成」"
+        "「照片生成动态视频」「文图生成动态视频」「真人视频生成」「场景角色生成」；如果只能想到这类泛词，写「待人工归类」。\n"
+        "【玩法变种ID】固定写 base；若是新玩法写 new_play。\n"
+        "【玩法变种名称】固定写 基础变体；若是新玩法，写与【玩法资产名称】一致的稳定中文名。\n"
+        "【玩法归类】只选一项：已沉淀玩法、新玩法、不确定。命中候选玩法标签=已沉淀玩法；new_play=新玩法。\n"
+        "【玩法判断理由】一句中文说明为什么这样归类，重点比较「输入对象、关键变换、输出形态」是否与多维表格玩法标签一致。\n"
         "【风险标签】只从以下标签中选择，多个用顿号连接；若无则写「无明显风险」："
         "成人色情风险、擦边露肤风险、版权名人风险、产品不适配风险、低质素材风险、无明显风险。"
         "只有画面/文案实际存在色情、裸体、露点、明显性行为或成人视频导向时，才写「成人色情风险」；"
@@ -391,16 +404,16 @@ def _infer_risk_level_from_tags(tags: list[str]) -> str:
 
 def _strip_arrow2_footer_lines(
     text: str,
-) -> tuple[str, list[str], str, str, str, str, str, str, str, str, str, str, str, str, str, str, str]:
+) -> tuple[Any, ...]:
     """从模型输出移除固定字段行；解析素材类型、一句话说明、特效玩法；旧版【游戏素材标签】仍兼容为 llm_tags。
 
     返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner,
-    voiceover_script, risk_level, play_fingerprint, differentiator, play_asset_id, play_asset_name,
+    voiceover_script, risk_level, play_fingerprint, differentiator, template_fingerprint, play_asset_id, play_asset_name,
     play_asset_subtag_ids, play_asset_subtag_names, play_asset_novelty_label, play_asset_reason)。
     """
     raw = (text or "").strip()
     if not raw:
-        return "", [], "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
+        return "", [], "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
     lines = raw.splitlines()
     n = len(lines)
     legacy_tags: list[str] = []
@@ -414,6 +427,7 @@ def _strip_arrow2_footer_lines(
     risk_level = ""
     play_fingerprint = ""
     differentiator = ""
+    template_fingerprint = ""
     play_asset_id = ""
     play_asset_name = ""
     play_asset_subtag_ids = ""
@@ -498,6 +512,11 @@ def _strip_arrow2_footer_lines(
             prefix = "【差异点】" if s.startswith("【差异点】") else "【差异 点】"
             rest, i = _read_block(i, prefix)
             differentiator = rest[:160]
+            continue
+        if s.startswith("【模板指纹】") or s.startswith("【模板 指纹】"):
+            prefix = "【模板指纹】" if s.startswith("【模板指纹】") else "【模板 指纹】"
+            rest, i = _read_block(i, prefix)
+            template_fingerprint = rest[:160]
             continue
         if s.startswith("【玩法资产ID】") or s.startswith("【玩法资产 ID】"):
             prefix = "【玩法资产ID】" if s.startswith("【玩法资产ID】") else "【玩法资产 ID】"
@@ -585,6 +604,7 @@ def _strip_arrow2_footer_lines(
         risk_level.strip(),
         play_fingerprint.strip(),
         differentiator.strip(),
+        template_fingerprint.strip(),
         play_asset_id.strip(),
         play_asset_name.strip(),
         play_asset_subtag_ids.strip(),
@@ -778,7 +798,7 @@ def _build_video_prompt(
 - 素材标签（系统）: {_format_pipeline_tags(creative)}
 - 广大大脚本/字幕/口播提取（若有）: {_format_script_metadata(creative)}
 
-玩法资产库候选清单（判断【玩法资产ID】和【玩法变种ID】只能引用这里的 ID；不匹配才写 new_play/new_variant）：
+多维表格玩法标签库候选清单（判断【玩法资产ID】只能引用这里的 asset_id；不匹配才写 new_play）：
 {asset_catalog}
 
 请结合视频画面与文案/标题，直接完成结构化字段；整体保持精炼，避免逐帧赘述。
@@ -812,7 +832,7 @@ def _build_image_prompt(
 - 热度: {creative.get('heat', 0)}
 - 素材标签（系统）: {_format_pipeline_tags(creative)}
 
-玩法资产库候选清单（判断【玩法资产ID】和【玩法变种ID】只能引用这里的 ID；不匹配才写 new_play/new_variant）：
+多维表格玩法标签库候选清单（判断【玩法资产ID】只能引用这里的 asset_id；不匹配才写 new_play）：
 {asset_catalog}
 
 请结合图片画面与文案/标题，直接完成结构化字段；整体保持精炼，避免细节堆砌。
@@ -852,6 +872,81 @@ def _parse_inspiration_response(raw: str) -> str:
     return t
 
 
+_GENERIC_NEW_PLAY_PATTERNS = (
+    r"^(?:ai|人工智能)?(?:图片|照片|静态图|文图|真人|人物|角色|场景)*(?:转|转换|生成|制作|合成|变成)*(?:动态)?视频$",
+    r"^(?:ai|人工智能)?(?:图片|照片|静态图|文图)(?:转|转换|生成|制作|合成|变成)(?:动态)?(?:视频|影片)$",
+    r"^(?:ai|人工智能)?(?:视频|影片)(?:生成|制作)$",
+)
+
+_GENERIC_NEW_PLAY_TOKENS = (
+    "人工智能",
+    "ai",
+    "一键",
+    "用户上传",
+    "静态图",
+    "图片",
+    "照片",
+    "文图",
+    "真人",
+    "人物",
+    "角色",
+    "场景",
+    "素材",
+    "模板",
+    "动态",
+    "视频",
+    "影片",
+    "效果",
+    "特效",
+    "生成",
+    "制作",
+    "合成",
+    "转换",
+    "转化",
+    "变成",
+    "变为",
+    "转",
+)
+
+
+def _compact_new_play_name(value: str) -> str:
+    return re.sub(r"[\s,，、/|:：;；._\\-（）()【】\\[\\]{}]+", "", str(value or "").strip().lower())
+
+
+def _is_generic_new_play_name(value: str) -> bool:
+    compact = _compact_new_play_name(value)
+    if not compact or compact in {"待沉淀", "待人工归类", "需人工归类", "不确定", "无"}:
+        return False
+    for pattern in _GENERIC_NEW_PLAY_PATTERNS:
+        if re.fullmatch(pattern, compact, flags=re.IGNORECASE):
+            return True
+    residue = compact
+    for token in sorted(_GENERIC_NEW_PLAY_TOKENS, key=len, reverse=True):
+        residue = residue.replace(token, "")
+    return len(residue) <= 1
+
+
+def _sanitize_new_play_name(
+    *,
+    play_asset_id: str,
+    play_asset_name: str,
+    play_asset_subtag_names: str,
+    play_asset_novelty_label: str,
+    play_asset_reason: str,
+) -> tuple[str, str, str]:
+    normalized_id = str(play_asset_id or "").strip().lower()
+    is_new = normalized_id in {"new_play", "新玩法", "待沉淀"} or str(play_asset_novelty_label or "").strip() == "新玩法"
+    if not is_new or not _is_generic_new_play_name(play_asset_name):
+        return play_asset_name, play_asset_subtag_names, play_asset_reason
+    original_name = str(play_asset_name or "").strip()
+    play_asset_name = "待人工归类"
+    if not play_asset_subtag_names or _is_generic_new_play_name(play_asset_subtag_names):
+        play_asset_subtag_names = "待人工归类"
+    note = f"AI建议玩法过泛，已置为待人工归类（原值：{original_name}）。"
+    play_asset_reason = (str(play_asset_reason or "").strip() + ("；" if play_asset_reason else "") + note).strip("；")
+    return play_asset_name, play_asset_subtag_names, play_asset_reason
+
+
 def _vision_retry_on_empty_enabled() -> bool:
     v = (os.getenv("VIDEO_ANALYSIS_VISION_RETRY_ON_EMPTY") or "0").strip().lower()
     return v in ("1", "true", "yes", "on")
@@ -874,7 +969,7 @@ def _build_text_only_inspiration_prompt(
     foot = _arrow2_fixed_footer() if arrow2 else _ve_fixed_footer()
     asset_catalog = "" if arrow2 else format_play_asset_catalog_for_prompt()
     asset_catalog_block = (
-        "\n\n玩法资产库候选清单（判断【玩法资产ID】和【玩法变种ID】只能引用这里的 ID；不匹配才写 new_play/new_variant）：\n"
+        "\n\n多维表格玩法标签库候选清单（判断【玩法资产ID】只能引用这里的 asset_id；不匹配才写 new_play）：\n"
         + asset_catalog
         if asset_catalog
         else ""
@@ -927,6 +1022,7 @@ def _build_ve_structured_analysis_summary(
     effect_one_liner: str,
     play_fingerprint: str,
     differentiator: str,
+    template_fingerprint: str,
     play_asset_name: str,
     play_asset_subtag_names: str,
     play_asset_novelty_label: str,
@@ -942,6 +1038,8 @@ def _build_ve_structured_analysis_summary(
         parts.append(f"玩法指纹：{play_fingerprint}")
     if differentiator:
         parts.append(f"差异点：{differentiator}")
+    if template_fingerprint:
+        parts.append(f"模板指纹：{template_fingerprint}")
     if play_asset_name or play_asset_subtag_names or play_asset_novelty_label:
         asset_bits = [
             x
@@ -1185,6 +1283,7 @@ def _analyze_one_item(
     effect_one_liner = ""
     play_fingerprint = ""
     differentiator = ""
+    template_fingerprint = ""
     play_asset_id = ""
     play_asset_name = ""
     play_asset_subtag_ids = ""
@@ -1267,6 +1366,7 @@ def _analyze_one_item(
                 _risk_level,
                 _play_fingerprint,
                 _differentiator,
+                _template_fingerprint,
                 _play_asset_id,
                 _play_asset_name,
                 _play_asset_subtag_ids,
@@ -1291,6 +1391,7 @@ def _analyze_one_item(
                 risk_level,
                 play_fingerprint,
                 differentiator,
+                template_fingerprint,
                 play_asset_id,
                 play_asset_name,
                 play_asset_subtag_ids,
@@ -1298,6 +1399,13 @@ def _analyze_one_item(
                 play_asset_novelty_label,
                 play_asset_reason,
             ) = _strip_arrow2_footer_lines(analysis)
+            play_asset_name, play_asset_subtag_names, play_asset_reason = _sanitize_new_play_name(
+                play_asset_id=play_asset_id,
+                play_asset_name=play_asset_name,
+                play_asset_subtag_names=play_asset_subtag_names,
+                play_asset_novelty_label=play_asset_novelty_label,
+                play_asset_reason=play_asset_reason,
+            )
             material_tags = _merge_material_tags_ve(creative, llm_tags)
             if not risk_level:
                 risk_level = _infer_risk_level_from_tags(material_tags)
@@ -1308,6 +1416,7 @@ def _analyze_one_item(
                     effect_one_liner=effect_one_liner,
                     play_fingerprint=play_fingerprint,
                     differentiator=differentiator,
+                    template_fingerprint=template_fingerprint,
                     play_asset_name=play_asset_name,
                     play_asset_subtag_names=play_asset_subtag_names,
                     play_asset_novelty_label=play_asset_novelty_label,
@@ -1355,6 +1464,7 @@ def _analyze_one_item(
                 _risk_level,
                 _play_fingerprint,
                 _differentiator,
+                _template_fingerprint,
                 _play_asset_id,
                 _play_asset_name,
                 _play_asset_subtag_ids,
@@ -1376,6 +1486,7 @@ def _analyze_one_item(
                 risk_level,
                 play_fingerprint,
                 differentiator,
+                template_fingerprint,
                 play_asset_id,
                 play_asset_name,
                 play_asset_subtag_ids,
@@ -1383,6 +1494,13 @@ def _analyze_one_item(
                 play_asset_novelty_label,
                 play_asset_reason,
             ) = _strip_arrow2_footer_lines(analysis)
+            play_asset_name, play_asset_subtag_names, play_asset_reason = _sanitize_new_play_name(
+                play_asset_id=play_asset_id,
+                play_asset_name=play_asset_name,
+                play_asset_subtag_names=play_asset_subtag_names,
+                play_asset_novelty_label=play_asset_novelty_label,
+                play_asset_reason=play_asset_reason,
+            )
             material_tags = _merge_material_tags_ve(creative, llm_tags)
             if not risk_level:
                 risk_level = _infer_risk_level_from_tags(material_tags)
@@ -1393,6 +1511,7 @@ def _analyze_one_item(
                     effect_one_liner=effect_one_liner,
                     play_fingerprint=play_fingerprint,
                     differentiator=differentiator,
+                    template_fingerprint=template_fingerprint,
                     play_asset_name=play_asset_name,
                     play_asset_subtag_names=play_asset_subtag_names,
                     play_asset_novelty_label=play_asset_novelty_label,
@@ -1410,6 +1529,7 @@ def _analyze_one_item(
             effect_one_liner=effect_one_liner,
             play_fingerprint=play_fingerprint,
             differentiator=differentiator,
+            template_fingerprint=template_fingerprint,
             play_asset_name=play_asset_name,
             play_asset_subtag_names=play_asset_subtag_names,
             play_asset_novelty_label=play_asset_novelty_label,
@@ -1452,6 +1572,7 @@ def _analyze_one_item(
         "effect_one_liner": effect_one_liner,
         "play_fingerprint": play_fingerprint,
         "differentiator": differentiator,
+        "template_fingerprint": template_fingerprint,
         "play_asset_id": play_asset_id,
         "play_asset_name": play_asset_name,
         "play_asset_subtag_ids": play_asset_subtag_ids,
@@ -1487,6 +1608,7 @@ def _analyze_one_item(
                         "effect_one_liner": effect_one_liner,
                         "play_fingerprint": play_fingerprint,
                         "differentiator": differentiator,
+                        "template_fingerprint": template_fingerprint,
                         "play_asset_id": play_asset_id,
                         "play_asset_name": play_asset_name,
                         "play_asset_subtag_ids": play_asset_subtag_ids,
@@ -1682,13 +1804,15 @@ def main() -> None:
             "[arrow2] ads_type=7 试玩：跳过多模态与单条 UA；飞书「试玩链接」列写 HTML（非「视频链接」）",
             flush=True,
         )
-    else:
+    elif legacy_play_library_enabled():
         try:
             from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
 
             maybe_pull_play_asset_doc()
         except Exception as e:
             print(f"[play-assets-doc] 分析前同步玩法资产库失败，使用本地 JSON：{e}", flush=True)
+    else:
+        print("[play-labels] 使用多维表格「玩法」字段作为玩法库，跳过旧玩法资产云文档同步。", flush=True)
 
     if tiktok_ytdlp_resolve_enabled():
         print(

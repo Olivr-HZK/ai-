@@ -2,8 +2,7 @@
 Video Enhancer 全流程工作流（一键）：
 1) 抓取前一天素材（按日期 + 指定产品）
 2) 可选封面日内去重（可用 --skip-cover-dedupe 跳过；与抓取拆分请用 workflow_video_enhancer_steps crawl_store --crawl-only + cover_store）
-2.0) DOM 详情补全（广大大登录，对无 video_url 的条目补 source_url 等；需 .env 账号；可用 --skip-dom-enrich 跳过）
-2.0b) 统计灵感分析准入（不删 raw；不符准入的不进分析）
+2.0) 统计灵感分析准入（不删 raw；不符准入的不进分析）
 3) 视频灵感分析（基于 raw JSON）
 4) 成人/色情、日内重复、历史老玩法、embedding 重复等去重/拦截
 5) 同步去重后的可复核素材到多维表
@@ -30,21 +29,20 @@ import json
 import os
 import subprocess
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from dotenv import load_dotenv
+from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT, load_project_env, project_env_values
 
-from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT
-
-load_dotenv(PROJECT_ROOT / ".env")
+load_project_env()
 
 from ua_workflows.shared.llm.client import print_openrouter_key_meter
 
 from ua_workflows.shared.media.cover_embedding import maybe_run_cover_embedding_after_library
 from ua_workflows.video_enhancer.cover_dedupe import apply_intraday_cover_style_dedupe, is_cover_style_intraday_enabled
+from ua_workflows.video_enhancer.crawl_similarity import merge_cover_similarity_counts
 from ua_workflows.video_enhancer.review_dashboard import write_filter_review_dashboard
 
 from ua_workflows.video_enhancer.filter_reports import (
@@ -54,7 +52,7 @@ from ua_workflows.video_enhancer.filter_reports import (
 )
 from ua_workflows.video_enhancer.content_filters import (
     apply_adult_content_filter,
-    apply_low_fit_theme_filter,
+    apply_human_photo_effect_filter,
 )
 
 from ua_workflows.video_enhancer.analyze import is_creative_analyzable
@@ -167,11 +165,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="跳过封面日内 CLIP 视觉聚类去重（抓取后直接用全量 raw 入库并继续后续步骤）",
     )
-    p.add_argument(
-        "--skip-dom-enrich",
-        action="store_true",
-        help="跳过 DOM 详情补全（enrich_raw_with_dom_detail.py，无账号或调试时可关）",
-    )
     return p.parse_args()
 
 
@@ -196,6 +189,9 @@ def _resolve_cluster_bitable_url(args: argparse.Namespace) -> str:
 
 def _subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
+    for key, value in project_env_values().items():
+        if value is not None:
+            env[str(key)] = str(value)
     # cron 等非 TTY 下子进程继承后仍可无缓冲输出，便于日志实时落盘
     env.setdefault("PYTHONUNBUFFERED", "1")
     return env
@@ -224,29 +220,6 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, **kwargs)
 
 
-def _print_dom_enrich_report_summary(output_prefix: str) -> None:
-    """读取 DOM 补全报告，打印待处理/成功/失败条数。"""
-    report_path = DATA_DIR / f"{output_prefix}_dom_enrich_report.json"
-    if not report_path.exists():
-        print("[dom-enrich] 本轮未生成 dom_enrich_report（跳过补全或尚未写出）")
-        return
-    try:
-        r = json.loads(report_path.read_text(encoding="utf-8"))
-    except OSError as e:
-        print(f"[dom-enrich] 读报告失败: {e}")
-        return
-    pending = int(r.get("pending_total") or 0)
-    results = r.get("results") or []
-    ok = sum(1 for x in results if isinstance(x, dict) and x.get("status") == "ok")
-    fail = sum(1 for x in results if isinstance(x, dict) and x.get("status") != "ok")
-    note = str(r.get("note") or "")
-    extra = f" note={note}" if note else ""
-    print(
-        f"[dom-enrich] 补全统计: 待处理 {pending} 条，详情合并成功 {ok} 条，未成功/失败 {fail} 条"
-        f"（报告 {report_path.name}）{extra}"
-    )
-
-
 def _extract_ad_keys(raw_payload: dict) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -262,6 +235,230 @@ def _extract_ad_keys(raw_payload: dict) -> list[str]:
         seen.add(k)
         out.append(k)
     return out
+
+
+_CRAWL_REMOVAL_LABELS = {
+    "advertiser_mismatch": "广告主不匹配",
+    "non_target_date": "非目标日期",
+    "resume_advertising": "重投素材",
+    "duplicate_ad_key": "同产品重复 ad_key",
+    "per_product_truncated": "单产品硬截断",
+    "cover_crossday_fingerprint": "跨日封面/URL/指纹重复",
+    "cover_clip_crossday": "跨日 CLIP 封面重复",
+    "cover_clip_intraday": "同日 CLIP 封面重复",
+}
+
+
+def _product_from_item(item: dict) -> str:
+    creative = item.get("creative") or {}
+    if not isinstance(creative, dict):
+        creative = {}
+    return str(
+        item.get("product")
+        or creative.get("product")
+        or creative.get("advertiser_name")
+        or item.get("keyword")
+        or "未知产品"
+    ).strip() or "未知产品"
+
+
+def _count_items_by_product(items: list) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for item in items or []:
+        if isinstance(item, dict):
+            counts[_product_from_item(item)] += 1
+    return counts
+
+
+def _increment(counter_by_product: dict[str, Counter[str]], product: str, reason: str, count: int = 1) -> None:
+    if count <= 0:
+        return
+    counter_by_product.setdefault(product or "未知产品", Counter())[reason] += int(count)
+
+
+def _build_crawl_product_retention_report(raw_payload: dict) -> dict:
+    """
+    Build a per-product crawl funnel: clicked/captured -> crawl kept -> cover kept.
+
+    The analysis gate is reported as a non-deleting reason so daily crawl review can
+    still see why an item did not enter LLM analysis.
+    """
+    items = raw_payload.get("items") or []
+    if not isinstance(items, list):
+        items = []
+    final_counts = _count_items_by_product(items)
+    filter_report = raw_payload.get("filter_report") or {}
+    if not isinstance(filter_report, dict):
+        filter_report = {}
+    per_product = filter_report.get("per_product") or {}
+    if not isinstance(per_product, dict):
+        per_product = {}
+
+    cover_report = raw_payload.get("cover_style_intraday_report") or {}
+    if not isinstance(cover_report, dict):
+        cover_report = {}
+
+    removal_by_product: dict[str, Counter[str]] = defaultdict(Counter)
+    cover_removed_by_product: dict[str, Counter[str]] = defaultdict(Counter)
+    products: set[str] = set(final_counts.keys()) | {str(k) for k in per_product.keys()}
+
+    for product, info in per_product.items():
+        if not isinstance(info, dict):
+            continue
+        product_name = str(product or "未知产品")
+        _increment(removal_by_product, product_name, "advertiser_mismatch", int(info.get("advertiser_excluded") or 0))
+        _increment(removal_by_product, product_name, "non_target_date", int(info.get("date_filtered") or 0))
+        _increment(removal_by_product, product_name, "resume_advertising", int(info.get("resume_excluded") or 0))
+        _increment(removal_by_product, product_name, "duplicate_ad_key", int(info.get("duplicate_excluded") or 0))
+        _increment(removal_by_product, product_name, "per_product_truncated", int(info.get("truncated_excluded") or 0))
+
+    for row in cover_report.get("cross_day_fingerprint_removed") or []:
+        if not isinstance(row, dict):
+            continue
+        product = str(row.get("product") or "未知产品")
+        products.add(product)
+        _increment(removal_by_product, product, "cover_crossday_fingerprint")
+        _increment(cover_removed_by_product, product, "cover_crossday_fingerprint")
+
+    per_appid = cover_report.get("per_appid") or []
+    if isinstance(per_appid, dict):
+        cover_buckets = per_appid.values()
+    elif isinstance(per_appid, list):
+        cover_buckets = per_appid
+    else:
+        cover_buckets = []
+    for bucket in cover_buckets:
+        if not isinstance(bucket, dict):
+            continue
+        product = str(bucket.get("product") or "未知产品")
+        products.add(product)
+        for row in bucket.get("removed") or []:
+            if not isinstance(row, dict):
+                continue
+            reason = str(row.get("reason") or "").strip()
+            if reason == "cover_style_cluster_vs_yesterday":
+                key = "cover_clip_crossday"
+            elif reason == "cover_style_cluster_history_refresh":
+                key = "cover_clip_history_refresh_intraday"
+            elif reason == "cover_style_cluster":
+                key = "cover_clip_intraday"
+            else:
+                key = reason or "cover_unknown"
+            _increment(removal_by_product, product, key)
+            _increment(cover_removed_by_product, product, key)
+
+    analysis_ineligible_by_product: Counter[str] = Counter()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        creative = item.get("creative") or {}
+        if not isinstance(creative, dict) or is_creative_analyzable(creative):
+            continue
+        product = _product_from_item(item)
+        analysis_ineligible_by_product[product] += 1
+        products.add(product)
+
+    rows: list[dict] = []
+    for product in sorted(products):
+        info = per_product.get(product) if isinstance(per_product.get(product), dict) else {}
+        reason_counts = {
+            key: int(value)
+            for key, value in sorted(removal_by_product.get(product, Counter()).items())
+            if int(value) > 0
+        }
+        rows.append(
+            {
+                "product": product,
+                "clicked_detail_rows": int(info.get("clicked_detail_rows") or 0),
+                "dom_cards": int(info.get("dom_cards") or 0),
+                "captured_materials": int(info.get("captured") or 0),
+                "target_date_hits": int(info.get("date_hits") or 0),
+                "kept_after_crawl_filter": int(info.get("after") or 0),
+                "kept_after_cover_filter": int(final_counts.get(product, 0)),
+                "removed_total": int(sum(reason_counts.values())),
+                "removed_reasons": reason_counts,
+                "removed_reason_labels": {
+                    key: _CRAWL_REMOVAL_LABELS.get(key, key) for key in reason_counts
+                },
+                "cover_removed_reasons": {
+                    key: int(value)
+                    for key, value in sorted(cover_removed_by_product.get(product, Counter()).items())
+                    if int(value) > 0
+                },
+                "analysis_gate_ineligible": int(analysis_ineligible_by_product.get(product, 0)),
+            }
+        )
+
+    summary_reasons: Counter[str] = Counter()
+    for row in rows:
+        for key, value in (row.get("removed_reasons") or {}).items():
+            summary_reasons[str(key)] += int(value or 0)
+    summary = {
+        "clicked_detail_rows": sum(int(row.get("clicked_detail_rows") or 0) for row in rows),
+        "captured_materials": sum(int(row.get("captured_materials") or 0) for row in rows),
+        "kept_after_crawl_filter": sum(int(row.get("kept_after_crawl_filter") or 0) for row in rows),
+        "kept_after_cover_filter": sum(int(row.get("kept_after_cover_filter") or 0) for row in rows),
+        "removed_total": sum(int(row.get("removed_total") or 0) for row in rows),
+        "removed_reasons": {
+            key: int(value)
+            for key, value in sorted(summary_reasons.items())
+            if int(value) > 0
+        },
+        "removed_reason_labels": {
+            key: _CRAWL_REMOVAL_LABELS.get(key, key)
+            for key, value in sorted(summary_reasons.items())
+            if int(value) > 0
+        },
+    }
+
+    return {
+        "target_date": str(raw_payload.get("target_date") or ""),
+        "crawl_mode": raw_payload.get("crawl_mode"),
+        "ui_date_range": raw_payload.get("ui_date_range"),
+        "scope": "crawl_and_pre_analysis",
+        "summary": summary,
+        "per_product": rows,
+    }
+
+
+def _write_crawl_product_retention_report(
+    raw_payload: dict,
+    *,
+    output_prefix: str,
+    target_date: str,
+) -> Path:
+    report = _build_crawl_product_retention_report(raw_payload)
+    report["target_date"] = target_date
+    raw_payload["crawl_product_retention_report"] = report
+    path = DATA_DIR / f"{output_prefix}_crawl_product_retention.json"
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary = report.get("summary") or {}
+    print(
+        "\n[step:crawl-retention] 产品抓取保留漏斗："
+        f"点卡 {summary.get('clicked_detail_rows', 0)} / "
+        f"抓到 {summary.get('captured_materials', 0)} / "
+        f"爬取保留 {summary.get('kept_after_crawl_filter', 0)} / "
+        f"封面后保留 {summary.get('kept_after_cover_filter', 0)}；报告 {path.name}"
+    )
+    for row in report.get("per_product") or []:
+        if not isinstance(row, dict):
+            continue
+        reasons = row.get("removed_reasons") or {}
+        labels = row.get("removed_reason_labels") or {}
+        reason_text = ", ".join(
+            f"{labels.get(key, key)}={value}"
+            for key, value in reasons.items()
+            if int(value or 0) > 0
+        ) or "-"
+        print(
+            "  · "
+            f"{row.get('product')}: "
+            f"点卡 {row.get('clicked_detail_rows', 0)}，"
+            f"抓到 {row.get('captured_materials', 0)}，"
+            f"保留 {row.get('kept_after_cover_filter', 0)}，"
+            f"去掉 {row.get('removed_total', 0)}（{reason_text}）"
+        )
+    return path
 
 
 def main() -> None:
@@ -351,45 +548,13 @@ def main() -> None:
         )
         print(f"[filter-json] {sk_path.name}（封面步骤已跳过）")
 
-    # 2.0) 列表无直链时：浏览器进广大大 DOM 点详情，合并 source_url / resource_urls 等到 raw（再入库）
-    if not args.skip_dom_enrich:
-        email = os.getenv("GUANGDADA_EMAIL") or os.getenv("GUANGDADA_USERNAME")
-        pwd = os.getenv("GUANGDADA_PASSWORD")
-        if email and pwd:
-            print("\n[dom-enrich] 开始 DOM 详情补全（无 video_url 的素材）…")
-            enriched_path = DATA_DIR / f"{output_prefix}_raw_dom_enriched.json"
-            try:
-                enriched_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            try:
-                _run(
-                    [
-                        py,
-                        "-m",
-                        "ua_workflows.video_enhancer.dom_enrich",
-                        "--raw",
-                        str(raw_path),
-                    ]
-                )
-            except subprocess.CalledProcessError as e:
-                print(f"[dom-enrich] 子进程失败，沿用补全前 raw: {e}")
-            if enriched_path.exists():
-                raw_payload = json.loads(enriched_path.read_text(encoding="utf-8"))
-                raw_path.write_text(
-                    json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-                print(f"[dom-enrich] 已写回 {raw_path.name}（合并自 {enriched_path.name}）")
-        else:
-            print(
-                "[dom-enrich] 跳过：未配置 GUANGDADA_EMAIL（或 GUANGDADA_USERNAME）/ GUANGDADA_PASSWORD"
-            )
-    else:
-        print("[dom-enrich] 已跳过（--skip-dom-enrich）")
-
-    _print_dom_enrich_report_summary(output_prefix)
-
+    merge_cover_similarity_counts(raw_payload)
     raw_payload, _tot, _elig, _skip = merge_inspiration_filter_stats(raw_payload)
+    _write_crawl_product_retention_report(
+        raw_payload,
+        output_prefix=output_prefix,
+        target_date=target_date,
+    )
     raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     detail = (raw_payload.get("filter_report") or {}).get("inspiration_detail") or {}
     print("\n[step:inspiration-gate] 灵感分析准入（raw 不删条，仅统计）")
@@ -464,26 +629,44 @@ def main() -> None:
     skipped_cache = 0
     skipped_dedup = 0
     ineligible_reasons: dict[str, int] = defaultdict(int)
+    analysis_queue_by_product: dict[str, dict] = defaultdict(
+        lambda: {
+            "raw_after_cover": 0,
+            "dedup_removed": 0,
+            "cache_reused": 0,
+            "ineligible_total": 0,
+            "ineligible_reasons": defaultdict(int),
+            "llm_queued": 0,
+        }
+    )
     for item in pipeline_items:
         if not isinstance(item, dict):
             continue
         creative = item.get("creative") or {}
         if not isinstance(creative, dict):
             continue
+        product = _product_from_item(item)
+        analysis_queue_by_product[product]["raw_after_cover"] += 1
         k = str(creative.get("ad_key") or "").strip()
         if not k:
             continue
         if k not in dedup_kept:
             skipped_dedup += 1
+            analysis_queue_by_product[product]["dedup_removed"] += 1
             continue
         if k in existing_analysis:
             skipped_cache += 1
+            analysis_queue_by_product[product]["cache_reused"] += 1
             continue
         if not is_creative_analyzable(creative):
             skipped_no_media += 1
-            ineligible_reasons[classify_ineligible_reason(creative)] += 1
+            reason = classify_ineligible_reason(creative)
+            ineligible_reasons[reason] += 1
+            analysis_queue_by_product[product]["ineligible_total"] += 1
+            analysis_queue_by_product[product]["ineligible_reasons"][reason] += 1
             continue
         pending_items.append(item)
+        analysis_queue_by_product[product]["llm_queued"] += 1
 
     pending_raw_payload = {
         "target_date": pipeline_raw_payload.get("target_date"),
@@ -493,6 +676,41 @@ def main() -> None:
     }
     pending_raw_path = DATA_DIR / f"{output_prefix}_raw_pending_analysis.json"
     pending_raw_path.write_text(json.dumps(pending_raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    queue_rows: list[dict] = []
+    for product, info in sorted(analysis_queue_by_product.items()):
+        raw_after_cover = int(info.get("raw_after_cover") or 0)
+        dedup_removed = int(info.get("dedup_removed") or 0)
+        ineligible_detail = {
+            str(k): int(v)
+            for k, v in sorted((info.get("ineligible_reasons") or {}).items())
+            if int(v) > 0
+        }
+        queue_rows.append(
+            {
+                "product": product,
+                "raw_after_cover": raw_after_cover,
+                "dedup_removed": dedup_removed,
+                "after_dedup": max(0, raw_after_cover - dedup_removed),
+                "cache_reused": int(info.get("cache_reused") or 0),
+                "ineligible_total": int(info.get("ineligible_total") or 0),
+                "ineligible_reasons": ineligible_detail,
+                "llm_queued": int(info.get("llm_queued") or 0),
+            }
+        )
+    queue_report = {
+        "target_date": target_date,
+        "total": {
+            "raw_after_cover": len(pipeline_items),
+            "dedup_removed": skipped_dedup,
+            "after_dedup": int(dedup_report.get("after_crossday") or 0),
+            "cache_reused": skipped_cache,
+            "ineligible_total": skipped_no_media,
+            "llm_queued": len(pending_items),
+        },
+        "per_product": queue_rows,
+    }
+    queue_report_path = DATA_DIR / f"{output_prefix}_analysis_queue_report.json"
+    queue_report_path.write_text(json.dumps(queue_report, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n[step:analysis-queue] 本次灵感分析入队")
     print(f"  · 全量 items: {len(pipeline_items)}（去重 ad_key 约 {len(pipeline_ad_keys)} 个）")
     print(
@@ -509,6 +727,7 @@ def main() -> None:
                 f"      └ {rk}（{ineligible_reason_label_cn(rk)}）: {rv}"
             )
     print(f"  · 本次将调用 analyze 子进程: {len(pending_items)} 条 → {pending_raw_path.name}")
+    print(f"  · 产品入队漏斗报告: {queue_report_path.name}")
 
     new_analysis_payload = {
         "input_file": str(pending_raw_path),
@@ -595,22 +814,12 @@ def main() -> None:
     if n_adult:
         print(f"[content-filter] 标记 {n_adult} 条成人/色情风险素材（主表不同步；不进入方向卡片）")
 
-    # 2.8b) 低采纳主题拦截：基于多维表人工反馈剔除明显不适合 VE 复核的主题
-    low_fit_details: list[dict] = []
-    n_low_fit = 0
-    low_fit_enabled = (os.getenv("LOW_FIT_THEME_FILTER_ENABLED") or "1").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-        "off",
-        "",
-    )
-    if low_fit_enabled:
-        n_low_fit, low_fit_details = apply_low_fit_theme_filter(combined_results)
-        if n_low_fit:
-            print(f"[low-fit-filter] 标记 {n_low_fit} 条低采纳主题素材（主表不同步；不进入方向卡片）")
-    else:
-        print("[low-fit-filter] 已关闭（LOW_FIT_THEME_FILTER_ENABLED=0），跳过低采纳主题筛选。")
+    n_human_photo, human_photo_details = apply_human_photo_effect_filter(combined_results)
+    if n_human_photo:
+        print(
+            f"[content-filter] 标记 {n_human_photo} 条非人物照片加工/电商素材"
+            "（主表不同步；不进入方向卡片）"
+        )
 
     # 2.8d) 日内玩法硬去重（默认关闭）：同 appid 同批次相似玩法仅保留展示估值更高的代表素材
     intraday_effect_details: list[dict] = []
@@ -739,9 +948,9 @@ def main() -> None:
     if adult_details:
         sample = adult_details[:3]
         print(f"[content-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
-    if low_fit_details:
-        sample = low_fit_details[:3]
-        print(f"[low-fit-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+    if human_photo_details:
+        sample = human_photo_details[:3]
+        print(f"[human-photo-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
     if intraday_effect_details:
         sample = intraday_effect_details[:3]
         print(f"[intraday-effect-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
@@ -756,7 +965,7 @@ def main() -> None:
         print(f"[embedding-dup-candidate] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
 
     # 如有 2.8/2.9 标记，回写 analysis JSON
-    if n_adult or n_low_fit or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
+    if n_adult or n_human_photo or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
         analysis_payload["results"] = combined_results
         analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -778,8 +987,17 @@ def main() -> None:
                     "style_filter_match_summary": str(it.get("style_filter_match_summary") or ""),
                     "launched_effect_match": it.get("launched_effect_match"),
                     "effect_one_liner": str(it.get("effect_one_liner") or ""),
+                    "ad_one_liner": str(it.get("ad_one_liner") or ""),
                     "play_fingerprint": str(it.get("play_fingerprint") or ""),
                     "differentiator": str(it.get("differentiator") or ""),
+                    "template_fingerprint": str(it.get("template_fingerprint") or ""),
+                    "play_asset_id": str(it.get("play_asset_id") or ""),
+                    "play_asset_name": str(it.get("play_asset_name") or ""),
+                    "play_asset_subtag_ids": str(it.get("play_asset_subtag_ids") or ""),
+                    "play_asset_subtag_names": str(it.get("play_asset_subtag_names") or ""),
+                    "play_asset_novelty_label": str(it.get("play_asset_novelty_label") or ""),
+                    "play_asset_match_source": str(it.get("play_asset_match_source") or ""),
+                    "play_asset_classification_reason": str(it.get("play_asset_classification_reason") or ""),
                     "effect_embedding_duplicate_match": it.get("effect_embedding_duplicate_match"),
                     "embedding_duplicate_candidate": it.get("embedding_duplicate_candidate"),
                 }
@@ -822,9 +1040,21 @@ def main() -> None:
 
                 run_acceptance_after_workflow(target_date, partial=True)
             except SystemExit:
+                try:
+                    from ua_workflows.video_enhancer.flow_report import run_flow_report_after_workflow
+
+                    run_flow_report_after_workflow(target_date, partial=True)
+                except Exception as e:
+                    print(f"[flow-report] {e}")
                 raise
             except Exception as e:
                 print(f"[acceptance] {e}")
+            try:
+                from ua_workflows.video_enhancer.flow_report import run_flow_report_after_workflow
+
+                run_flow_report_after_workflow(target_date, partial=True)
+            except Exception as e:
+                print(f"[flow-report] {e}")
             return
         else:
             print("[workflow] 成功率 ≥ 90%，继续执行后续步骤。")
@@ -980,9 +1210,22 @@ def main() -> None:
 
         run_acceptance_after_workflow(target_date, partial=False)
     except SystemExit:
+        try:
+            from ua_workflows.video_enhancer.flow_report import run_flow_report_after_workflow
+
+            run_flow_report_after_workflow(target_date, partial=False)
+        except Exception as e:
+            print(f"[flow-report] {e}")
         raise
     except Exception as e:
         print(f"[acceptance] {e}")
+
+    try:
+        from ua_workflows.video_enhancer.flow_report import run_flow_report_after_workflow
+
+        run_flow_report_after_workflow(target_date, partial=False)
+    except Exception as e:
+        print(f"[flow-report] {e}")
 
     print("\n[完成] 全流程执行完成。")
     print(f"- raw: {raw_path}")

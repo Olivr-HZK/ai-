@@ -1795,7 +1795,13 @@ async def _search_one_keyword(
     await page.wait_for_timeout(500)
     btn = page.locator("#display-search-input-container button.bg-primary").first
     if await btn.count() > 0:
-        await btn.click(timeout=2000)
+        try:
+            await btn.click(timeout=2000)
+        except Exception:
+            try:
+                await btn.click(timeout=2000, force=True)
+            except Exception:
+                await page.keyboard.press("Enter")
     else:
         await page.keyboard.press("Enter")
     await page.wait_for_timeout(1000)
@@ -2517,6 +2523,7 @@ async def _collect_keyword_crawl_result(
     max_scroll_rounds: int = 16,
     enable_dom_track: bool = False,
     log_quiet: bool = False,
+    stop_scroll_if_oldest_first_seen_before_ymd: str | None = None,
 ) -> dict:
     """单关键词：搜索、滚动、合并 napi 结果（与 `run_batch` 单轮逻辑一致，供 Arrow2 复用）。"""
     result_for_kw: dict | None = None
@@ -2531,6 +2538,7 @@ async def _collect_keyword_crawl_result(
                 log_prefix=log_prefix,
                 max_scroll_rounds=max_scroll_rounds,
                 log_quiet=log_quiet,
+                stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_if_oldest_first_seen_before_ymd,
             )
             top_creatives, total = _top_creatives_from_batches(batches_ref)
             napi_creatives = _all_creatives_from_batches(batches_ref)
@@ -3324,6 +3332,8 @@ async def run_batch(
     pause_per_keyword: bool = False,
     keep_browser_open: bool = False,
     keyword_labels: dict[str, str] | None = None,
+    max_scroll_rounds: int | None = None,
+    stop_scroll_if_oldest_first_seen_before_ymd: str | None = None,
 ) -> list:
     """
     登录一次、界面设置一次（工具/7天/素材/排序方式），然后对每个关键词只做「填关键字 → 搜索 → 取结果」。
@@ -3338,6 +3348,8 @@ async def run_batch(
     date_range: 可选 (start_ymd, end_ymd) 或 YYYY-MM-DD；传入后直接设置 UI 日期范围，跳过 7 天快捷项。
     pause_per_keyword: 每个关键词爬完后暂停，供 headed 模式人工检查页面。
     keep_browser_open: 全部抓取完成后保持浏览器打开，等人工回车后再关闭。
+    max_scroll_rounds: 覆盖搜索后滚动轮数上限。
+    stop_scroll_if_oldest_first_seen_before_ymd: napi-list 调试路径的旧 first_seen 早停阈值。
     """
     if not keywords:
         return []
@@ -3418,6 +3430,12 @@ async def run_batch(
 
             print("[3/4] 按关键词依次搜索并拉取数据...")
             results = []
+            scroll_rounds = 48 if first_seen_target_ymd else 16
+            if max_scroll_rounds is not None:
+                try:
+                    scroll_rounds = max(1, int(max_scroll_rounds))
+                except Exception:
+                    scroll_rounds = 48 if first_seen_target_ymd else 16
             for i, keyword in enumerate(keywords, 1):
                 print(f"  [{i}/{len(keywords)}] {keyword}")
                 if detail_click_primary and order_by == "latest":
@@ -3427,7 +3445,7 @@ async def run_batch(
                         batches_ref,
                         capture_state,
                         log_prefix="    ",
-                        max_scroll_rounds=48 if first_seen_target_ymd else 16,
+                        max_scroll_rounds=scroll_rounds,
                         log_quiet=False,
                         first_seen_target_ymd=first_seen_target_ymd,
                         max_cards_env="VIDEO_ENHANCER_DOM_CLICK_MAX_CARDS",
@@ -3446,8 +3464,9 @@ async def run_batch(
                         capture_state,
                         order_by=order_by,
                         log_prefix="    ",
-                        max_scroll_rounds=16,
+                        max_scroll_rounds=scroll_rounds,
                         enable_dom_track=enable_dom_track,
+                        stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_if_oldest_first_seen_before_ymd,
                     )
                 results.append(result_for_kw)
                 if pause_per_keyword:

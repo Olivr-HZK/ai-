@@ -3,7 +3,7 @@ Arrow2 全流程：爬取 → 写入 arrow2 主库 → 封面 CLIP 去重 →（
 默认**不跑**灵感分析，仅按 raw 同步多维表（含素材类型：视频/图片/试玩广告）；需 LLM 分析时加 --analyze。
 无聚类、无 Video Enhancer daily_creative_insights、无「我方已投」筛选。
 
-爬取统一使用 test_arrow2_first_card_fields.py（detail-v2 逐张点击 + ad_key 去重入库），
+爬取统一使用 ua_workflows.arrow2.crawl（latest 默认 UI 指定日期 + detail-v2 逐张点击 + ad_key 去重入库），
 支持 latest_yesterday 和 exposure_top10 两种 pull_spec。
 
 用法（项目根目录）：

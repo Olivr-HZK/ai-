@@ -28,9 +28,9 @@ from ua_workflows.shared.push.wecom import push_wecom_markdown
 from ua_workflows.video_enhancer.push_feishu import (
     _render_daily_card_markdown,
 )
-from ua_workflows.shared.db.video_enhancer import init_db
+from ua_workflows.shared.db.video_enhancer import init_db, load_daily_material_report
 from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
-from ua_workflows.video_enhancer.play_asset_report import build_daily_asset_variant_report
+from ua_workflows.video_enhancer.play_assets import legacy_play_library_enabled
 
 load_dotenv()
 
@@ -73,13 +73,14 @@ def _sanitize_gsheet_tab_name(raw: str, default: str) -> str:
 
 
 def _build_daily_card_from_db(target_date: str) -> str:
-    """从 DB 读取新玩法 / 新玩法变种，用新日报格式渲染 markdown。"""
+    """从 DB 读取旧逻辑严格新素材，用日报格式渲染 markdown。"""
     init_db()
-    maybe_pull_play_asset_doc()
-    report = build_daily_asset_variant_report(target_date, lookback_days=7)
+    if legacy_play_library_enabled():
+        maybe_pull_play_asset_doc()
+    report = load_daily_material_report(target_date, lookback_days=7)
     return _render_daily_card_markdown(
         target_date,
-        report.get("new_asset_variant_items") or [],
+        report.get("new_play_items") or [],
         {},
         report.get("summary") or {},
     )

@@ -6,7 +6,8 @@
 1) 指纹（默认开）：与 creative_library 早于当日的记录比对（与灵感分析 Step B 一致），见
    video_enhancer_pipeline_db.crossday_filter_items_against_creative_library。
 2) 向量（默认开）：过去 N 日同 appid 的 insight_cover_style + 库内 cover_embedding 与今日向量并查集；
-   只要今日封面命中历史 CLIP 簇，即判定为跨日旧封面并剔除（reason: cover_style_cluster_vs_yesterday）。
+   近 7 日历史命中判定为跨日旧封面并剔除（reason: cover_style_cluster_vs_yesterday）；
+   更早历史命中则保留当天代表，记录为「历史簇持续发力」，用于更新簇代表/复盘旧素材仍在发力。
 
 环境变量同 Arrow2 / .env.example：COVER_STYLE_INTRADAY_ENABLED、COVER_VISUAL_DEDUP_THRESHOLD、
 COVER_STYLE_CROSS_DAY_FINGERPRINT_ENABLED、COVER_STYLE_CROSS_DAY_ENABLED、COVER_STYLE_HISTORY_LOOKBACK_DAYS 等。
@@ -24,11 +25,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from typing import Any, Dict, List, Set, Tuple
 
-from dotenv import load_dotenv
+from ua_workflows.shared.config import load_project_env
 
-from ua_workflows.shared.config import PROJECT_ROOT
-
-load_dotenv(PROJECT_ROOT / ".env")
+load_project_env()
 
 from ua_workflows.video_enhancer.analyze import _pick_image_url  # noqa: E402
 from ua_workflows.shared.media.cover_embedding import compute_cover_embedding_vector_from_url  # noqa: E402
@@ -54,11 +53,11 @@ def _resolve_cover_workers() -> int:
 
 
 def _cover_visual_threshold() -> float:
-    raw = os.getenv("COVER_VISUAL_DEDUP_THRESHOLD", "0.8").strip()
+    raw = os.getenv("COVER_VISUAL_DEDUP_THRESHOLD", "0.75").strip()
     try:
         v = float(raw)
     except ValueError:
-        v = 0.8
+        v = 0.75
     return max(0.0, min(1.0, v))
 
 
@@ -98,12 +97,30 @@ def is_cover_style_cross_day_fingerprint_enabled() -> bool:
 
 
 def _cover_history_lookback_days() -> int:
-    raw = os.getenv("COVER_STYLE_HISTORY_LOOKBACK_DAYS", "7").strip()
+    raw = os.getenv("COVER_STYLE_HISTORY_LOOKBACK_DAYS", "60").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 60
+    return max(0, min(60, n))
+
+
+def _cover_history_hard_dedupe_days() -> int:
+    raw = os.getenv("COVER_STYLE_HISTORY_HARD_DEDUPE_DAYS", "7").strip()
     try:
         n = int(raw)
     except ValueError:
         n = 7
     return max(0, min(60, n))
+
+
+def _history_age_days(target_date: str, matched_date: str) -> int | None:
+    try:
+        target = date.fromisoformat((target_date or "").strip()[:10])
+        matched = date.fromisoformat((matched_date or "").strip()[:10])
+    except ValueError:
+        return None
+    return (target - matched).days
 
 
 def _history_reference_dates(target_date: str, n_days: int) -> List[str]:
@@ -228,8 +245,10 @@ def _cluster_clip_dedupe(
     today_rows: List[Dict[str, Any]],
     history_hist: List[Dict[str, Any]],
     history_emb: Dict[str, bytes],
-) -> Tuple[Set[str], List[Dict[str, Any]]]:
-    """返回 (今日保留 ad_key 集合, 剔除明细)。"""
+    target_date: str = "",
+    hard_dedupe_days: int = 7,
+) -> Tuple[Set[str], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """返回 (今日保留 ad_key 集合, 剔除明细, 历史簇代表更新明细)。"""
     nodes: List[Dict[str, Any]] = []
     for r in today_rows:
         if r.get("vec") is None:
@@ -266,11 +285,12 @@ def _cluster_clip_dedupe(
     n = len(nodes)
     kept_today: Set[str] = set()
     removed_detail: List[Dict[str, Any]] = []
+    history_refresh_detail: List[Dict[str, Any]] = []
 
     if n < 2:
         for r in today_rows:
             kept_today.add(r["ad_key"])
-        return kept_today, removed_detail
+        return kept_today, removed_detail, history_refresh_detail
 
     uf = _UF(n)
     for i in range(n):
@@ -289,26 +309,135 @@ def _cluster_clip_dedupe(
         if not today_in:
             continue
         if history_in:
+            matches_by_today: Dict[int, Dict[str, Any]] = {}
+            recent_history_by_today: Dict[int, Dict[str, Any]] = {}
+            has_recent_history = False
             for ii in today_in:
-                best_h_i = max(
-                    history_in,
-                    key=lambda hi: cosine_similarity(nodes[ii]["vec"], nodes[hi]["vec"]),
-                )
-                best = nodes[best_h_i]
-                sim = cosine_similarity(nodes[ii]["vec"], best["vec"])
-                ak = nodes[ii]["ad_key"]
-                removed_detail.append(
-                    {
+                best_match: Dict[str, Any] | None = None
+                best_recent: Dict[str, Any] | None = None
+                for hi in history_in:
+                    sim = float(cosine_similarity(nodes[ii]["vec"], nodes[hi]["vec"]))
+                    if sim < threshold:
+                        continue
+                    hist = nodes[hi]
+                    matched_date = str(hist.get("target_date") or "")
+                    age_days = _history_age_days(target_date, matched_date)
+                    entry = {
+                        "node": hist,
+                        "similarity": sim,
+                        "history_age_days": age_days,
+                        "matched_date": matched_date,
+                    }
+                    if best_match is None or sim > float(best_match.get("similarity") or 0.0):
+                        best_match = entry
+                    if age_days is None or age_days <= hard_dedupe_days:
+                        has_recent_history = True
+                        if best_recent is None or sim > float(best_recent.get("similarity") or 0.0):
+                            best_recent = entry
+                if best_match:
+                    matches_by_today[ii] = best_match
+                if best_recent:
+                    recent_history_by_today[ii] = best_recent
+
+            if has_recent_history:
+                for ii in today_in:
+                    match = recent_history_by_today.get(ii) or matches_by_today.get(ii)
+                    if not match:
+                        match = max(
+                            (
+                                {
+                                    "node": nodes[hi],
+                                    "similarity": float(cosine_similarity(nodes[ii]["vec"], nodes[hi]["vec"])),
+                                    "history_age_days": _history_age_days(
+                                        target_date,
+                                        str(nodes[hi].get("target_date") or ""),
+                                    ),
+                                    "matched_date": str(nodes[hi].get("target_date") or ""),
+                                }
+                                for hi in history_in
+                            ),
+                            key=lambda x: float(x.get("similarity") or 0.0),
+                        )
+                    best = match["node"]
+                    ak = nodes[ii]["ad_key"]
+                    age_days = match.get("history_age_days")
+                    item = {
                         "ad_key": ak,
                         "reason": "cover_style_cluster_vs_yesterday",
                         "cluster_label": f"CLIP≥{threshold}",
                         "kept_ad_key": best["ad_key"],
-                        "matched_date": best.get("target_date") or "",
-                        "similarity": round(float(sim), 4),
+                        "matched_date": match.get("matched_date") or "",
+                        "similarity": round(float(match.get("similarity") or 0.0), 4),
                         "product": str(nodes[ii].get("product") or ""),
                         "all_exposure_value": int(nodes[ii].get("exposure") or 0),
                         "cover_url": str(nodes[ii].get("cover_url") or ""),
+                        "history_window": "recent_hard",
                     }
+                    if age_days is not None:
+                        item["history_age_days"] = int(age_days)
+                    removed_detail.append(item)
+                continue
+
+            group_best_history_match = None
+            if matches_by_today:
+                group_best_history_match = max(
+                    matches_by_today.values(),
+                    key=lambda x: float(x.get("similarity") or 0.0),
+                )
+            best_i = max(today_in, key=lambda ii: nodes[ii]["exposure"])
+            best_today = nodes[best_i]
+            bk = best_today["ad_key"]
+            kept_today.add(bk)
+            best_history_match = matches_by_today.get(best_i) or group_best_history_match
+            if best_history_match:
+                best_hist = best_history_match["node"]
+                age_days = best_history_match.get("history_age_days")
+                refresh_item = {
+                    "ad_key": bk,
+                    "reason": "cover_style_cluster_history_refresh",
+                    "cluster_label": f"CLIP≥{threshold}",
+                    "matched_ad_key": best_hist["ad_key"],
+                    "kept_ad_key": bk,
+                    "matched_date": best_history_match.get("matched_date") or "",
+                    "similarity": round(float(best_history_match.get("similarity") or 0.0), 4),
+                    "product": str(best_today.get("product") or ""),
+                    "all_exposure_value": int(best_today.get("exposure") or 0),
+                    "cover_url": str(best_today.get("cover_url") or ""),
+                    "history_window": "stale_refresh",
+                }
+                if age_days is not None:
+                    refresh_item["history_age_days"] = int(age_days)
+                history_refresh_detail.append(refresh_item)
+
+            for ii in today_in:
+                ak = nodes[ii]["ad_key"]
+                if ak == bk:
+                    continue
+                match = matches_by_today.get(ii) or best_history_match
+                item = {
+                    "ad_key": ak,
+                    "reason": "cover_style_cluster_history_refresh",
+                    "cluster_label": f"CLIP≥{threshold}",
+                    "kept_ad_key": bk,
+                    "product": str(nodes[ii].get("product") or ""),
+                    "all_exposure_value": int(nodes[ii].get("exposure") or 0),
+                    "cover_url": str(nodes[ii].get("cover_url") or ""),
+                    "history_window": "stale_refresh",
+                }
+                if match:
+                    best_hist = match["node"]
+                    age_days = match.get("history_age_days")
+                    item.update(
+                        {
+                            "matched_ad_key": best_hist["ad_key"],
+                            "matched_date": match.get("matched_date") or "",
+                            "similarity": round(float(match.get("similarity") or 0.0), 4),
+                        }
+                    )
+                    if age_days is not None:
+                        item["history_age_days"] = int(age_days)
+                removed_detail.append(
+                    item
                 )
         else:
             best_i = max(idxs, key=lambda ii: nodes[ii]["exposure"])
@@ -334,7 +463,7 @@ def _cluster_clip_dedupe(
         if r.get("vec") is None:
             kept_today.add(r["ad_key"])
 
-    return kept_today, removed_detail
+    return kept_today, removed_detail, history_refresh_detail
 
 
 def apply_intraday_cover_style_dedupe(
@@ -423,6 +552,7 @@ def apply_intraday_cover_style_dedupe(
 
     out: List[Dict[str, Any]] = []
     lookback = _cover_history_lookback_days() if is_cover_style_cross_day_enabled() else 0
+    hard_dedupe_days = min(_cover_history_hard_dedupe_days(), lookback) if lookback else 0
     history_dates = _history_reference_dates(target_date, lookback)
     history_by_app: Dict[str, List[Dict[str, Any]]] = {}
     if history_dates:
@@ -452,6 +582,7 @@ def apply_intraday_cover_style_dedupe(
         "cross_day_fingerprint_removed": cross_fp_removed,
         "cross_day_history_dates": list(history_dates),
         "cross_day_history_lookback_days": lookback,
+        "cross_day_history_hard_dedupe_days": hard_dedupe_days,
         "cross_day_rows_loaded": sum(len(v) for v in history_by_app.values()) if history_by_app else 0,
     }
 
@@ -551,11 +682,13 @@ def apply_intraday_cover_style_dedupe(
         idx_holder[0] += len(need_enc)
 
         ad_to_row = {r["ad_key"]: r for r in with_cover}
-        kept_today, removed_detail = _cluster_clip_dedupe(
+        kept_today, removed_detail, history_refresh_detail = _cluster_clip_dedupe(
             threshold=threshold,
             today_rows=with_cover,
             history_hist=hist,
             history_emb=history_emb,
+            target_date=target_date,
+            hard_dedupe_days=hard_dedupe_days,
         )
         kept_keys: Set[str] = set(kept_today)
         for r in without_cover:
@@ -590,6 +723,7 @@ def apply_intraday_cover_style_dedupe(
                 "input": len(bucket),
                 "kept": len(kept_keys),
                 "removed": removed_detail,
+                "history_refresh": history_refresh_detail,
             }
         )
         report["removed_total"] += len(removed_detail)

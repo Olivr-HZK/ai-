@@ -1,9 +1,9 @@
 """
-推送飞书「VE竞品素材日报」卡片——只推新玩法 / 新玩法变种，按产品分组。
+推送飞书「VE竞品素材日报」卡片——只推旧逻辑严格新素材，按产品分组。
 
 替代旧版方向卡片格式，改为更紧凑的日报形式：
-- 新玩法：玩法资产库里历史未出现过的稳定玩法基类
-- 新玩法变种：玩法基类已出现，但子标签组合历史未出现
+- 新素材：素材首次出现，且玩法在回溯窗口内也未出现
+- 新玩法资产 / 模板迭代只写入多维表字段与历史沉淀，不作为推送闸门
 """
 
 from __future__ import annotations
@@ -24,9 +24,10 @@ from ua_workflows.shared.config import DATA_DIR
 from ua_workflows.shared.db.video_enhancer import (
     _get_conn,
     init_db,
+    load_daily_material_report,
 )
 from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
-from ua_workflows.video_enhancer.play_asset_report import build_daily_asset_variant_report
+from ua_workflows.video_enhancer.play_assets import legacy_play_library_enabled
 
 # ── 产品主题 ──────────────────────────────────────────
 PRODUCT_THEMES: Dict[str, str] = {
@@ -153,16 +154,12 @@ def _render_daily_card_markdown(
         by_product[item["product"]].append(item)
 
     summary = summary or {}
-    total_new = int(summary.get("new_asset_variant_representative_count") or len(new_items))
-    new_asset_count = int(summary.get("new_play_asset_count") or 0)
-    new_variant_count = int(summary.get("new_play_variant_count") or 0)
+    total_new = int(summary.get("new_play_representative_count") or summary.get("new_material_count") or len(new_items))
+    new_asset_count = int(summary.get("new_play_cluster_count") or summary.get("new_effect_count") or 0)
     total_sustained = sum(len(v) for v in sustained_by_product.values())
 
     lines: List[str] = []
-    headline = (
-        f"**{target_date}** | 新玩法 **{new_asset_count}** 个 | "
-        f"新玩法变种 **{new_variant_count}** 个 | 推送素材 **{total_new}** 条"
-    )
+    headline = f"**{target_date}** | 新玩法 **{new_asset_count}** 个 | 新素材 **{total_new}** 条"
     if total_sustained:
         headline += f" | 持续发力 **{total_sustained}** 条"
     lines.append(headline)
@@ -194,9 +191,9 @@ def _render_daily_card_markdown(
                 effect = f"展示{imp:,}"
             asset_name = str(item.get("play_asset_name") or "").strip()
             variant_name = str(item.get("play_asset_variant_name") or "").strip()
-            novelty = str(item.get("play_asset_novelty_label") or "").strip()
+            novelty = str(item.get("narrow_novelty_label") or item.get("play_asset_novelty_label") or "").strip()
             if asset_name and variant_name:
-                effect = f"{novelty or '新变种'}｜{asset_name} / {variant_name}：{effect}"
+                effect = f"{novelty or '老玩法新迭代'}｜{asset_name} / {variant_name}：{effect}"
             elif asset_name:
                 effect = f"{novelty or '新玩法'}｜{asset_name}：{effect}"
             if is_video and item.get("video_url"):
@@ -208,7 +205,7 @@ def _render_daily_card_markdown(
 
             icon = "🎬" if is_video else "🖼"
             cluster_count = int(item.get("cluster_material_count") or item.get("daily_play_cluster_size") or 1)
-            suffix = f"（同资产变种{cluster_count}条素材）" if cluster_count > 1 else ""
+            suffix = f"（同玩法{cluster_count}条素材）" if cluster_count > 1 else ""
             if link:
                 lines.append(f"{icon} [{effect}]({link}){suffix}")
             else:
@@ -269,7 +266,7 @@ def push_card(webhook: str, title: str, md_text: str) -> None:
 
 # ── 主流程 ─────────────────────────────────────────────
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="推送飞书 VE竞品素材日报卡片（新玩法/新变种）")
+    p = argparse.ArgumentParser(description="推送飞书 VE竞品素材日报卡片（旧逻辑严格新素材）")
     p.add_argument("--date", default=_default_date(), help="目标日期 YYYY-MM-DD（默认昨天）")
     p.add_argument("--feishu-webhook", default="", help="飞书卡片 webhook")
     p.add_argument("--lookback", type=int, default=7, help="日报辅助回溯天数（默认7）")
@@ -281,16 +278,17 @@ def main() -> None:
     init_db()
     args = parse_args()
     target_date = args.date
-    maybe_pull_play_asset_doc()
+    if legacy_play_library_enabled():
+        maybe_pull_play_asset_doc()
 
-    report = build_daily_asset_variant_report(target_date, lookback_days=args.lookback)
-    new_items = report.get("new_asset_variant_items") or []
+    report = load_daily_material_report(target_date, lookback_days=args.lookback)
+    new_items = report.get("new_play_items") or []
     sustained = report.get("sustained_by_product") or {}
     if (os.getenv("VE_DAILY_PUSH_INCLUDE_SUSTAINED") or "0").strip().lower() in ("0", "false", "no", "off", ""):
         sustained = {}
 
     if not new_items and not any(sustained.values()):
-        print(f"[feishu-card] {target_date} 无新玩法/新玩法变种，跳过推送。")
+        print(f"[feishu-card] {target_date} 旧逻辑无新素材/新玩法，跳过推送。")
         return
 
     # ── 渲染并推送 ──
@@ -304,7 +302,7 @@ def main() -> None:
         print("[feishu-card] 未配置 FEISHU_UA_WEBHOOK/FEISHU_BOT_WEBHOOK，跳过卡片推送。")
         return
 
-    card_title = f"AI工具竞品日报 {target_date}｜新玩法/新变种"
+    card_title = f"AI工具竞品日报 {target_date}｜新素材"
     push_card(webhook, card_title, card_md)
 
 
