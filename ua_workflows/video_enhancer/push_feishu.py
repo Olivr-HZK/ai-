@@ -1,0 +1,310 @@
+"""
+推送飞书「VE竞品素材日报」卡片——只推旧逻辑严格新素材，按产品分组。
+
+替代旧版方向卡片格式，改为更紧凑的日报形式：
+- 新素材：素材首次出现，且玩法在回溯窗口内也未出现
+- 新玩法资产 / 模板迭代只写入多维表字段与历史沉淀，不作为推送闸门
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+from collections import defaultdict
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Any, Dict, List
+
+import requests
+from dotenv import load_dotenv
+
+from ua_workflows.shared.config import DATA_DIR
+from ua_workflows.shared.db.video_enhancer import (
+    _get_conn,
+    init_db,
+    load_daily_material_report,
+)
+from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
+from ua_workflows.video_enhancer.play_assets import legacy_play_library_enabled
+
+# ── 产品主题 ──────────────────────────────────────────
+PRODUCT_THEMES: Dict[str, str] = {
+    "Remini - AI Photo Enhancer": "AI照片增强/修复/滤镜",
+    "Pixverse:AI Video Generator": "AI视频生成",
+    "Glam AI:Video & Photo Editor": "AI美颜/换装/照片编辑",
+    "Retake AI Face & Selfie Editor": "AI人脸重拍/照片编辑",
+    "DreamFace:AI Video Generator": "AI人像动画/照片转视频",
+    "GIO - AI Photoshoot Generator": "AI写真/拍照生成",
+    "EPIK - AI Photo & Video Editor": "AI照片编辑/滤镜",
+    "AI Mirror: AI Photo & Video": "AI照片/视频滤镜",
+}
+
+
+def _default_date() -> str:
+    return (date.today() - timedelta(days=1)).isoformat()
+
+
+# ── 摘要提取 ──────────────────────────────────────────
+def _extract_one_liner(analysis_text: str) -> str:
+    """从 insight_analysis 提取一句话摘要。
+
+    优先级：
+    1. 【一句话说明】行
+    2. 第 2 节 Hook / 视觉钩子 首条要点
+    3. 首段有意义的行
+    """
+    if not analysis_text:
+        return ""
+    m = re.search(r"【一句话说明】\s*(.+)", analysis_text)
+    if m:
+        return m.group(1).strip()[:40]
+    # 尝试取 Hook / 视觉钩子 的第一点
+    m2 = re.search(
+        r"(?:2\)\s*(?:Hook|视觉钩子|情感基调|创意核心))[^\n]*\n[-•]\s*\*{0,2}(.+?)(?:\*{0,2}[：:]|\s*[：:])\s*(.+)",
+        analysis_text,
+    )
+    if m2:
+        label = m2.group(1).strip().lstrip("*").strip()
+        desc = m2.group(2).strip()
+        return f"{label}：{desc}"[:60]
+    # 首段有意义行
+    for line in analysis_text.split("\n"):
+        line = line.strip().lstrip("-•·* ").strip()
+        if len(line) > 8 and not line.startswith("#") and not line.startswith("1)") and not line.startswith("视频") and not line.startswith("图片"):
+            return line[:60]
+    return ""
+
+
+# ── 持续发力 ──────────────────────────────────────────
+def _load_sustained_effort(target_date: str, lookback_days: int = 7) -> Dict[str, List[Dict[str, Any]]]:
+    """从 *_cover_style_intraday.json 报告的 cross_day_fingerprint_removed 读取持续发力。
+
+    返回 {product: [{ad_key, matched_date, days, reason, video_url, preview_img_url, video_duration}]}
+    """
+    by_product: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    td = date.fromisoformat(target_date)
+    seen_keys: set[str] = set()
+
+    for i in range(lookback_days + 1):
+        ds = (td - timedelta(days=i)).isoformat()
+        fpath = Path(str(DATA_DIR)) / f"workflow_video_enhancer_{ds}_cover_style_intraday.json"
+        if not fpath.exists():
+            continue
+        with open(fpath, "r", encoding="utf-8") as fh:
+            rdata = json.load(fh)
+        for h in rdata.get("cross_day_fingerprint_removed", []):
+            ad_key = h.get("ad_key", "")
+            if ad_key in seen_keys:
+                continue
+            seen_keys.add(ad_key)
+            matched_date = h.get("matched_date", "")
+            try:
+                days = (date.fromisoformat(target_date) - date.fromisoformat(matched_date)).days
+            except (ValueError, TypeError):
+                days = 0
+            # 查产品名 + 媒体链接
+            product = "未知"
+            video_url = ""
+            preview_img_url = ""
+            video_duration = 0
+            try:
+                conn = _get_conn()
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT product, video_url, preview_img_url, video_duration "
+                    "FROM daily_creative_insights WHERE ad_key LIKE ? LIMIT 1",
+                    (ad_key[:16] + "%",),
+                )
+                row = cur.fetchone()
+                if row:
+                    product = row["product"] or "未知"
+                    video_url = row["video_url"] or ""
+                    preview_img_url = row["preview_img_url"] or ""
+                    video_duration = int(row["video_duration"] or 0)
+                conn.close()
+            except Exception:
+                pass
+            by_product[product].append({
+                "ad_key": ad_key,
+                "matched_date": matched_date,
+                "days": days,
+                "reason": h.get("reason", ""),
+                "video_url": video_url,
+                "preview_img_url": preview_img_url,
+                "video_duration": video_duration,
+            })
+    return by_product
+
+
+# ── 卡片渲染 ──────────────────────────────────────────
+def _render_daily_card_markdown(
+    target_date: str,
+    new_items: List[Dict[str, Any]],
+    sustained_by_product: Dict[str, List[Dict[str, Any]]],
+    summary: Dict[str, Any] | None = None,
+) -> str:
+    """渲染日报卡片 Markdown。
+
+    格式：按竞品分组，每条素材用一句话说明（effect_one_liner）做可点击链接跳转到视频/图片。
+    """
+    by_product: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for item in new_items:
+        by_product[item["product"]].append(item)
+
+    summary = summary or {}
+    total_new = int(summary.get("new_play_representative_count") or summary.get("new_material_count") or len(new_items))
+    new_asset_count = int(summary.get("new_play_cluster_count") or summary.get("new_effect_count") or 0)
+    total_sustained = sum(len(v) for v in sustained_by_product.values())
+
+    lines: List[str] = []
+    headline = f"**{target_date}** | 新玩法 **{new_asset_count}** 个 | 新素材 **{total_new}** 条"
+    if total_sustained:
+        headline += f" | 持续发力 **{total_sustained}** 条"
+    lines.append(headline)
+    lines.append("")
+
+    for product in by_product:
+        items = by_product[product]
+        if not items:
+            continue
+
+        short_name = product.split(":")[0].split(" - ")[0].strip()
+        theme = PRODUCT_THEMES.get(product, "")
+        header = f"**{short_name}**"
+        if theme:
+            header += f"  ·  {theme}"
+        lines.append(header)
+
+        for item in items:
+            is_video = int(item.get("video_duration") or 0) > 0 or (
+                str(item.get("creative_type") or "").lower() == "video" and bool(item.get("video_url"))
+            )
+            effect = str(item.get("effect_one_liner") or "")
+            if not effect:
+                effect = str(item.get("_one_liner") or "")
+            if not effect:
+                effect = _extract_one_liner(str(item.get("_analysis_one_liner") or ""))
+            if not effect:
+                imp = item.get("best_impression", 0)
+                effect = f"展示{imp:,}"
+            asset_name = str(item.get("play_asset_name") or "").strip()
+            variant_name = str(item.get("play_asset_variant_name") or "").strip()
+            novelty = str(item.get("narrow_novelty_label") or item.get("play_asset_novelty_label") or "").strip()
+            if asset_name and variant_name:
+                effect = f"{novelty or '老玩法新迭代'}｜{asset_name} / {variant_name}：{effect}"
+            elif asset_name:
+                effect = f"{novelty or '新玩法'}｜{asset_name}：{effect}"
+            if is_video and item.get("video_url"):
+                link = item["video_url"]
+            elif item.get("preview_img_url"):
+                link = item["preview_img_url"]
+            else:
+                link = ""
+
+            icon = "🎬" if is_video else "🖼"
+            cluster_count = int(item.get("cluster_material_count") or item.get("daily_play_cluster_size") or 1)
+            suffix = f"（同玩法{cluster_count}条素材）" if cluster_count > 1 else ""
+            if link:
+                lines.append(f"{icon} [{effect}]({link}){suffix}")
+            else:
+                lines.append(f"{icon} {effect}{suffix}")
+
+        lines.append("")
+
+    if sustained_by_product:
+        lines.append("**持续发力**")
+        for product in sustained_by_product:
+            rows = sustained_by_product[product]
+            if not rows:
+                continue
+            short_name = product.split(":")[0].split(" - ")[0].strip()
+            lines.append(f"**{short_name}**")
+            for row in rows:
+                effect = str(row.get("effect_one_liner") or "同画面/同玩法跨日重复投放")
+                label = str(row.get("signal_label") or "跨日重复")
+                span = int(row.get("day_span") or 0)
+                count = int(row.get("material_count") or 0)
+                suffix_parts = [label]
+                if span >= 2:
+                    suffix_parts.append(f"{span}天")
+                if count >= 2:
+                    suffix_parts.append(f"{count}条")
+                suffix = "，".join(suffix_parts)
+                link = str(row.get("link") or "")
+                icon = "🎬" if row.get("is_video") else "🖼"
+                text = f"{effect}（{suffix}）"
+                if link:
+                    lines.append(f"{icon} [{text}]({link})")
+                else:
+                    lines.append(f"{icon} {text}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── 推送 ──────────────────────────────────────────────
+def push_card(webhook: str, title: str, md_text: str) -> None:
+    if not webhook:
+        print("[card] 未配置 webhook，跳过卡片推送。")
+        return
+    card = {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True, "enable_forward": True},
+            "header": {"title": {"tag": "plain_text", "content": title}, "template": "blue"},
+            "elements": [{"tag": "markdown", "content": md_text[:12000]}],
+        },
+    }
+    try:
+        resp = requests.post(webhook, json=card, timeout=15)
+        print(f"[card] 推送结果: {resp.status_code} {resp.text[:200]}")
+    except Exception as exc:
+        print(f"[card] 推送失败: {exc}")
+
+
+# ── 主流程 ─────────────────────────────────────────────
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="推送飞书 VE竞品素材日报卡片（旧逻辑严格新素材）")
+    p.add_argument("--date", default=_default_date(), help="目标日期 YYYY-MM-DD（默认昨天）")
+    p.add_argument("--feishu-webhook", default="", help="飞书卡片 webhook")
+    p.add_argument("--lookback", type=int, default=7, help="日报辅助回溯天数（默认7）")
+    return p.parse_args()
+
+
+def main() -> None:
+    load_dotenv()
+    init_db()
+    args = parse_args()
+    target_date = args.date
+    if legacy_play_library_enabled():
+        maybe_pull_play_asset_doc()
+
+    report = load_daily_material_report(target_date, lookback_days=args.lookback)
+    new_items = report.get("new_play_items") or []
+    sustained = report.get("sustained_by_product") or {}
+    if (os.getenv("VE_DAILY_PUSH_INCLUDE_SUSTAINED") or "0").strip().lower() in ("0", "false", "no", "off", ""):
+        sustained = {}
+
+    if not new_items and not any(sustained.values()):
+        print(f"[feishu-card] {target_date} 旧逻辑无新素材/新玩法，跳过推送。")
+        return
+
+    # ── 渲染并推送 ──
+    card_md = _render_daily_card_markdown(target_date, new_items, sustained, report.get("summary") or {})
+
+    webhook = (args.feishu_webhook or "").strip()
+    if not webhook:
+        webhook = os.getenv("FEISHU_UA_WEBHOOK", "") or os.getenv("FEISHU_BOT_WEBHOOK", "")
+    webhook = (webhook or "").strip()
+    if not webhook:
+        print("[feishu-card] 未配置 FEISHU_UA_WEBHOOK/FEISHU_BOT_WEBHOOK，跳过卡片推送。")
+        return
+
+    card_title = f"AI工具竞品日报 {target_date}｜新素材"
+    push_card(webhook, card_title, card_md)
+
+
+if __name__ == "__main__":
+    main()
