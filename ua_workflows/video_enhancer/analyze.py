@@ -5,7 +5,7 @@
 data/video_enhancer_pipeline.db 的 daily_creative_insights；可用 --no-db 或环境变量
 VIDEO_ENHANCER_ANALYSIS_NO_DB=1 关闭。
 
-VE 灵感分析默认只产出结构化字段（Hook、脚本、核心卖点、玩法指纹、差异点、玩法资产/变种判断、风险标签/等级）。
+VE 灵感分析默认只产出结构化字段（Hook、脚本、核心卖点、广告拆解、玩法指纹、差异点、玩法资产/变种判断、风险标签/等级）。
 `analysis` 仍会保留一份由结构化字段拼出的短摘要，供旧链路成功判定与兼容展示使用。「我方已投」
 类标签由主流程中 `launched_effects_db` 等在分析**之后**统一打标，本脚本不再做套路筛选。
 
@@ -339,7 +339,7 @@ def _ve_fixed_footer() -> str:
         "模板级去重规则：同一个模板只替换人物人种、肤色、性别或男女模特（如黑人/白人/亚裔、男性/女性）时，"
         "仍视为同一个素材/同一变种，不要因此写成新玩法或新变种；这些人口属性不要写进【玩法指纹】或【玩法变种名称】。"
         "只有素材核心机制本身就是性别转换、变龄或身份关系转换时，才把该机制写进玩法指纹。\n"
-        "请**仅输出以下十四行**（固定格式，每行独立一行），不要输出编号正文、JSON、Markdown 代码围栏或其他解释：\n"
+        "请**仅输出以下二十行**（固定格式，每行独立一行），不要输出编号正文、JSON、Markdown 代码围栏或其他解释：\n"
         "【Hook解析】用一句中文（约20~40字）概括最前段抓人机制：先写画面/台词触发点，再写制造的悬念、痛点或承诺；"
         "避免泛泛写「吸引用户注意」。若开头无明确 Hook，写「无明确强 Hook」。\n"
         "【脚本口播】提炼视频中的旁白、口播、字幕或画中文字脚本；按出现顺序用短句串联，保留可借鉴的表达。"
@@ -350,6 +350,12 @@ def _ve_fixed_footer() -> str:
         "等——先写具体特效/玩法，必要时加展现形式；如果是常见修图/美颜/前后对比，必须补充可区分的场景、"
         "对象、风格或呈现方式（如派对、泳装、商务头像、分屏滑动、宝丽来名人合影），避免只写「AI修图」「AI美颜」"
         "这类过泛描述；禁止写投放建议，只描述素材本身做了什么。\n"
+        "【社会证明】提取素材中用于证明产品价值的用户数量、评分、评价、案例、反馈截图或前后效果证据；没有则写「无」。\n"
+        "【BGM/配乐】概括背景音乐的节奏、情绪或风格，例如卡点音乐、氛围钢琴、热门BGM翻版；无法判断写「无法判断」。\n"
+        "【音效】概括点击声、打字声、成功提示音、转场音效等增强真实感或冲击力的声音效果；无法判断写「无法判断」。\n"
+        "【旁白】提炼第三方配音/旁白的解说内容；没有明确旁白写「无明确旁白」。不要和画面字幕混写。\n"
+        "【字幕动画/文字入场】概括画面上动态文字、关键词弹出、数字增长、打字机、对比标签等文字入场方式；没有则写「无」。\n"
+        "【结尾CTA】提炼视频结尾行动号召，如点击链接、立即体验、下载领取优惠；没有明确 CTA 写「无明确CTA」。\n"
         "【玩法指纹】给机器去重用，用一句中文（约8~18字）写稳定、可复用的「输入对象 + 关键变换 + 输出大类」；"
         "先归纳玩法机制，再决定是否保留视觉元素。不要因为热点话题、运动项目、节日、发型、服装、名人同款、画面文案不同就拆成新玩法；"
         "这些只影响素材差异时放到【差异点】。同一模板只换人物人种、肤色或性别也不要拆成新玩法。"
@@ -390,6 +396,64 @@ def _normalize_risk_level(text: str) -> str:
     return s[:20]
 
 
+_AD_BREAKDOWN_KEYS = (
+    "开场钩子",
+    "核心卖点",
+    "社会证明",
+    "BGM/配乐",
+    "音效",
+    "旁白",
+    "字幕动画/文字入场",
+    "结尾CTA",
+)
+
+_AD_BREAKDOWN_EMPTY_VALUES = {
+    "",
+    "无",
+    "无明确",
+    "无明显",
+    "无明确强 Hook",
+    "无明确口播/字幕",
+    "无明确旁白",
+    "无明确CTA",
+    "无法判断",
+}
+
+
+def _build_ad_breakdown(
+    *,
+    hook_one_liner: str,
+    effect_one_liner: str,
+    social_proof: str,
+    bgm_music: str,
+    sound_effects: str,
+    narrator_voiceover: str,
+    subtitle_motion: str,
+    ending_cta: str,
+) -> dict[str, str]:
+    values = {
+        "开场钩子": hook_one_liner,
+        "核心卖点": effect_one_liner,
+        "社会证明": social_proof,
+        "BGM/配乐": bgm_music,
+        "音效": sound_effects,
+        "旁白": narrator_voiceover,
+        "字幕动画/文字入场": subtitle_motion,
+        "结尾CTA": ending_cta,
+    }
+    return {key: str(values.get(key) or "").strip() for key in _AD_BREAKDOWN_KEYS if str(values.get(key) or "").strip()}
+
+
+def _meaningful_ad_breakdown_items(ad_breakdown: dict[str, str]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for key in _AD_BREAKDOWN_KEYS:
+        value = str((ad_breakdown or {}).get(key) or "").strip()
+        if not value or value in _AD_BREAKDOWN_EMPTY_VALUES:
+            continue
+        out.append((key, value))
+    return out
+
+
 def _infer_risk_level_from_tags(tags: list[str]) -> str:
     joined = "、".join(str(t or "") for t in tags)
     if any(x in joined for x in ("成人色情风险", "色情/成人风险", "成人风险", "露点", "裸体")):
@@ -408,11 +472,11 @@ def _strip_arrow2_footer_lines(
 
     返回 (cleaned_text, llm_tags, category, one_liner, effect_one_liner, play_one_liner, hook_one_liner,
     voiceover_script, risk_level, play_fingerprint, differentiator, template_fingerprint, play_asset_id, play_asset_name,
-    play_asset_subtag_ids, play_asset_subtag_names, play_asset_novelty_label, play_asset_reason)。
+    play_asset_subtag_ids, play_asset_subtag_names, play_asset_novelty_label, play_asset_reason, ad_breakdown)。
     """
     raw = (text or "").strip()
     if not raw:
-        return "", [], "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
+        return "", [], "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", {}
     lines = raw.splitlines()
     n = len(lines)
     legacy_tags: list[str] = []
@@ -433,6 +497,12 @@ def _strip_arrow2_footer_lines(
     play_asset_subtag_names = ""
     play_asset_novelty_label = ""
     play_asset_reason = ""
+    social_proof = ""
+    bgm_music = ""
+    sound_effects = ""
+    narrator_voiceover = ""
+    subtitle_motion = ""
+    ending_cta = ""
     risk_tag_seen = False
     remove_idx: set[int] = set()
 
@@ -501,6 +571,43 @@ def _strip_arrow2_footer_lines(
         if s.startswith("【核心卖点】"):
             rest, i = _read_block(i, "【核心卖点】")
             effect_one_liner = rest[:60]
+            continue
+        if s.startswith("【社会证明】"):
+            rest, i = _read_block(i, "【社会证明】")
+            social_proof = rest[:240]
+            continue
+        if s.startswith("【BGM/配乐】") or s.startswith("【BGM】") or s.startswith("【配乐】"):
+            if s.startswith("【BGM/配乐】"):
+                prefix = "【BGM/配乐】"
+            elif s.startswith("【BGM】"):
+                prefix = "【BGM】"
+            else:
+                prefix = "【配乐】"
+            rest, i = _read_block(i, prefix)
+            bgm_music = rest[:160]
+            continue
+        if s.startswith("【音效】"):
+            rest, i = _read_block(i, "【音效】")
+            sound_effects = rest[:160]
+            continue
+        if s.startswith("【旁白】"):
+            rest, i = _read_block(i, "【旁白】")
+            narrator_voiceover = rest[:360]
+            continue
+        if s.startswith("【字幕动画/文字入场】") or s.startswith("【字幕动画】") or s.startswith("【文字入场】"):
+            if s.startswith("【字幕动画/文字入场】"):
+                prefix = "【字幕动画/文字入场】"
+            elif s.startswith("【字幕动画】"):
+                prefix = "【字幕动画】"
+            else:
+                prefix = "【文字入场】"
+            rest, i = _read_block(i, prefix)
+            subtitle_motion = rest[:240]
+            continue
+        if s.startswith("【结尾CTA】") or s.startswith("【CTA】"):
+            prefix = "【结尾CTA】" if s.startswith("【结尾CTA】") else "【CTA】"
+            rest, i = _read_block(i, prefix)
+            ending_cta = rest[:240]
             continue
         if s.startswith("【玩法指纹】") or s.startswith("【玩法 指纹】"):
             prefix = "【玩法指纹】" if s.startswith("【玩法指纹】") else "【玩法 指纹】"
@@ -590,6 +697,16 @@ def _strip_arrow2_footer_lines(
     if not risk_level and risk_tag_seen:
         risk_level = _infer_risk_level_from_tags(footer_tags) or "低风险"
 
+    ad_breakdown = _build_ad_breakdown(
+        hook_one_liner=hook_one_liner,
+        effect_one_liner=effect_one_liner,
+        social_proof=social_proof,
+        bgm_music=bgm_music,
+        sound_effects=sound_effects,
+        narrator_voiceover=narrator_voiceover,
+        subtitle_motion=subtitle_motion,
+        ending_cta=ending_cta,
+    )
     out_lines = [lines[k] for k in range(n) if k not in remove_idx]
     return (
         "\n".join(out_lines).strip(),
@@ -610,6 +727,7 @@ def _strip_arrow2_footer_lines(
         play_asset_subtag_names.strip(),
         play_asset_novelty_label.strip(),
         play_asset_reason.strip(),
+        ad_breakdown,
     )
 
 
@@ -1028,6 +1146,7 @@ def _build_ve_structured_analysis_summary(
     play_asset_reason: str,
     material_tags: list[str],
     risk_level: str,
+    ad_breakdown: dict[str, str] | None = None,
 ) -> str:
     """Keep the legacy `analysis` field non-empty without asking the model for a long正文."""
     parts: list[str] = []
@@ -1056,6 +1175,9 @@ def _build_ve_structured_analysis_summary(
         parts.append(f"Hook解析：{hook_one_liner}")
     if voiceover_script:
         parts.append(f"脚本口播：{voiceover_script}")
+    breakdown_items = _meaningful_ad_breakdown_items(ad_breakdown or {})
+    if breakdown_items:
+        parts.append("广告拆解：" + "；".join(f"{key}={value}" for key, value in breakdown_items))
     risk_bits = [t for t in material_tags if t and t != "无明显风险"]
     if risk_level or risk_bits:
         risk_text = "、".join(risk_bits) if risk_bits else "无明显风险"
@@ -1289,6 +1411,7 @@ def _analyze_one_item(
     play_asset_subtag_names = ""
     play_asset_novelty_label = ""
     play_asset_reason = ""
+    ad_breakdown: dict[str, str] = {}
     inspiration_enrich: str = "none"
     json_repair_applied = False
     work: str = str(raw_out or "")
@@ -1372,6 +1495,7 @@ def _analyze_one_item(
                 _play_asset_subtag_names,
                 _play_asset_novelty_label,
                 _play_asset_reason,
+                _ad_breakdown,
             ) = _strip_arrow2_footer_lines(raw_text)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
             # Arrow2 精简模式下 analysis 正文可能为空（只有 footer），用原始输出作为入库文本
@@ -1397,6 +1521,7 @@ def _analyze_one_item(
                 play_asset_subtag_names,
                 play_asset_novelty_label,
                 play_asset_reason,
+                ad_breakdown,
             ) = _strip_arrow2_footer_lines(analysis)
             play_asset_name, play_asset_subtag_names, play_asset_reason = _sanitize_new_play_name(
                 play_asset_id=play_asset_id,
@@ -1422,6 +1547,7 @@ def _analyze_one_item(
                     play_asset_reason=play_asset_reason,
                     material_tags=material_tags,
                     risk_level=risk_level,
+                    ad_breakdown=ad_breakdown,
                 )
         analysis, inspiration_enrich = _apply_empty_multimodal_enrichment(
             analysis,
@@ -1470,6 +1596,7 @@ def _analyze_one_item(
                 _play_asset_subtag_names,
                 _play_asset_novelty_label,
                 _play_asset_reason,
+                _ad_breakdown,
             ) = _strip_arrow2_footer_lines(analysis)
             material_tags = _merge_material_tags_arrow2(creative, llm_tags)
         if inspiration_enrich != "none" and not arrow2:
@@ -1492,6 +1619,7 @@ def _analyze_one_item(
                 play_asset_subtag_names,
                 play_asset_novelty_label,
                 play_asset_reason,
+                ad_breakdown,
             ) = _strip_arrow2_footer_lines(analysis)
             play_asset_name, play_asset_subtag_names, play_asset_reason = _sanitize_new_play_name(
                 play_asset_id=play_asset_id,
@@ -1517,6 +1645,7 @@ def _analyze_one_item(
                     play_asset_reason=play_asset_reason,
                     material_tags=material_tags,
                     risk_level=risk_level,
+                    ad_breakdown=ad_breakdown,
                 )
     else:
         analysis = work
@@ -1535,6 +1664,7 @@ def _analyze_one_item(
             play_asset_reason=play_asset_reason,
             material_tags=material_tags,
             risk_level=risk_level,
+            ad_breakdown=ad_breakdown,
         )
 
     row = {
@@ -1567,6 +1697,7 @@ def _analyze_one_item(
         "play_one_liner": play_one_liner,
         "hook_one_liner": hook_one_liner,
         "voiceover_script": voiceover_script,
+        "ad_breakdown": ad_breakdown,
         "risk_level": risk_level,
         "effect_one_liner": effect_one_liner,
         "play_fingerprint": play_fingerprint,
