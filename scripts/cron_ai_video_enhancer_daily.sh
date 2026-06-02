@@ -17,4 +17,26 @@ if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
 fi
 
 echo "======== $(date '+%F %T %Z') cron_ai_video_enhancer_daily start ========"
-exec "$ROOT/.venv/bin/python" "$ROOT/scripts/run_video_enhancer.py"
+"$ROOT/.venv/bin/python" "$ROOT/scripts/run_video_enhancer.py"
+
+TEST_WEBHOOK="$("$ROOT/.venv/bin/python" - <<'PY'
+from pathlib import Path
+from dotenv import dotenv_values
+
+value = dotenv_values(Path(".env")).get("FEISHU_TEST_WEBHOOK") or ""
+print(str(value).strip())
+PY
+)"
+
+if [[ -z "$TEST_WEBHOOK" ]]; then
+  echo "[cron] 未配置 FEISHU_TEST_WEBHOOK，跳过浩鹏 TopN 二次筛选测试群推送。"
+  exit 0
+fi
+
+echo "======== $(date '+%F %T %Z') cron_ai_video_enhancer_daily haopeng_topn start ========"
+"$ROOT/.venv/bin/python" "$ROOT/scripts/run_ve_haopeng_topn_push.py" \
+  --top-n 10 \
+  --send-mode webhook \
+  --feishu-webhook "$TEST_WEBHOOK"
+
+echo "======== $(date '+%F %T %Z') cron_ai_video_enhancer_daily done ========"
