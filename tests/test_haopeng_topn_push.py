@@ -6,6 +6,8 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from argparse import Namespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,6 +17,7 @@ from ua_workflows.video_enhancer.haopeng_topn_push import (
     build_card_payload,
     build_im_card,
     classify_play_kind,
+    load_or_generate_report,
     merge_report_rows_from_source,
     render_topn_markdown,
 )
@@ -157,6 +160,34 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
         self.assertEqual(rows[0]["video_url"], "https://video.example/a1.mp4")
         self.assertEqual(rows[0]["cover_url"], "https://cover.example/a1.jpg")
         self.assertEqual(rows[1]["video_url"], "https://keep.example/video.mp4")
+
+    def test_load_or_generate_report_generates_when_input_json_absent(self) -> None:
+        args = Namespace(
+            input_json="",
+            use_latest_local=False,
+            bitable_url="https://example.feishu.cn/base/app?table=tbl",
+            date="2026-05-28",
+            model="qwen/qwen3.7-max",
+            history_start_date="2026-05-25",
+            reviewer_field="浩鹏接受情况",
+        )
+        generated = ({"target_date": "2026-05-28", "results": []}, Path("/tmp/2026-05-28_label_prior.json"))
+
+        with patch(
+            "ua_workflows.video_enhancer.haopeng_ai_filter.generate_report_from_bitable",
+            return_value=generated,
+        ) as gen:
+            report, path = load_or_generate_report(args)
+
+        self.assertEqual(report["target_date"], "2026-05-28")
+        self.assertEqual(path.name, "2026-05-28_label_prior.json")
+        gen.assert_called_once_with(
+            bitable_url="https://example.feishu.cn/base/app?table=tbl",
+            target_date="2026-05-28",
+            model="qwen/qwen3.7-max",
+            history_start_date="2026-05-25",
+            reviewer_field="浩鹏接受情况",
+        )
 
 
 if __name__ == "__main__":

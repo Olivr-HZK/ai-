@@ -37,6 +37,8 @@ playwright install chromium
 | --------------------------------- | ------------------------------------------------------ |
 | `data/video_enhancer_pipeline.db` | VE：`daily_creative_insights`、`creative_library`、用量与验收等 |
 | `data/arrow2_pipeline.db`         | Arrow2 主库与日快照（默认路径）                                    |
+| `data/haopeng_topn_experiments/`  | VE 浩鹏二次 AI 筛选 TopN JSON，本地产物不提交                  |
+| `data/remote_snapshots/ve/`       | 从 Mac mini 拉取的 VE-only 生产库快照，本地产物不提交             |
 | `data/*.json`                     | 各工作流离线 raw / analysis / 报告                             |
 | `logs/`                           | cron 与手工重定向的运行日志（可 gitignore）                          |
 
@@ -59,6 +61,18 @@ playwright install chromium
 3. 避免两台机器同时对同一 **飞书多维表** 并行写入同一业务日，以免造成重复行或错乱。
 
 参考：[cron-schedules.md](./cron-schedules.md)。
+
+## 从 Mac mini 拉取 VE 生产快照
+
+需要只读排查远端生产库时，使用固定入口：
+
+```bash
+scripts/sync_ve_data_from_remote.sh
+sqlite3 data/remote_snapshots/ve/data/video_enhancer_pipeline.db 'PRAGMA quick_check;'
+sqlite3 data/remote_snapshots/ve/data/video_enhancer_pipeline.db "SELECT MAX(target_date) FROM daily_creative_insights;"
+```
+
+脚本默认远端为 `ggbond@10.125.46.30:/Users/ggbond/oliver/ai-`，可用 `VE_REMOTE_HOST`、`VE_REMOTE_ROOT`、`VE_REMOTE_SNAPSHOT_DIR` 覆盖。同步只拉 VE 相关快照和产物，远端先执行 `sqlite3 .backup`，本地落到 `data/remote_snapshots/ve/`；不拉 Arrow2 数据。
 
 ## `archive/`
 

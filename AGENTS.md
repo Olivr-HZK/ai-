@@ -2,6 +2,21 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-06-02
+
+### [VE] 浩鹏二次 AI 筛选 TopN 推送链路补齐
+
+- `ua_workflows/video_enhancer/haopeng_ai_filter.py`（新增）：从 VE 主多维表读取目标日素材与 2026-05-25 起的浩鹏有效反馈，按产品调用 `qwen/qwen3.7-max` 做二次 AI 筛选，输出 `data/haopeng_topn_experiments/{date}_label_prior.json`；该步骤不写回多维表、不影响主流程拦截，只生产推送输入。
+- `ua_workflows/video_enhancer/haopeng_topn_push.py`：未传 `--input-json` 时默认先生成当天二次 AI 筛选 JSON，再推送 TopN；保留 `--input-json` 与 `--use-latest-local` 兼容旧实验文件推送；新增 `--generate-only` 便于服务器只验证筛选产物。
+- `scripts/run_ve_haopeng_ai_filter.py`（新增）/ `scripts/run_ve_haopeng_topn_push.py`：前者只生成二次筛选 JSON，后者默认“生成 + 推送”。模型可用 `VE_HAOPENG_FILTER_MODEL` 覆盖，历史起点可用 `VE_HAOPENG_HISTORY_START_DATE` 覆盖。
+- `tests/test_haopeng_ai_filter.py` / `tests/test_haopeng_topn_push.py`：覆盖多维表字段归一、二次筛选报告格式、排序与推送入口默认生成行为。
+
+### [VE] Mac mini 生产库同步入口恢复
+
+- `scripts/sync_ve_data_from_remote.sh`（新增）：恢复 VE-only 远端同步脚本，默认从 `ggbond@10.125.46.30:/Users/ggbond/oliver/ai-` 用远端 `sqlite3 .backup` 生成安全快照，再 `rsync` 到 `data/remote_snapshots/ve/`；同步后本地执行 `PRAGMA quick_check` 并输出 `daily_creative_insights` 的行数与最新 `target_date`。脚本显式排除 Arrow2 数据。
+- `.gitignore`：重新忽略 `data/remote_snapshots/`，避免拉下来的生产快照进入版本管理。
+- `tests/test_sync_ve_data_from_remote.py`：静态检查同步脚本存在、默认远端路径、VE DB 快照、完整性校验与 Arrow2 排除口径。
+
 ## 2026-05-22
 
 ### [VE] 多维表玩法字段收口为只同步正式标签
