@@ -9,7 +9,8 @@
 - `ua_workflows/video_enhancer/haopeng_ai_filter.py`（新增）：从 VE 主多维表读取目标日素材与 2026-05-25 起的浩鹏有效反馈，按产品调用 `qwen/qwen3.7-max` 做二次 AI 筛选，输出 `data/haopeng_topn_experiments/{date}_label_prior.json`；该步骤不写回多维表、不影响主流程拦截，只生产推送输入。
 - `ua_workflows/video_enhancer/haopeng_topn_push.py`：未传 `--input-json` 时默认先生成当天二次 AI 筛选 JSON，再推送 TopN；保留 `--input-json` 与 `--use-latest-local` 兼容旧实验文件推送；新增 `--generate-only` 便于服务器只验证筛选产物。
 - `scripts/run_ve_haopeng_ai_filter.py`（新增）/ `scripts/run_ve_haopeng_topn_push.py`：前者只生成二次筛选 JSON，后者默认“生成 + 推送”。模型可用 `VE_HAOPENG_FILTER_MODEL` 覆盖，历史起点可用 `VE_HAOPENG_HISTORY_START_DATE` 覆盖。
-- `scripts/cron_ai_video_enhancer_daily.sh`：VE 主流程成功结束后追加执行浩鹏 TopN 二次筛选推送，默认只读取 `FEISHU_TEST_WEBHOOK` 推送测试群；未配置测试 webhook 时跳过追加卡片，避免误发正式群且不影响主流程多维表同步。
+- `scripts/cron_ai_video_enhancer_daily.sh`：VE 主流程成功结束后追加执行浩鹏 TopN 二次筛选推送；当前固化为 2026-06-01 高命中口径：只用目标日前历史浩鹏反馈判断采纳偏好，目标日反馈只用于事后回测，进入模型前排除 `admob` / `youtube`，飞书卡片展示非排除渠道 Top10（不因 `hold` 强制少推），并默认读取 `FEISHU_DAILY_PUSH_CHAT_ID` 走 IM 卡片。
+- `ua_workflows/video_enhancer/haopeng_topn_push.py`：TopN 卡片末尾追加“查看多维表格”按钮，链接到 `VIDEO_ENHANCER_BITABLE_URL`，便于当天查看浩鹏反馈；默认不展示回测字段，除非手动传 `--include-backtest`。
 - `.gitignore`：忽略 `data/haopeng_topn_experiments/`，避免每日二次筛选 JSON 进入版本管理。
 - `tests/test_haopeng_ai_filter.py` / `tests/test_haopeng_topn_push.py`：覆盖多维表字段归一、二次筛选报告格式、排序与推送入口默认生成行为。
 

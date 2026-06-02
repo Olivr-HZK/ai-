@@ -67,6 +67,8 @@ ua素材/
 .venv/bin/python scripts/run_arrow2_exposure.py --date 2026-05-05 --analyze
 ```
 
+浩鹏 TopN 默认会重新生成目标日二次 AI 筛选报告，并用目标日前历史反馈判断“浩鹏采纳偏好类型”；目标日当天反馈只用于事后回测，不传给模型。每日 cron 追加推送读取 `FEISHU_DAILY_PUSH_CHAT_ID` 走飞书 IM 卡片，卡片末尾会带 `VIDEO_ENHANCER_BITABLE_URL` 的多维表按钮。
+
 不需要分析时可去掉 `--analyze`。Arrow2 可用 `--skip-sync` 跳过飞书同步。
 
 ## 爬取冒烟测试

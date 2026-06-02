@@ -13,14 +13,16 @@ GITIGNORE = ROOT / ".gitignore"
 
 
 class CronVideoEnhancerDailyTest(unittest.TestCase):
-    def test_daily_cron_runs_main_workflow_then_haopeng_topn_to_test_group(self) -> None:
+    def test_daily_cron_runs_main_workflow_then_haopeng_topn_to_daily_im_chat(self) -> None:
         text = SCRIPT.read_text(encoding="utf-8")
 
         self.assertIn('"$ROOT/scripts/run_video_enhancer.py"', text)
         self.assertIn('"$ROOT/scripts/run_ve_haopeng_topn_push.py"', text)
         self.assertIn("--send-mode", text)
-        self.assertIn("webhook", text)
-        self.assertIn("FEISHU_TEST_WEBHOOK", text)
+        self.assertIn("im", text)
+        self.assertIn("--chat-id", text)
+        self.assertIn("FEISHU_DAILY_PUSH_CHAT_ID", text)
+        self.assertNotIn("FEISHU_TEST_WEBHOOK", text)
         self.assertNotIn('exec "$ROOT/.venv/bin/python" "$ROOT/scripts/run_video_enhancer.py"', text)
         self.assertLess(text.index("run_video_enhancer.py"), text.index("run_ve_haopeng_topn_push.py"))
 

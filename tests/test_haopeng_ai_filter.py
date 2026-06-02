@@ -23,6 +23,7 @@ class HaopengAiFilterTest(unittest.TestCase):
                     "核心卖点": "自拍生成复古棒球球员卡",
                     "玩法": "球员卡",
                     "浩鹏接受情况": "采纳",
+                    "平台": "tiktok",
                     "视频链接": "https://example.com/v.mp4",
                     "封面图链接": "https://example.com/c.png",
                     "Hook解析": "先展示普通自拍，再切球员卡成片",
@@ -36,6 +37,7 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual(row["core"], "自拍生成复古棒球球员卡")
         self.assertEqual(row["play_label"], "球员卡")
         self.assertEqual(row["actual_hp"], "采纳")
+        self.assertEqual(row["platform"], "tiktok")
         self.assertEqual(row["video_url"], "https://example.com/v.mp4")
 
     def test_build_report_scores_candidates_with_ai_and_sorts_topn_shape(self) -> None:
@@ -117,6 +119,108 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual(report["results"][0]["accept_score"], 88)
         self.assertEqual(report["results"][0]["matched_play_label"], "球员卡")
         self.assertEqual(report["summary"]["top10"]["candidate_count"], 2)
+
+    def test_build_report_excludes_admob_and_youtube_from_target_candidates(self) -> None:
+        from ua_workflows.video_enhancer.haopeng_ai_filter import build_report_from_rows
+
+        rows = [
+            {
+                "ad_key": "h1",
+                "product": "Glam AI",
+                "date": "2026-05-27",
+                "core": "自拍生成手绘拼贴",
+                "play_label": "手绘拼贴",
+                "actual_hp": "采纳",
+                "platform": "tiktok",
+            },
+            {
+                "ad_key": "c_admob",
+                "product": "Glam AI",
+                "date": "2026-05-28",
+                "core": "自拍生成广告样片",
+                "play_label": "广告样片",
+                "platform": "admob",
+            },
+            {
+                "ad_key": "c_youtube",
+                "product": "Glam AI",
+                "date": "2026-05-28",
+                "core": "自拍生成 YouTube 样片",
+                "play_label": "YouTube样片",
+                "platform": "YouTube",
+            },
+            {
+                "ad_key": "c_tiktok",
+                "product": "Glam AI",
+                "date": "2026-05-28",
+                "core": "自拍生成复古棒球球员卡",
+                "play_label": "球员卡",
+                "platform": "tiktok",
+                "actual_hp": "采纳",
+            },
+        ]
+
+        def fake_call_json(*, product, target_date, history, candidates, model):
+            self.assertEqual([row["ad_key"] for row in candidates], ["c_tiktok"])
+            self.assertNotIn("actual_hp", candidates[0])
+            self.assertNotIn("status", candidates[0])
+            return [
+                {
+                    "ad_key": "c_tiktok",
+                    "accept_score": 88,
+                    "confidence": "high",
+                    "recommend": "push",
+                    "matched_play_label": "球员卡",
+                    "play_name": "复古球员卡",
+                    "reason": "渠道已过滤，只保留可推送素材。",
+                },
+            ]
+
+        with patch("ua_workflows.video_enhancer.haopeng_ai_filter.call_ai_json", side_effect=fake_call_json):
+            report = build_report_from_rows(
+                rows,
+                target_date="2026-05-28",
+                model="qwen/qwen3.7-max",
+                history_start_date="2026-05-25",
+            )
+
+        self.assertEqual(report["target_candidate_count"], 1)
+        self.assertEqual([row["ad_key"] for row in report["results"]], ["c_tiktok"])
+        self.assertEqual(report["excluded_platform_counts"], {"admob": 1, "youtube": 1})
+
+    def test_ai_prompt_uses_haopeng_preference_history_as_positive_signal(self) -> None:
+        from ua_workflows.video_enhancer.haopeng_ai_filter import build_ai_prompt
+
+        prompt = build_ai_prompt(
+            product="Glam AI",
+            target_date="2026-06-01",
+            history=[
+                {
+                    "ad_key": "h1",
+                    "date": "2026-05-30",
+                    "status": "采纳",
+                    "core": "自拍生成复古棒球球员卡",
+                    "play_label": "球员卡",
+                    "hook": "普通自拍变成球员卡",
+                }
+            ],
+            candidates=[
+                {
+                    "ad_key": "c1",
+                    "core": "自拍生成复古棒球球员卡",
+                    "play_label": "球员卡",
+                    "hook": "普通自拍变成球员卡",
+                }
+            ],
+        )
+
+        self.assertIn("历史浩鹏反馈", prompt)
+        self.assertIn("优先推荐“浩鹏会采纳”的素材", prompt)
+        self.assertIn("其次是“入素材库”式有价值变体", prompt)
+        self.assertIn("历史没有同款具体玩法", prompt)
+        self.assertNotIn("历史采纳/入素材库只说明大方向有效", prompt)
+        self.assertNotIn("同一个大方向下，只有出现新场景", prompt)
+        self.assertNotIn("不需要凑满 Top10", prompt)
 
     def test_write_report_uses_label_prior_experiment_directory(self) -> None:
         from ua_workflows.video_enhancer.haopeng_ai_filter import write_report

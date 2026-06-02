@@ -13,7 +13,7 @@
 
 | 频率 | 触发时间 | Shell 入口 | 说明 |
 |------|----------|------------|------|
-| 每天 | **05:20** | `scripts/cron_ai_video_enhancer_daily.sh` | `run_video_enhancer.py` 全流程完成后，追加浩鹏 TopN 二次 AI 筛选并推送测试群 |
+| 每天 | **05:20** | `scripts/cron_ai_video_enhancer_daily.sh` | `run_video_enhancer.py` 全流程完成后，追加浩鹏 TopN 二次 AI 筛选并推送到配置的飞书 IM 会话 |
 | 每天 | **09:40** | `scripts/cron_ve_feedback_training_daily.sh` | 从 VE 审核多维表拉取反馈，独立落库、导出训练集并训练 baseline |
 | 每天 | **11:10** | `scripts/cron_ai_arrow2_latest_daily.sh` | `run_arrow2_latest.py --analyze` |
 | 周三、六 | **14:20** | `scripts/cron_ai_arrow2_exposure_wed_sat.sh` | `run_arrow2_exposure.py --analyze`，与当日两条叠加 |
@@ -38,7 +38,7 @@
 
 | 日志文件 | 任务 |
 |----------|------|
-| `logs/cron_video_enhancer.log` | VE 日更 + 浩鹏 TopN 二次筛选测试群推送 |
+| `logs/cron_video_enhancer.log` | VE 日更 + 浩鹏 TopN 二次筛选 IM 推送 |
 | `logs/cron_ve_feedback_training.log` | VE 反馈训练 |
 | `logs/cron_arrow2_latest.log` | Arrow2 昨日最新 |
 | `logs/cron_arrow2_exposure.log` | Arrow2 展示估值（周三六） |
@@ -55,7 +55,7 @@
 
 1. **睡眠**：合上笔记本或进入睡眠后，`cron` 可能跳过执行；长期无人值守建议接电并调整「防止自动睡眠」，或改用 `launchd` + 唤醒策略。
 2. **并发**：VE 与 Arrow2 均未与同一 cron 分钟内并行，避免多套 Playwright 同时抢广大大会话；同一天内先后顺序为 05:20 → 11:10。
-3. **凭证**：依赖项目根 `.env`（广大大、`VIDEO_ENHANCER_*`、飞书、OpenRouter 等）；cron 环境无交互，密钥必须事先配置完备。浩鹏 TopN 追加推送只读取 `FEISHU_TEST_WEBHOOK`，未配置时跳过该追加卡片，避免误发正式群。
+3. **凭证**：依赖项目根 `.env`（广大大、`VIDEO_ENHANCER_*`、飞书、OpenRouter 等）；cron 环境无交互，密钥必须事先配置完备。浩鹏 TopN 追加推送读取 `FEISHU_DAILY_PUSH_CHAT_ID` 并走飞书 IM 卡片，未配置时跳过该追加卡片；卡片末尾的“查看多维表格”按钮使用 `VIDEO_ENHANCER_BITABLE_URL`。
 4. **维护**：增减任务时编辑 `crontab -e`，保留或更新 `BEGIN/END` 块；或直接改对应 `scripts/cron_ai_*.sh` 内部命令（例如临时加 `--skip-sync`）。
 
 ## 手动试跑

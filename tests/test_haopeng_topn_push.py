@@ -122,12 +122,117 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
         self.assertIn("采纳+入素材库：8/10", md)
         self.assertIn("浩鹏实际：采纳", md)
 
+    def test_render_topn_markdown_skips_admob_and_youtube_rows(self) -> None:
+        report = {
+            "target_date": "2026-05-28",
+            "history_window": "2026-05-25..2026-05-27",
+            "model": "qwen/qwen3.7-max",
+            "name": "label_prior",
+            "results": [
+                {
+                    "ad_key": "a_admob",
+                    "product": "Glam AI",
+                    "core": "AdMob 渠道素材",
+                    "platform": "admob",
+                    "accept_score": 99,
+                    "video_url": "https://video.example/admob.mp4",
+                },
+                {
+                    "ad_key": "a_youtube",
+                    "product": "Glam AI",
+                    "core": "YouTube 渠道素材",
+                    "platform": "YouTube",
+                    "accept_score": 98,
+                    "video_url": "https://video.example/youtube.mp4",
+                },
+                {
+                    "ad_key": "a_tiktok",
+                    "product": "Glam AI",
+                    "core": "TikTok 渠道素材",
+                    "platform": "tiktok",
+                    "accept_score": 80,
+                    "video_url": "https://video.example/tiktok.mp4",
+                },
+                {
+                    "ad_key": "a_facebook",
+                    "product": "Glam AI",
+                    "core": "Facebook 渠道素材",
+                    "platform": "facebook",
+                    "accept_score": 70,
+                    "video_url": "https://video.example/facebook.mp4",
+                },
+            ],
+        }
+
+        md = render_topn_markdown(report, top_n=2)
+
+        self.assertNotIn("AdMob 渠道素材", md)
+        self.assertNotIn("YouTube 渠道素材", md)
+        self.assertIn("TikTok 渠道素材", md)
+        self.assertIn("Facebook 渠道素材", md)
+
+    def test_render_topn_markdown_uses_top_n_non_platform_rows_even_when_some_are_hold(self) -> None:
+        report = {
+            "target_date": "2026-06-01",
+            "history_window": "2026-05-25..2026-05-31",
+            "model": "qwen/qwen3.7-max",
+            "name": "label_prior",
+            "results": [
+                {
+                    "ad_key": "a_push_1",
+                    "product": "Glam AI",
+                    "core": "新场景素材",
+                    "platform": "facebook",
+                    "recommend": "push",
+                    "accept_score": 82,
+                },
+                {
+                    "ad_key": "a_hold_duplicate",
+                    "product": "Glam AI",
+                    "core": "历史同款重复素材",
+                    "platform": "tiktok",
+                    "recommend": "hold",
+                    "accept_score": 99,
+                    "reason": "与历史采纳素材高度同款。",
+                },
+                {
+                    "ad_key": "a_push_2",
+                    "product": "Glam AI",
+                    "core": "老玩法新表达素材",
+                    "platform": "tiktok",
+                    "recommend": "push",
+                    "accept_score": 75,
+                },
+            ],
+        }
+
+        md = render_topn_markdown(report, top_n=10)
+
+        self.assertIn("新场景素材", md)
+        self.assertIn("历史同款重复素材", md)
+        self.assertIn("老玩法新表达素材", md)
+        self.assertIn("\n3. ", md)
+
     def test_build_card_payload_wraps_markdown_for_webhook(self) -> None:
         payload = build_card_payload("VE Top10", "**hello**")
 
         self.assertEqual(payload["msg_type"], "interactive")
         self.assertEqual(payload["card"]["header"]["title"]["content"], "VE Top10")
         self.assertEqual(payload["card"]["elements"][0]["content"], "**hello**")
+
+    def test_build_card_payload_adds_bitable_button_when_url_is_provided(self) -> None:
+        bitable_url = "https://example.feishu.cn/base/app123?table=tbl456"
+
+        payload = build_card_payload("VE Top10", "**hello**", bitable_url=bitable_url)
+        card = build_im_card("VE Top10", "**hello**", bitable_url=bitable_url)
+
+        for elements in (payload["card"]["elements"], card["elements"]):
+            button = elements[-1]["actions"][0]
+            self.assertEqual(elements[-1]["tag"], "action")
+            self.assertEqual(button["tag"], "button")
+            self.assertEqual(button["text"]["content"], "查看多维表格")
+            self.assertEqual(button["type"], "primary")
+            self.assertEqual(button["multi_url"]["url"], bitable_url)
 
     def test_build_im_card_returns_card_without_webhook_wrapper(self) -> None:
         card = build_im_card("VE Top10", "**hello**")

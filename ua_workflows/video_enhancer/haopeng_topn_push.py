@@ -18,6 +18,7 @@ from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT, load_project_env
 
 DEFAULT_EXPERIMENT_DIR = DATA_DIR / "haopeng_topn_experiments"
 VIDEO_GEN_ENV = PROJECT_ROOT.parent / "视频生成探索" / "video-gen-system" / ".env"
+EXCLUDED_TOPN_PLATFORMS = {"admob", "youtube"}
 
 
 def clamp(value: Any, limit: int) -> str:
@@ -71,8 +72,20 @@ def material_url(row: dict[str, Any]) -> str:
     ).strip()
 
 
+def is_excluded_topn_platform(row: dict[str, Any]) -> bool:
+    return str(row.get("platform") or "").strip().lower() in EXCLUDED_TOPN_PLATFORMS
+
+
+def pushable_result_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in report.get("results") or []
+        if isinstance(row, dict) and not is_excluded_topn_platform(row)
+    ]
+
+
 def missing_media_links(report: dict[str, Any], top_n: int | None = None) -> bool:
-    rows = [r for r in report.get("results") or [] if isinstance(r, dict)]
+    rows = pushable_result_rows(report)
     if top_n is not None:
         rows = rows[:top_n]
     return any(not material_url(row) for row in rows)
@@ -98,6 +111,7 @@ def merge_report_rows_from_source(report: dict[str, Any], source_rows: list[dict
             "cover_url",
             "preview_img_url",
             "video_duration",
+            "platform",
             "title",
         ):
             if not row.get(key) and source.get(key) not in (None, ""):
@@ -125,13 +139,19 @@ def play_name(row: dict[str, Any]) -> str:
     return "待确认"
 
 
-def actual_summary(report: dict[str, Any], top_n: int) -> str:
+def actual_summary(
+    report: dict[str, Any],
+    top_n: int,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+    force_recalculate: bool = False,
+) -> str:
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     top_summary = summary.get(f"top{top_n}") if isinstance(summary.get(f"top{top_n}"), dict) else {}
-    if not top_summary:
-        rows = [r for r in report.get("results") or [] if isinstance(r, dict)][:top_n]
-        accepted = sum(1 for r in rows if str(r.get("actual_hp") or "").strip() == "采纳")
-        library = sum(1 for r in rows if str(r.get("actual_hp") or "").strip() == "入素材库")
+    if force_recalculate or not top_summary:
+        summary_rows = (rows if rows is not None else pushable_result_rows(report))[:top_n]
+        accepted = sum(1 for r in summary_rows if str(r.get("actual_hp") or "").strip() == "采纳")
+        library = sum(1 for r in summary_rows if str(r.get("actual_hp") or "").strip() == "入素材库")
         return f"采纳 {accepted}/{top_n}；采纳+入素材库：{accepted + library}/{top_n}"
 
     accepted = top_summary.get("accepted")
@@ -196,7 +216,8 @@ def render_topn_markdown(
     history_window = str(report.get("history_window") or "").strip()
     model = str(report.get("model") or "").strip()
     strategy = str(report.get("name") or report.get("payload_kind") or "label_prior").strip()
-    rows = [r for r in report.get("results") or [] if isinstance(r, dict)][:top_n]
+    all_rows = [r for r in report.get("results") or [] if isinstance(r, dict)]
+    rows = [r for r in all_rows if not is_excluded_topn_platform(r)][:top_n]
     include_actual = include_backtest and any(str(r.get("actual_hp") or "").strip() for r in rows)
 
     lines = [
@@ -208,7 +229,16 @@ def render_topn_markdown(
     if model:
         lines.append(f"- 模型：{model}")
     lines.append(f"- 策略：{strategy}（玩法标签历史先验 + 相似正负样本）")
-    summary_text = actual_summary(report, top_n) if include_backtest else ""
+    summary_text = (
+        actual_summary(
+            report,
+            top_n,
+            rows=rows,
+            force_recalculate=any(is_excluded_topn_platform(r) for r in all_rows),
+        )
+        if include_backtest
+        else ""
+    )
     if include_backtest and summary_text:
         lines.append(f"- 回测命中：{summary_text}")
     lines.append("")
@@ -221,19 +251,44 @@ def render_topn_markdown(
     return "\n".join(lines).strip()
 
 
-def build_card_payload(title: str, md_text: str) -> dict[str, Any]:
+def card_elements(md_text: str, *, bitable_url: str = "") -> list[dict[str, Any]]:
+    elements: list[dict[str, Any]] = [{"tag": "markdown", "content": md_text[:12000]}]
+    url = str(bitable_url or "").strip()
+    if url:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看多维表格"},
+                        "type": "primary",
+                        "multi_url": {
+                            "url": url,
+                            "pc_url": url,
+                            "ios_url": url,
+                            "android_url": url,
+                        },
+                    }
+                ],
+            }
+        )
+    return elements
+
+
+def build_card_payload(title: str, md_text: str, *, bitable_url: str = "") -> dict[str, Any]:
     return {
         "msg_type": "interactive",
         "card": {
             "config": {"wide_screen_mode": True, "enable_forward": True},
             "header": {"title": {"tag": "plain_text", "content": title}, "template": "blue"},
-            "elements": [{"tag": "markdown", "content": md_text[:12000]}],
+            "elements": card_elements(md_text, bitable_url=bitable_url),
         },
     }
 
 
-def build_im_card(title: str, md_text: str) -> dict[str, Any]:
-    return build_card_payload(title, md_text)["card"]
+def build_im_card(title: str, md_text: str, *, bitable_url: str = "") -> dict[str, Any]:
+    return build_card_payload(title, md_text, bitable_url=bitable_url)["card"]
 
 
 def resolve_webhook(explicit_webhook: str = "") -> str:
@@ -243,8 +298,8 @@ def resolve_webhook(explicit_webhook: str = "") -> str:
     return (os.getenv("FEISHU_UA_WEBHOOK", "") or os.getenv("FEISHU_BOT_WEBHOOK", "")).strip()
 
 
-def post_card(webhook: str, title: str, md_text: str) -> requests.Response:
-    payload = build_card_payload(title, md_text)
+def post_card(webhook: str, title: str, md_text: str, *, bitable_url: str = "") -> requests.Response:
+    payload = build_card_payload(title, md_text, bitable_url=bitable_url)
     response = requests.post(webhook, json=payload, timeout=15)
     print(f"[haopeng-topn-card] 推送结果: {response.status_code} {response.text[:200]}")
     response.raise_for_status()
@@ -272,6 +327,7 @@ def send_im_card(
     title: str,
     md_text: str,
     receive_id_type: str = "chat_id",
+    bitable_url: str = "",
 ) -> dict[str, Any]:
     from ua_workflows.video_enhancer.sync import get_tenant_access_token
 
@@ -287,7 +343,7 @@ def send_im_card(
         json={
             "receive_id": receive_id,
             "msg_type": "interactive",
-            "content": json.dumps(build_im_card(title, md_text), ensure_ascii=False),
+            "content": json.dumps(build_im_card(title, md_text, bitable_url=bitable_url), ensure_ascii=False),
         },
         timeout=20,
     )
@@ -327,14 +383,14 @@ def enrich_results_with_media(report: dict[str, Any]) -> None:
             db_row = None
             if target_date:
                 cur.execute(
-                    "SELECT product, video_url, preview_img_url, video_duration "
+                    "SELECT product, platform, video_url, preview_img_url, video_duration "
                     "FROM daily_creative_insights WHERE ad_key LIKE ? AND target_date = ? LIMIT 1",
                     (prefix, target_date),
                 )
                 db_row = cur.fetchone()
             if not db_row:
                 cur.execute(
-                    "SELECT product, video_url, preview_img_url, video_duration "
+                    "SELECT product, platform, video_url, preview_img_url, video_duration "
                     "FROM creative_library WHERE ad_key LIKE ? LIMIT 1",
                     (prefix,),
                 )
@@ -342,7 +398,7 @@ def enrich_results_with_media(report: dict[str, Any]) -> None:
             if not db_row:
                 continue
             values = dict(db_row)
-            for key in ("product", "video_url", "preview_img_url", "video_duration"):
+            for key in ("product", "platform", "video_url", "preview_img_url", "video_duration"):
                 if values.get(key) not in (None, "") and not row.get(key):
                     row[key] = values[key]
             if row.get("preview_img_url") and not row.get("cover_url"):
@@ -378,6 +434,7 @@ def enrich_results_from_bitable(report: dict[str, Any], bitable_url: str, review
                 "product": cell_to_text(fields.get("产品")),
                 "core": cell_to_text(fields.get("核心卖点")),
                 "play_label": cell_to_text(fields.get("玩法")) or cell_to_text(fields.get("玩法资产")),
+                "platform": cell_to_text(fields.get("平台")),
                 "video_url": cell_to_text(fields.get("视频链接")),
                 "cover_url": cell_to_text(fields.get("封面图链接")),
                 "title": cell_to_text(fields.get("标题")),
@@ -472,7 +529,7 @@ def main() -> None:
         webhook = resolve_webhook(args.feishu_webhook)
         if not webhook:
             raise SystemExit("[haopeng-topn-card] 未配置 FEISHU_UA_WEBHOOK/FEISHU_BOT_WEBHOOK，无法推送。")
-        post_card(webhook, title, md_text)
+        post_card(webhook, title, md_text, bitable_url=bitable_url)
         return
 
     chat_id = (args.chat_id or default_chat_id()).strip()
@@ -483,6 +540,7 @@ def main() -> None:
         receive_id_type=args.receive_id_type,
         title=title,
         md_text=md_text,
+        bitable_url=bitable_url,
     )
 
 

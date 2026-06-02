@@ -24,6 +24,7 @@ POSITIVE_STATUSES = {"采纳", "接受", "入素材库"}
 NEGATIVE_STATUSES = {"不采纳", "删除", "拒绝", "重复抓取"}
 DECISIVE_STATUSES = POSITIVE_STATUSES | NEGATIVE_STATUSES
 GENERIC_PLAY_LABELS = {"", "未命中", "unmatched_play", "新玩法候选"}
+EXCLUDED_TOPN_PLATFORMS = {"admob", "youtube"}
 
 
 def today_shanghai() -> str:
@@ -72,6 +73,14 @@ def _normalize_date_value(value: Any) -> str:
     return text
 
 
+def _normalize_platform(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def is_excluded_topn_platform(value: Any) -> bool:
+    return _normalize_platform(value) in EXCLUDED_TOPN_PLATFORMS
+
+
 def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "浩鹏接受情况") -> dict[str, Any]:
     fields = record.get("fields") or {}
     if not isinstance(fields, dict):
@@ -84,6 +93,7 @@ def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "�
         "record_id": str(record.get("record_id") or record.get("id") or ""),
         "ad_key": ad_key,
         "product": _first_text(fields, ("产品", "product", "广告主")),
+        "platform": _first_text(fields, ("平台", "platform")),
         "date": _normalize_date_value(date_value),
         "core": _first_text(fields, ("核心卖点", "玩法指纹", "AI分析结果", "标题")),
         "play_label": _first_text(fields, ("玩法", "玩法资产", "玩法指纹")),
@@ -114,6 +124,7 @@ def _history_payload(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "ad_key": row.get("ad_key", ""),
             "date": row.get("date", ""),
             "status": row.get("actual_hp", ""),
+            "platform": row.get("platform", ""),
             "core": clamp(row.get("core"), 140),
             "play_label": row.get("play_label", ""),
             "hook": clamp(row.get("hook"), 100),
@@ -126,6 +137,7 @@ def _candidate_payload(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "ad_key": row.get("ad_key", ""),
+            "platform": row.get("platform", ""),
             "core": clamp(row.get("core"), 180),
             "play_label": row.get("play_label", ""),
             "cover_url": row.get("cover_url", ""),
@@ -286,12 +298,22 @@ def build_report_from_rows(
         and str(row.get("actual_hp") or "") in DECISIVE_STATUSES
         and str(row.get("core") or "").strip()
     ]
-    candidates = [
+    target_rows = [
         row
         for row in rows
         if str(row.get("date") or "") == target_date
         and str(row.get("core") or "").strip()
         and str(row.get("ad_key") or "").strip()
+    ]
+    excluded_platform_counts = Counter(
+        _normalize_platform(row.get("platform"))
+        for row in target_rows
+        if is_excluded_topn_platform(row.get("platform"))
+    )
+    candidates = [
+        row
+        for row in target_rows
+        if not is_excluded_topn_platform(row.get("platform"))
     ]
 
     grouped: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: {"history": [], "candidates": []})
@@ -353,7 +375,10 @@ def build_report_from_rows(
         "reviewer_field": reviewer_field,
         "model": model,
         "history_effective_count": len(history),
+        "target_candidate_count_before_platform_filter": len(target_rows),
         "target_candidate_count": len(candidates),
+        "excluded_platforms": sorted(EXCLUDED_TOPN_PLATFORMS),
+        "excluded_platform_counts": dict(sorted(excluded_platform_counts.items())),
         "history_status_counts": dict(status_counts),
         "summary": {
             "top10": summarize_topn(results, top_n=10),
