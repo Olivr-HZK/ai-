@@ -5,6 +5,7 @@ logs/
 ua_downloads/
 data/*.json
 data/*.db
+data/haopeng_topn_experiments/
 data/remote_snapshots/
 data/ve_feedback_training_dataset_*.jsonl
 data/models/ve_feedback_preference_nb_*.json
