@@ -39,6 +39,8 @@ ua素材/
 │   └── shared/
 ├── scripts/
 │   ├── run_video_enhancer.py
+│   ├── run_ve_haopeng_ai_filter.py
+│   ├── run_ve_haopeng_topn_push.py
 │   ├── run_arrow2_latest.py
 │   ├── run_arrow2_exposure.py
 │   ├── cron_ai_video_enhancer_daily.sh
@@ -60,6 +62,7 @@ ua素材/
 
 ```bash
 .venv/bin/python scripts/run_video_enhancer.py --date 2026-05-05
+.venv/bin/python scripts/run_ve_haopeng_topn_push.py --date 2026-05-05 --top-n 10
 .venv/bin/python scripts/run_arrow2_latest.py --date 2026-05-05 --analyze
 .venv/bin/python scripts/run_arrow2_exposure.py --date 2026-05-05 --analyze
 ```

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import datetime as dt
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,11 @@ def find_default_report_path() -> Path:
     if not candidates:
         raise FileNotFoundError(f"未找到 TopN 实验文件: {DEFAULT_EXPERIMENT_DIR}/*_label_prior.json")
     return candidates[-1]
+
+
+def yesterday_shanghai() -> str:
+    today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date()
+    return (today - dt.timedelta(days=1)).isoformat()
 
 
 def load_report(path: Path) -> dict[str, Any]:
@@ -383,7 +389,24 @@ def enrich_results_from_bitable(report: dict[str, Any], bitable_url: str, review
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="推送 VE 浩鹏采纳预测 TopN 飞书卡片")
-    parser.add_argument("--input-json", default="", help="TopN 实验 JSON，默认取最新 *_label_prior.json")
+    parser.add_argument("--input-json", default="", help="TopN JSON；传入时直接推该文件，不重新生成")
+    parser.add_argument("--date", default=yesterday_shanghai(), help="目标日期 YYYY-MM-DD，默认昨天")
+    parser.add_argument("--model", default=(os.getenv("VE_HAOPENG_FILTER_MODEL") or "qwen/qwen3.7-max").strip())
+    parser.add_argument(
+        "--history-start-date",
+        default=(os.getenv("VE_HAOPENG_HISTORY_START_DATE") or "2026-05-25").strip(),
+        help="浩鹏反馈历史起点，默认 2026-05-25",
+    )
+    parser.add_argument(
+        "--generate-only",
+        action="store_true",
+        help="只生成二次 AI 筛选 JSON，不推送",
+    )
+    parser.add_argument(
+        "--use-latest-local",
+        action="store_true",
+        help="兼容旧行为：未传 --input-json 时读取最新本地 *_label_prior.json，不重新生成",
+    )
     parser.add_argument("--top-n", type=int, default=10, help="推送条数，默认 10")
     parser.add_argument("--send-mode", choices=["im", "webhook"], default="im", help="发送方式，默认 im")
     parser.add_argument("--chat-id", default="", help="飞书 IM chat_id，默认 FEISHU_DAILY_PUSH_CHAT_ID")
@@ -399,12 +422,38 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def load_or_generate_report(args: argparse.Namespace) -> tuple[dict[str, Any], Path]:
+    if args.input_json:
+        input_path = Path(args.input_json)
+        return load_report(input_path), input_path
+    if args.use_latest_local:
+        input_path = find_default_report_path()
+        return load_report(input_path), input_path
+
+    bitable_url = (args.bitable_url or os.getenv("VIDEO_ENHANCER_BITABLE_URL") or "").strip()
+    if not bitable_url:
+        raise SystemExit("[haopeng-topn-card] 未配置 VIDEO_ENHANCER_BITABLE_URL，无法生成二次 AI 筛选结果。")
+    from ua_workflows.video_enhancer.haopeng_ai_filter import generate_report_from_bitable
+
+    report, path = generate_report_from_bitable(
+        bitable_url=bitable_url,
+        target_date=args.date,
+        model=args.model,
+        history_start_date=args.history_start_date,
+        reviewer_field=args.reviewer_field,
+    )
+    print(f"[haopeng-topn-card] 二次 AI 筛选结果已生成: {path}")
+    return report, path
+
+
 def main() -> None:
     load_project_env()
     load_dotenv(VIDEO_GEN_ENV)
     args = parse_args()
-    input_path = Path(args.input_json) if args.input_json else find_default_report_path()
-    report = load_report(input_path)
+    report, input_path = load_or_generate_report(args)
+    if args.generate_only:
+        print(f"[haopeng-topn-card] generate-only: {input_path}")
+        return
     if not args.no_db_enrich:
         enrich_results_with_media(report)
     bitable_url = (args.bitable_url or os.getenv("VIDEO_ENHANCER_BITABLE_URL") or "").strip()
