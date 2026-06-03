@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import os
+from pathlib import Path
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -22,11 +23,21 @@ load_dotenv()
 
 from ua_workflows.shared.guangdada.login import login
 from ua_workflows.shared.guangdada.proxy import prepare_playwright_proxy_for_crawl
+from ua_workflows.shared.guangdada.interrupt_alerts import (
+    DEFAULT_GUIDE_IMAGE_PATH,
+    build_security_verification_card_payload,
+    send_security_verification_im_card,
+    start_feishu_confirmation_waiter,
+)
 
-from ua_workflows.shared.config import CONFIG_DIR, DATA_DIR
+from ua_workflows.shared.config import CONFIG_DIR, DATA_DIR, project_env_values
 
 OP_FILE = CONFIG_DIR / "operation.json"
 OUT_DIR = DATA_DIR
+
+
+class GuangdadaHumanVerificationConfirmed(RuntimeError):
+    """Raised after a Feishu card callback confirms the user handled a human check."""
 
 
 def _html_to_selectors(html: str) -> list[str]:
@@ -894,6 +905,259 @@ async def _await_post_login_shell(page) -> None:
     except Exception:
         pass
     await page.wait_for_timeout(1500)
+    await _dismiss_login_security_modal_if_needed(page)
+
+
+async def _login_security_modal_visible(page) -> bool:
+    selectors = [
+        ".ant-modal-wrap:visible .ant-modal-title:has-text('安全验证')",
+        ".ant-modal-content:has-text('请按住滑块')",
+        ".captcha-modal-content:has-text('您的操作过于频繁')",
+        "#modal-captcha-container",
+        "#aliyunCaptcha-sliding-slider",
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            if await loc.count() > 0 and await loc.first.is_visible(timeout=800):
+                return True
+        except Exception:
+            continue
+    try:
+        body = await page.locator("body").inner_text(timeout=1200)
+    except Exception:
+        return False
+    return "安全验证" in body and ("请按住滑块" in body or "操作过于频繁" in body)
+
+
+def _guangdada_interrupt_chat_id() -> str:
+    values = project_env_values()
+    return str(
+        os.getenv("GUANGDADA_INTERRUPT_FEISHU_CHAT_ID")
+        or os.getenv("FEISHU_GUANGDADA_INTERRUPT_CHAT_ID")
+        or os.getenv("FEISHU_DAILY_PUSH_CHAT_ID")
+        or values.get("GUANGDADA_INTERRUPT_FEISHU_CHAT_ID")
+        or values.get("FEISHU_GUANGDADA_INTERRUPT_CHAT_ID")
+        or values.get("FEISHU_DAILY_PUSH_CHAT_ID")
+        or ""
+    ).strip()
+
+
+def _guangdada_interrupt_receive_id_type() -> str:
+    return (os.getenv("GUANGDADA_INTERRUPT_FEISHU_RECEIVE_ID_TYPE") or "chat_id").strip() or "chat_id"
+
+
+def _guangdada_interrupt_alert_enabled() -> bool:
+    val = (os.getenv("GUANGDADA_INTERRUPT_FEISHU_ENABLED", "1") or "1").strip().lower()
+    return val not in {"0", "false", "no", "off"}
+
+
+def _guangdada_human_check_restart_limit() -> int:
+    try:
+        return max(0, int(os.getenv("GUANGDADA_HUMAN_CHECK_RESTART_LIMIT", "1")))
+    except Exception:
+        return 1
+
+
+def _get_feishu_tenant_access_token_for_alert() -> str:
+    app_id = os.getenv("FEISHU_APP_ID", "").strip()
+    app_secret = os.getenv("FEISHU_APP_SECRET", "").strip()
+    if not app_id or not app_secret:
+        return ""
+    import requests
+
+    resp = requests.post(
+        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+        json={"app_id": app_id, "app_secret": app_secret},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"get tenant_access_token failed: {data}")
+    return str(data.get("tenant_access_token") or "")
+
+
+def _upload_feishu_message_image_for_alert(screenshot_path: Path) -> str:
+    token = _get_feishu_tenant_access_token_for_alert()
+    if not token or not screenshot_path.exists():
+        return ""
+    import requests
+
+    with screenshot_path.open("rb") as fh:
+        resp = requests.post(
+            "https://open.feishu.cn/open-apis/im/v1/images",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"image_type": "message"},
+            files={"image": (screenshot_path.name, fh, "image/png")},
+            timeout=20,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"upload feishu image failed: {data}")
+    return str((data.get("data") or {}).get("image_key") or "")
+
+
+def _send_guangdada_security_verification_alert(
+    page_url: str,
+    guide_image_path: Path,
+    confirm_url: str,
+    *,
+    workflow: str = "",
+    step: str = "",
+    product: str = "",
+    target_date: str = "",
+) -> bool:
+    if not _guangdada_interrupt_alert_enabled():
+        print("[guangdada] GUANGDADA_INTERRUPT_FEISHU_ENABLED=0，跳过安全验证飞书告警。", flush=True)
+        return False
+    chat_id = _guangdada_interrupt_chat_id()
+    if not chat_id:
+        print("[guangdada] 未配置广大大中断飞书 chat_id，跳过安全验证 IM 告警。", flush=True)
+        return False
+
+    image_key = ""
+    try:
+        image_key = _upload_feishu_message_image_for_alert(guide_image_path)
+    except Exception as exc:
+        print(f"[guangdada] 安全验证帮助图上传飞书失败，改发本地路径: {exc}", flush=True)
+
+    login_account = str(os.getenv("GUANGDADA_EMAIL") or os.getenv("GUANGDADA_USERNAME") or "").strip()
+    password_configured = bool(str(os.getenv("GUANGDADA_PASSWORD") or "").strip())
+
+    payload = build_security_verification_card_payload(
+        page_url=page_url,
+        guide_image_path=guide_image_path,
+        confirm_url=confirm_url,
+        image_key=image_key,
+        workflow=workflow,
+        step=step,
+        product=product,
+        target_date=target_date,
+        notify_all=True,
+        login_account=login_account,
+        password_configured=password_configured,
+    )
+    data = send_security_verification_im_card(
+        receive_id=chat_id,
+        receive_id_type=_guangdada_interrupt_receive_id_type(),
+        token=_get_feishu_tenant_access_token_for_alert(),
+        card_payload=payload,
+    )
+    message_id = str((data.get("data") or {}).get("message_id") or "")
+    print(f"[guangdada] 安全验证飞书 IM 告警已发送: message_id={message_id}", flush=True)
+    return True
+
+
+async def _dismiss_login_security_modal_if_needed(page) -> None:
+    """
+    登录后常见的风控安全弹窗（滑块验证）会覆盖主界面，导致后续点击拦截。
+    默认进入人工闸口：发送飞书卡片，等待用户点击「已完成」后重启抓取入口。
+
+    环境变量：
+    - GUANGDADA_CAPTCHA_MANUAL_GATE=0 可临时恢复旧的取消/关闭行为。
+    - GUANGDADA_FEISHU_CONFIRM_TIMEOUT_SEC 控制等待飞书确认的秒数，默认 900。
+    - GUANGDADA_FEISHU_CALLBACK_PORT 控制本地确认回调端口，默认 0（随机可用端口）。
+    """
+    if not await _login_security_modal_visible(page):
+        return
+
+    manual_gate = (os.getenv("GUANGDADA_CAPTCHA_MANUAL_GATE", "1") or "1").strip().lower()
+    if manual_gate not in {"0", "false", "no", "off"}:
+        timeout_sec = 900
+        try:
+            timeout_sec = max(
+                30,
+                int(
+                    os.getenv("GUANGDADA_FEISHU_CONFIRM_TIMEOUT_SEC")
+                    or os.getenv("GUANGDADA_CAPTCHA_MANUAL_TIMEOUT_SEC")
+                    or "900"
+                ),
+            )
+        except Exception:
+            pass
+        callback_port = 0
+        try:
+            callback_port = max(0, int(os.getenv("GUANGDADA_FEISHU_CALLBACK_PORT") or "0"))
+        except Exception as exc:
+            print(f"[guangdada] GUANGDADA_FEISHU_CALLBACK_PORT 无效，改用随机端口: {exc}", flush=True)
+
+        waiter = await start_feishu_confirmation_waiter(port=callback_port)
+        try:
+            print(
+                "[guangdada] 检测到安全验证，已启动飞书确认回调: "
+                f"{waiter.confirm_url}",
+                flush=True,
+            )
+            sent = False
+            try:
+                sent = _send_guangdada_security_verification_alert(
+                    page.url,
+                    DEFAULT_GUIDE_IMAGE_PATH,
+                    waiter.confirm_url,
+                    workflow=os.getenv("GUANGDADA_WORKFLOW_NAME", "广大大抓取"),
+                    step=os.getenv("GUANGDADA_WORKFLOW_STEP", "登录后安全验证"),
+                    product=os.getenv("GUANGDADA_WORKFLOW_PRODUCT", ""),
+                    target_date=os.getenv("TARGET_DATE", ""),
+                )
+            except Exception as exc:
+                strict = (os.getenv("GUANGDADA_INTERRUPT_FEISHU_STRICT", "0") or "0").strip().lower()
+                if strict in {"1", "true", "yes", "on"}:
+                    raise
+                print(f"[guangdada] 安全验证飞书告警发送失败: {exc}", flush=True)
+
+            if not sent:
+                raise RuntimeError("检测到广大大安全验证，但飞书卡片未发送，无法等待确认回调")
+
+            print(
+                "[guangdada] 请按飞书卡片帮助图完成人工验证，"
+                f"再点击「已完成」；脚本最多等待 {timeout_sec}s。",
+                flush=True,
+            )
+            result = await waiter.wait(timeout_sec=timeout_sec)
+            if result.confirmed:
+                raise GuangdadaHumanVerificationConfirmed("飞书已确认安全验证完成，准备重启抓取入口")
+            raise RuntimeError(f"广大大安全验证未在 {timeout_sec}s 内收到飞书确认，已暂停抓取")
+        finally:
+            await waiter.close()
+
+    print("[guangdada] 检测到安全验证，按 GUANGDADA_CAPTCHA_MANUAL_GATE=0 使用旧关闭逻辑。", flush=True)
+    cancel_selectors = [
+        ".ant-modal-wrap:visible .ant-modal-footer .ant-btn:has-text('取消')",
+        ".ant-modal-wrap:visible .ant-btn:has-text('取消')",
+        ".ant-modal-wrap:visible [role='dialog'] .ant-btn:has-text('取消')",
+    ]
+    for sel in cancel_selectors:
+        try:
+            loc = page.locator(sel)
+            n = await loc.count()
+            if not n:
+                continue
+            btn = loc.first
+            if await btn.is_visible():
+                await btn.click(timeout=2000)
+                await page.wait_for_timeout(300)
+                return
+        except Exception:
+            continue
+    try:
+        close_btn = page.locator(".ant-modal-wrap:visible .ant-modal-close, .ant-modal-wrap:visible .ant-modal-close-x")
+        if await close_btn.count() > 0:
+            cb = close_btn.first
+            if await cb.is_visible():
+                await cb.click(timeout=2000)
+                await page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
+async def _login_or_handle_human_check(page, email: str, password: str) -> bool:
+    """Login, but still route visible human checks to the Feishu confirmation gate before failing."""
+    if await login(page, email, password):
+        return True
+    await _dismiss_login_security_modal_if_needed(page)
+    return False
 
 
 def print_arrow2_matched_creatives(keyword: str, filtered: list, max_items: int = 30) -> None:
@@ -3334,6 +3598,7 @@ async def run_batch(
     keyword_labels: dict[str, str] | None = None,
     max_scroll_rounds: int | None = None,
     stop_scroll_if_oldest_first_seen_before_ymd: str | None = None,
+    _human_check_restart_count: int = 0,
 ) -> list:
     """
     登录一次、界面设置一次（工具/7天/素材/排序方式），然后对每个关键词只做「填关键字 → 搜索 → 取结果」。
@@ -3407,12 +3672,71 @@ async def run_batch(
 
         try:
             print("[1/4] 正在登录...")
-            if not await login(page, email, password):
+            try:
+                login_ok = await _login_or_handle_human_check(page, email, password)
+            except GuangdadaHumanVerificationConfirmed:
+                limit = _guangdada_human_check_restart_limit()
+                if _human_check_restart_count >= limit:
+                    raise RuntimeError(
+                        f"广大大安全验证已确认，但已达到重启次数上限 {limit}，请手动重跑"
+                    )
+                print(
+                    "[guangdada] 已收到飞书「已完成」确认，关闭当前浏览器并重新启动抓取入口…",
+                    flush=True,
+                )
+                await browser.close()
+                return await run_batch(
+                    keywords=keywords,
+                    debug=debug,
+                    is_tool=is_tool,
+                    order_by=order_by,
+                    use_popularity_top1=use_popularity_top1,
+                    enable_dom_track=enable_dom_track,
+                    detail_click_primary=detail_click_primary,
+                    first_seen_target_ymd=first_seen_target_ymd,
+                    date_range=date_range,
+                    pause_per_keyword=pause_per_keyword,
+                    keep_browser_open=keep_browser_open,
+                    keyword_labels=keyword_labels,
+                    max_scroll_rounds=max_scroll_rounds,
+                    stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_if_oldest_first_seen_before_ymd,
+                    _human_check_restart_count=_human_check_restart_count + 1,
+                )
+            if not login_ok:
                 print("[失败] 登录失败", file=sys.stderr)
                 sys.exit(2)
             print("[1/4] 登录成功 ✓")
             print("[1/4] 主站稳定中（SPA 可能不触发 networkidle，数秒内继续）…", flush=True)
-            await _await_post_login_shell(page)
+            try:
+                await _await_post_login_shell(page)
+            except GuangdadaHumanVerificationConfirmed:
+                limit = _guangdada_human_check_restart_limit()
+                if _human_check_restart_count >= limit:
+                    raise RuntimeError(
+                        f"广大大安全验证已确认，但已达到重启次数上限 {limit}，请手动重跑"
+                    )
+                print(
+                    "[guangdada] 已收到飞书「已完成」确认，关闭当前浏览器并重新启动抓取入口…",
+                    flush=True,
+                )
+                await browser.close()
+                return await run_batch(
+                    keywords=keywords,
+                    debug=debug,
+                    is_tool=is_tool,
+                    order_by=order_by,
+                    use_popularity_top1=use_popularity_top1,
+                    enable_dom_track=enable_dom_track,
+                    detail_click_primary=detail_click_primary,
+                    first_seen_target_ymd=first_seen_target_ymd,
+                    date_range=date_range,
+                    pause_per_keyword=pause_per_keyword,
+                    keep_browser_open=keep_browser_open,
+                    keyword_labels=keyword_labels,
+                    max_scroll_rounds=max_scroll_rounds,
+                    stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_if_oldest_first_seen_before_ymd,
+                    _human_check_restart_count=_human_check_restart_count + 1,
+                )
 
             date_desc = "指定日期" if date_range else "7天"
             print(f"[2/4] 一次性设置筛选（{date_desc} / 素材 / 排序方式 / 可选人气值Top1%）...")
@@ -3762,6 +4086,7 @@ async def run_arrow2_batch(  # noqa: PLR0912,PLR0915
     终端输出：默认 **安静**（少打搜索/排序日志）；latest+点卡时会打印一行 DOM 点卡摘要，随后打印 `print_arrow2_matched_creatives`。
     设环境变量 **`ARROW2_VERBOSE=1`** 可恢复详细日志（与旧行为接近）。
     """
+    restart_count = int(kwargs.get("_human_check_restart_count") or 0)
     _ = (
         is_game,
         keyword_appid,
@@ -3843,14 +4168,79 @@ async def run_arrow2_batch(  # noqa: PLR0912,PLR0915
 
         try:
             _p("[arrow2 1/4] 正在登录…", log_quiet=log_quiet)
-            if not await login(page, _email, _password):
+            try:
+                login_ok = await _login_or_handle_human_check(page, _email, _password)
+            except GuangdadaHumanVerificationConfirmed:
+                limit = _guangdada_human_check_restart_limit()
+                if restart_count >= limit:
+                    raise RuntimeError(
+                        f"广大大安全验证已确认，但已达到重启次数上限 {limit}，请手动重跑"
+                    )
+                print(
+                    "[guangdada] 已收到飞书「已完成」确认，关闭当前浏览器并重新启动 Arrow2 抓取入口…",
+                    flush=True,
+                )
+                await browser.close()
+                return await run_arrow2_batch(
+                    keywords=keywords,
+                    debug=debug,
+                    is_tool=is_tool,
+                    is_game=is_game,
+                    day_spans=day_spans,
+                    order_modes=order_modes,
+                    popularity_option_text=popularity_option_text,
+                    ad_channel_labels=ad_channel_labels,
+                    country_codes=country_codes,
+                    pull_specs=pull_specs,
+                    pull_spec_defaults=pull_spec_defaults,
+                    search_tab=search_tab,
+                    keyword_appid=keyword_appid,
+                    debug_step_per_product=debug_step_per_product,
+                    keyword_product=keyword_product,
+                    target_date_first_seen=target_date_first_seen,
+                    debug_pause_per_product=debug_pause_per_product,
+                    _human_check_restart_count=restart_count + 1,
+                )
+            if not login_ok:
                 print("[失败] 登录失败", file=sys.stderr)
                 sys.exit(2)
             print(
                 "[arrow2] 主站稳定中，即将切 Tab/设国家与筛选项（若久无新行，多为网络idle在等，已缩短等待）…",
                 flush=True,
             )
-            await _await_post_login_shell(page)
+            try:
+                await _await_post_login_shell(page)
+            except GuangdadaHumanVerificationConfirmed:
+                limit = _guangdada_human_check_restart_limit()
+                if restart_count >= limit:
+                    raise RuntimeError(
+                        f"广大大安全验证已确认，但已达到重启次数上限 {limit}，请手动重跑"
+                    )
+                print(
+                    "[guangdada] 已收到飞书「已完成」确认，关闭当前浏览器并重新启动 Arrow2 抓取入口…",
+                    flush=True,
+                )
+                await browser.close()
+                return await run_arrow2_batch(
+                    keywords=keywords,
+                    debug=debug,
+                    is_tool=is_tool,
+                    is_game=is_game,
+                    day_spans=day_spans,
+                    order_modes=order_modes,
+                    popularity_option_text=popularity_option_text,
+                    ad_channel_labels=ad_channel_labels,
+                    country_codes=country_codes,
+                    pull_specs=pull_specs,
+                    pull_spec_defaults=pull_spec_defaults,
+                    search_tab=search_tab,
+                    keyword_appid=keyword_appid,
+                    debug_step_per_product=debug_step_per_product,
+                    keyword_product=keyword_product,
+                    target_date_first_seen=target_date_first_seen,
+                    debug_pause_per_product=debug_pause_per_product,
+                    _human_check_restart_count=restart_count + 1,
+                )
             await _try_click_search_tab(page, search_tab, log_quiet=log_quiet)
             is_tool_effective = bool(is_tool)
 
