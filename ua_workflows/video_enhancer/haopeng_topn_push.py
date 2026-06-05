@@ -139,6 +139,16 @@ def play_name(row: dict[str, Any]) -> str:
     return "待确认"
 
 
+def short_platform(platform: Any) -> str:
+    text = str(platform or "").strip()
+    aliases = {
+        "facebook": "Facebook",
+        "tiktok": "TikTok",
+        "instagram": "Instagram",
+    }
+    return aliases.get(text.lower(), text)
+
+
 def actual_summary(
     report: dict[str, Any],
     top_n: int,
@@ -183,26 +193,25 @@ def format_material_line(index: int, row: dict[str, Any], include_actual: bool) 
     url = material_url(row)
     head = f"{index}. [{title}]({url})" if url else f"{index}. **{title}**"
     score = row.get("accept_score")
-    chips = [
-        f"产品：{short_product(row.get('product'))}",
-        f"分数：{score}" if score not in (None, "") else "",
-        f"类型：{classify_play_kind(row)}",
-        f"玩法：{play_name(row)}",
+    platform = short_platform(row.get("platform"))
+    risk_level = clamp(row.get("risk_level"), 18)
+    meta = [
+        f"**产品** {md_escape(short_product(row.get('product')))}",
+        f"**平台** {md_escape(platform)}" if platform else "",
+        f"**分数** {score}" if score not in (None, "") else "",
+        f"**风险** {md_escape(risk_level)}" if risk_level else "",
     ]
-    confidence = str(row.get("confidence") or "").strip()
-    if confidence:
-        chips.append(f"置信：{confidence}")
+    play = md_escape(play_name(row))
+    play_kind = md_escape(classify_play_kind(row))
+    hook = clamp(row.get("hook"), 76)
+
+    lines = [head, "   " + " ｜ ".join(item for item in meta if item)]
+    lines.append(f"   **玩法** {play}（{play_kind}）")
+    if hook:
+        lines.append(f"   **Hook** {md_escape(hook)}")
     actual = str(row.get("actual_hp") or "").strip()
     if include_actual and actual:
-        chips.append(f"浩鹏实际：{actual}")
-
-    lines = [head, "   " + " · ".join(chip for chip in chips if chip)]
-    reason = clamp(row.get("reason"), 92)
-    if reason:
-        lines.append(f"   理由：{md_escape(reason)}")
-    ad_key = str(row.get("ad_key") or "").strip()
-    if ad_key:
-        lines.append(f"   ID：`{ad_key}`")
+        lines.append(f"   **浩鹏实际** {md_escape(actual)}")
     return lines
 
 

@@ -57,6 +57,8 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
                     "confidence": "high",
                     "matched_play_label": "手绘",
                     "play_label": "手绘",
+                    "hook": "普通自拍一键变成手绘生活拼贴",
+                    "risk_level": "低风险",
                     "reason": "手绘类正样本反馈极佳。",
                     "actual_hp": "采纳",
                     "video_url": "https://video.example/a1.mp4",
@@ -69,6 +71,8 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
                     "confidence": "medium",
                     "matched_play_label": "新玩法候选",
                     "play_label": "球员卡",
+                    "hook": "自拍立刻生成复古球员卡",
+                    "risk_level": "中风险",
                     "reason": "复古球员卡是高价值新方向。",
                     "actual_hp": "入素材库",
                 },
@@ -81,6 +85,13 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
         self.assertIn("2026-05-25..2026-05-27", md)
         self.assertIn("[真人照片生成手绘生活拼贴画](https://video.example/a1.mp4)", md)
         self.assertIn("老玩法新变体", md)
+        self.assertIn("**产品** AI Mirror", md)
+        self.assertIn("**Hook** 普通自拍一键变成手绘生活拼贴", md)
+        self.assertIn("**风险** 低风险", md)
+        self.assertNotIn("理由：", md)
+        self.assertNotIn("ID：", md)
+        self.assertNotIn("手绘类正样本反馈极佳", md)
+        self.assertNotIn("`a1`", md)
         self.assertNotIn("回测命中", md)
         self.assertNotIn("浩鹏实际", md)
 
@@ -120,7 +131,7 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
         md = render_topn_markdown(report, top_n=10, include_backtest=True)
 
         self.assertIn("采纳+入素材库：8/10", md)
-        self.assertIn("浩鹏实际：采纳", md)
+        self.assertIn("**浩鹏实际** 采纳", md)
 
     def test_render_topn_markdown_skips_admob_and_youtube_rows(self) -> None:
         report = {
