@@ -54,6 +54,7 @@ from ua_workflows.shared.db.video_enhancer import (
     normalize_effect_one_liner,
     update_push_status,
 )
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.shared.llm.client import bytes_to_embedding, cosine_similarity
 from ua_workflows.video_enhancer.content_filters import (
     apply_adult_content_filter,
@@ -330,7 +331,7 @@ def upload_video_as_attachment(video_url: str, app_token: str, ad_key: str = "")
     将可直链下载的视频以附件形式上传至多维表，返回 file_token。
     非直链/过大/HTML 回包时放弃，仅依赖「视频链接」文本列也能工作。
     """
-    v = (video_url or "").strip()
+    v = normalize_video_url_for_consumption((video_url or "").strip())
     if not v or not v.startswith("http"):
         return None
     if v in _VIDEO_CACHE:
@@ -507,20 +508,20 @@ def to_ms_from_unix_sec(v: Any) -> int | None:
 
 def pick_video_url(creative: Dict[str, Any]) -> str:
     if creative.get("video_url"):
-        return str(creative["video_url"])
+        return normalize_video_url_for_consumption(str(creative["video_url"]))
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("video_url"):
-            return str(r["video_url"])
+            return normalize_video_url_for_consumption(str(r["video_url"]))
     return ""
 
 
 def pick_video_urls(creative: Dict[str, Any], max_n: int = 5) -> List[str]:
     urls: List[str] = []
     if creative.get("video_url"):
-        urls.append(str(creative["video_url"]))
+        urls.append(normalize_video_url_for_consumption(str(creative["video_url"])))
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("video_url"):
-            urls.append(str(r["video_url"]))
+            urls.append(normalize_video_url_for_consumption(str(r["video_url"])))
     # 去重并保序
     out: List[str] = []
     seen: set[str] = set()
@@ -562,7 +563,7 @@ def build_meta_by_ad_from_analysis_payload(analysis: Dict[str, Any]) -> Dict[str
         k = str(it.get("ad_key") or "").strip()
         if not k:
             continue
-        vu = str(it.get("video_url") or "").strip()
+        vu = normalize_video_url_for_consumption(str(it.get("video_url") or "").strip())
         iu = normalize_cover_image_url_for_bitable(str(it.get("image_url") or "").strip())
         pu = normalize_cover_image_url_for_bitable(str(it.get("preview_img_url") or "").strip())
         ct = str(it.get("creative_type") or "").strip() or ("image" if (not vu and iu) else "video")
@@ -578,7 +579,7 @@ def build_meta_by_ad_from_analysis_payload(analysis: Dict[str, Any]) -> Dict[str
 def _media_slices_from_meta(meta: Dict[str, Any]) -> tuple[List[str], List[str]]:
     """单条素材 meta（来自 analysis results）拆成 (视频 URL 列表, 图片 URL 列表)。"""
     ct = str(meta.get("creative_type") or "video")
-    vu = str(meta.get("video_url") or "").strip()
+    vu = normalize_video_url_for_consumption(str(meta.get("video_url") or "").strip())
     iu = str(meta.get("image_url") or "").strip()
     pu = str(meta.get("preview_img_url") or "").strip()
     videos: List[str] = []

@@ -41,16 +41,17 @@ from ua_workflows.shared.guangdada.search import (
     _extract_creative_lists,
     _search_one_keyword,
 )
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 
 APPID_AI_MIRROR = "com.ai.polyverse.mirror"
 
 
 def _pick_video_url(creative: dict[str, Any]) -> str:
     if creative.get("video_url"):
-        return str(creative["video_url"])
+        return normalize_video_url_for_consumption(str(creative["video_url"]))
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("video_url"):
-            return str(r["video_url"])
+            return normalize_video_url_for_consumption(str(r["video_url"]))
     return ""
 
 

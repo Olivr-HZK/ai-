@@ -33,6 +33,7 @@ import requests
 
 from ua_workflows.shared.config import DATA_DIR, REPORTS_DIR, load_project_env
 from ua_workflows.shared.db.video_enhancer import _coarse_play_cluster_key
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.shared.llm.client import bytes_to_embedding
 from ua_workflows.video_enhancer.cover_dedupe import (
     _cluster_clip_dedupe,
@@ -107,7 +108,8 @@ def _row_value(row: dict[str, Any], key: str) -> Any:
 
 
 def _media_url(row: dict[str, Any]) -> str:
-    return str(row.get("video_url") or row.get("preview_img_url") or row.get("image_url") or "").strip()
+    video_url = normalize_video_url_for_consumption(str(row.get("video_url") or "").strip())
+    return str(video_url or row.get("preview_img_url") or row.get("image_url") or "").strip()
 
 
 def _image_url(row: dict[str, Any]) -> str:
@@ -201,7 +203,7 @@ def _raw_today_rows(raw_payload: dict[str, Any], product_by_appid: dict[str, str
         for res in creative.get("resource_urls") or []:
             if isinstance(res, dict):
                 row["image_url"] = row["image_url"] or str(res.get("image_url") or "")
-                row["video_url"] = row["video_url"] or str(res.get("video_url") or "")
+                row["video_url"] = row["video_url"] or normalize_video_url_for_consumption(str(res.get("video_url") or ""))
         rows[ad_key] = row
     return rows
 
@@ -928,14 +930,14 @@ def _render_cover_section(
             row["product"] = row.get("product") or member.get("product") or product
             row["preview_img_url"] = row.get("preview_img_url") or member.get("preview_img_url") or member.get("cover_url") or ""
             row["image_url"] = row.get("image_url") or member.get("image_url") or ""
-            row["video_url"] = row.get("video_url") or member.get("video_url") or ""
+            row["video_url"] = normalize_video_url_for_consumption(str(row.get("video_url") or member.get("video_url") or ""))
             row["title"] = row.get("title") or member.get("title") or ""
             row["body"] = row.get("body") or member.get("body") or ""
             row["all_exposure_value"] = row.get("all_exposure_value") or member.get("all_exposure_value") or ""
             if not _image_url(row) and hist:
                 row["preview_img_url"] = hist.get("preview_img_url") or hist.get("cover_url") or ""
                 row["image_url"] = hist.get("image_url") or ""
-                row["video_url"] = hist.get("video_url") or ""
+                row["video_url"] = normalize_video_url_for_consumption(str(hist.get("video_url") or ""))
                 row["title"] = row.get("title") or "同簇代表封面"
             extra = [
                 ("命中", kept_key),

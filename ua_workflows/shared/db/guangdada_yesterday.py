@@ -10,6 +10,7 @@ import sqlite3
 from typing import Any
 
 from ua_workflows.shared.config import DATA_DIR
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 
 DB_PATH = DATA_DIR / "guangdada_yesterday_creatives.db"
 
@@ -105,7 +106,7 @@ def init_db() -> None:
 def _video_url(creative: dict[str, Any]) -> str:
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("video_url"):
-            return str(r["video_url"])
+            return normalize_video_url_for_consumption(str(r["video_url"]))
     return ""
 
 
@@ -291,4 +292,3 @@ def upsert_many_7d_all(
         return n
     finally:
         conn.close()
-

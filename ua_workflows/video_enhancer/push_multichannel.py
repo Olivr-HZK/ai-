@@ -24,6 +24,7 @@ import requests
 from dotenv import load_dotenv
 
 from ua_workflows.shared.config import DATA_DIR
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.shared.push.wecom import push_wecom_markdown
 from ua_workflows.video_enhancer.push_feishu import (
     _render_daily_card_markdown,
@@ -272,7 +273,7 @@ def sync_to_google_sheet(webhook_url: str, target_date: str, raw_payload: Dict[s
                     video_url = ""
                     for r in c.get("resource_urls") or []:
                         if isinstance(r, dict) and r.get("video_url"):
-                            video_url = str(r.get("video_url") or "")
+                            video_url = normalize_video_url_for_consumption(str(r.get("video_url") or ""))
                             break
                     rows_to_write.append(
                         [
@@ -333,7 +334,7 @@ def sync_to_google_sheet(webhook_url: str, target_date: str, raw_payload: Dict[s
         video_url = ""
         for r in c.get("resource_urls") or []:
             if isinstance(r, dict) and r.get("video_url"):
-                video_url = str(r.get("video_url") or "")
+                video_url = normalize_video_url_for_consumption(str(r.get("video_url") or ""))
                 break
         rows.append(
             {

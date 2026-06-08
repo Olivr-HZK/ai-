@@ -26,6 +26,7 @@ from ua_workflows.shared.db.video_enhancer import (
     init_db,
     load_daily_material_report,
 )
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.video_enhancer.play_asset_doc_sync import maybe_pull_play_asset_doc
 from ua_workflows.video_enhancer.play_assets import legacy_play_library_enabled
 
@@ -120,7 +121,7 @@ def _load_sustained_effort(target_date: str, lookback_days: int = 7) -> Dict[str
                 row = cur.fetchone()
                 if row:
                     product = row["product"] or "未知"
-                    video_url = row["video_url"] or ""
+                    video_url = normalize_video_url_for_consumption(str(row["video_url"] or ""))
                     preview_img_url = row["preview_img_url"] or ""
                     video_duration = int(row["video_duration"] or 0)
                 conn.close()
@@ -197,7 +198,7 @@ def _render_daily_card_markdown(
             elif asset_name:
                 effect = f"{novelty or '新玩法'}｜{asset_name}：{effect}"
             if is_video and item.get("video_url"):
-                link = item["video_url"]
+                link = normalize_video_url_for_consumption(str(item["video_url"]))
             elif item.get("preview_img_url"):
                 link = item["preview_img_url"]
             else:

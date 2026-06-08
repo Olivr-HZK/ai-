@@ -30,6 +30,7 @@ from typing import Any, Dict, List
 from dotenv import load_dotenv
 
 from ua_workflows.shared.config import CONFIG_DIR, DATA_DIR
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 
 load_dotenv()
 
@@ -140,7 +141,7 @@ def _build_prompt(
         ad_key = str(r.get("ad_key") or "").strip()
         if not ad_key:
             continue
-        vu0 = str(r.get("video_url") or "").strip()
+        vu0 = normalize_video_url_for_consumption(str(r.get("video_url") or "").strip())
         iu0 = str(r.get("image_url") or "").strip()
         ct = r.get("creative_type") or ("image" if (not vu0 and iu0) else "video")
         entry: Dict[str, Any] = {
@@ -152,7 +153,7 @@ def _build_prompt(
             "heat": r.get("heat", 0),
             "impression": r.get("impression", 0),
             "analysis": r.get("analysis", ""),
-            "video_url": str(r.get("video_url") or "").strip(),
+            "video_url": vu0,
             "image_url": str(r.get("image_url") or "").strip(),
         }
         prev = str(r.get("preview_img_url") or "").strip()
@@ -588,4 +589,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

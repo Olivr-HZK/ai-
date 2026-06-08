@@ -27,6 +27,7 @@ from typing import Any
 
 from ua_workflows.shared.config import CONFIG_DIR, DATA_DIR
 from ua_workflows.shared.guangdada.search import run_batch
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.shared.guangdada.competitor_utils import (
     _apply_relaunch_pipeline_tag,
     _creative_hits_target_date,
@@ -124,11 +125,11 @@ def _pick_media_link(creative: dict) -> str:
         if not isinstance(r, dict):
             continue
         if r.get("video_url"):
-            return str(r["video_url"])
+            return normalize_video_url_for_consumption(str(r["video_url"]))
         if r.get("image_url"):
             return str(r["image_url"])
     if creative.get("video_url"):
-        return str(creative["video_url"])
+        return normalize_video_url_for_consumption(str(creative["video_url"]))
     return ""
 
 

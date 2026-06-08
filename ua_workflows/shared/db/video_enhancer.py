@@ -19,6 +19,7 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from ua_workflows.shared.config import DATA_DIR
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 
 DB_PATH = DATA_DIR / "video_enhancer_pipeline.db"
 
@@ -349,10 +350,10 @@ def _allow_text_only_dedup(appid: str, ahash: str, media_url: str, text_fp: str)
 
 def _pick_video_url_from_raw(creative: Dict[str, Any]) -> str:
     if creative.get("video_url"):
-        return str(creative["video_url"])
+        return normalize_video_url_for_consumption(str(creative["video_url"]))
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("video_url"):
-            return str(r["video_url"])
+            return normalize_video_url_for_consumption(str(r["video_url"]))
     return ""
 
 
@@ -1031,14 +1032,7 @@ def _params_tuple_for_daily_creative_insight(
     if not ad_key:
         return None
     platform = creative.get("platform")
-    video_url = ""
-    if creative.get("video_url"):
-        video_url = str(creative["video_url"])
-    else:
-        for r in creative.get("resource_urls") or []:
-            if isinstance(r, dict) and r.get("video_url"):
-                video_url = str(r["video_url"])
-                break
+    video_url = _pick_video_url_from_raw(creative)
     preview = creative.get("preview_img_url")
     video_duration = creative.get("video_duration")
     first_seen = creative.get("first_seen")
@@ -1610,7 +1604,7 @@ def load_existing_success_analysis_by_ad_keys(ad_keys: List[str]) -> Dict[str, D
                     except Exception:
                         rj = {}
                         pipeline_tags = []
-                vu = str(row["video_url"] or "").strip()
+                vu = normalize_video_url_for_consumption(str(row["video_url"] or "").strip())
                 pu = str(rj.get("preview_img_url") or "").strip()
                 iu = ""
                 if not vu:
@@ -1981,7 +1975,7 @@ def crossday_filter_items_against_creative_library(
             fdt = str(r["first_target_date"] or "")
             if ak:
                 hist_adkey_date[aid][ak] = fdt
-            vurl = str(r["video_url"] or "").strip()
+            vurl = normalize_video_url_for_consumption(str(r["video_url"] or "").strip())
             iurl = str(r["image_url"] or "").strip()
             media = vurl or iurl
             if media:
@@ -2271,7 +2265,9 @@ def combined_analysis_results_for_pipeline(
             b["category"] = item.get("category")
             b["product"] = item.get("product")
             b["appid"] = item.get("appid")
-            b["video_url"] = str(c.get("video_url") or b.get("video_url") or "")
+            b["video_url"] = normalize_video_url_for_consumption(
+                str(c.get("video_url") or b.get("video_url") or "")
+            )
             b["image_url"] = str(c.get("image_url") or b.get("image_url") or "")
             b["preview_img_url"] = str(c.get("preview_img_url") or b.get("preview_img_url") or "")
             b["impression"] = c.get("impression", b.get("impression"))
@@ -4045,7 +4041,9 @@ def load_new_creatives_for_date(
 
 
 def _media_link_from_row(row: Dict[str, Any]) -> Tuple[str, bool]:
-    video_url = str(row.get("video_url") or row.get("top_video_url") or row.get("canonical_video_url") or row.get("matched_video_url") or "")
+    video_url = normalize_video_url_for_consumption(
+        str(row.get("video_url") or row.get("top_video_url") or row.get("canonical_video_url") or row.get("matched_video_url") or "")
+    )
     preview_url = str(row.get("preview_img_url") or row.get("top_preview_img_url") or row.get("canonical_preview_img_url") or row.get("matched_preview_img_url") or "")
     duration = int(row.get("video_duration") or row.get("top_video_duration") or row.get("canonical_video_duration") or row.get("matched_video_duration") or 0)
     if video_url and (duration > 0 or str(row.get("creative_type") or "").lower() == "video"):
@@ -4146,7 +4144,7 @@ def _sustained_display_by_product(
         item["signal_type"] = "effect"
         item["signal_label"] = "玩法跨天"
         item["product"] = str(row.get("top_product") or row.get("product") or "")
-        item["video_url"] = row.get("top_video_url")
+        item["video_url"] = normalize_video_url_for_consumption(str(row.get("top_video_url") or ""))
         item["preview_img_url"] = row.get("top_preview_img_url")
         item["video_duration"] = row.get("top_video_duration")
         _append_sustained_display_item(by_product, seen, item)
@@ -4161,7 +4159,7 @@ def _sustained_display_by_product(
         item["signal_label"] = "同画面换素材"
         item["product"] = str(row.get("canonical_product") or row.get("products") or "")
         item["effect_one_liner"] = str(row.get("canonical_effect_one_liner") or "")
-        item["video_url"] = row.get("canonical_video_url")
+        item["video_url"] = normalize_video_url_for_consumption(str(row.get("canonical_video_url") or ""))
         item["preview_img_url"] = row.get("canonical_preview_img_url")
         item["video_duration"] = row.get("canonical_video_duration")
         _append_sustained_display_item(by_product, seen, item)
@@ -4176,7 +4174,7 @@ def _sustained_display_by_product(
         item["signal_label"] = "同画面/URL复投"
         item["product"] = str(row.get("matched_product") or row.get("product") or "")
         item["effect_one_liner"] = str(row.get("matched_effect_one_liner") or "")
-        item["video_url"] = row.get("matched_video_url")
+        item["video_url"] = normalize_video_url_for_consumption(str(row.get("matched_video_url") or ""))
         item["preview_img_url"] = row.get("matched_preview_img_url")
         item["video_duration"] = row.get("matched_video_duration")
         _append_sustained_display_item(by_product, seen, item)

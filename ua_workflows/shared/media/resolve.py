@@ -19,7 +19,7 @@ import re
 import subprocess
 import threading
 from typing import Any, Dict, List, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 _CACHE: Dict[str, str] = {}
 _CACHE_LOCK = threading.Lock()
@@ -99,6 +99,27 @@ def is_fake_tiktok_placeholder_url(url: str) -> bool:
 _VIDEO_FILE_SUFFIX = re.compile(r"\.(mp4|webm|m3u8)(?:\?|#|$)", re.I)
 
 
+def normalize_video_url_for_consumption(url: str) -> str:
+    """
+    Normalize Guangdada video CDN URLs for downstream consumers.
+
+    Some video rows use a `.webp` path even though the same CDN object is
+    consumable as `.mp4`; LLM vision and Feishu previews handle the `.mp4`
+    form much more reliably.
+    """
+    u = (url or "").strip()
+    if not u:
+        return u
+    try:
+        parsed = urlparse(u)
+        if not re.search(r"\.webp$", parsed.path, re.IGNORECASE):
+            return u
+        path = re.sub(r"\.webp$", ".mp4", parsed.path, flags=re.IGNORECASE)
+        return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, parsed.query, parsed.fragment))
+    except Exception:
+        return u
+
+
 def is_direct_video_file_url(url: str) -> bool:
     """
     可直喂多模态的「文件型」视频 URL（非 TikTok / YouTube 网页落地页）。
@@ -125,10 +146,10 @@ def pick_video_url_direct(creative: Dict[str, Any]) -> str:
     if not isinstance(creative, dict):
         return ""
     if creative.get("video_url"):
-        return str(creative["video_url"]).strip()
+        return normalize_video_url_for_consumption(str(creative["video_url"]).strip())
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("video_url"):
-            return str(r["video_url"]).strip()
+            return normalize_video_url_for_consumption(str(r["video_url"]).strip())
     return ""
 
 

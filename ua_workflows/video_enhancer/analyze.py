@@ -57,6 +57,7 @@ from ua_workflows.shared.media.resolve import (
     display_video_link_for_prompt,
     is_creative_analyzable_with_resolve,
     is_playable_ads_creative,
+    normalize_video_url_for_consumption,
     pick_playable_html_url,
     preprocess_video_for_vision,
     tiktok_ytdlp_resolve_enabled,
@@ -769,10 +770,10 @@ def _should_incremental_db(args: argparse.Namespace, target_date: str) -> bool:
 
 def _pick_video_url(creative: Dict[str, Any]) -> str:
     if creative.get("video_url"):
-        return str(creative["video_url"])
+        return normalize_video_url_for_consumption(str(creative["video_url"]))
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("video_url"):
-            return str(r["video_url"])
+            return normalize_video_url_for_consumption(str(r["video_url"]))
     return ""
 
 

@@ -16,6 +16,7 @@ from typing import Any, Iterable
 from ua_workflows.shared.config import DATA_DIR, load_project_env
 from ua_workflows.shared.guangdada.login import login
 from ua_workflows.shared.guangdada.proxy import prepare_playwright_proxy_for_crawl
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 
 NEW_CHARTS_URL = "https://www.guangdada.net/modules/creative/charts/new-charts"
 VE_RAW_CATEGORY = "ai_tools_new_charts"
@@ -159,11 +160,11 @@ def pick_video_url(creative: dict[str, Any]) -> str:
         ),
     )
     if direct:
-        return direct
+        return normalize_video_url_for_consumption(direct)
     for resource in _iter_resource_dicts(creative):
         url = _first_string(resource, ("video_url", "videoUrl", "url", "play_url", "playUrl"))
         if url and (".mp4" in url or ".mov" in url or resource.get("type") in (2, "2", "video")):
-            return url
+            return normalize_video_url_for_consumption(url)
     return ""
 
 

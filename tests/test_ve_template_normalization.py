@@ -6,6 +6,45 @@ from unittest.mock import patch
 
 
 class VeTemplateNormalizationTest(unittest.TestCase):
+    def test_video_webp_urls_are_normalized_to_mp4_for_consumers(self) -> None:
+        from ua_workflows.shared.db.video_enhancer import _pick_video_url_from_raw
+        from ua_workflows.shared.media.resolve import (
+            normalize_video_url_for_consumption,
+            pick_video_url_direct,
+            preprocess_video_for_vision,
+        )
+        from ua_workflows.video_enhancer.analyze import _pick_video_url
+        from ua_workflows.video_enhancer.sync import pick_video_url, pick_video_urls
+
+        raw = "https://sp2cdn-idea-global.zingfront.com/sp_opera/abc123.webp?token=1#frag"
+        expected = "https://sp2cdn-idea-global.zingfront.com/sp_opera/abc123.mp4?token=1#frag"
+        creative = {
+            "video_url": raw,
+            "resource_urls": [{"video_url": raw}],
+        }
+
+        self.assertEqual(normalize_video_url_for_consumption(raw), expected)
+        self.assertEqual(pick_video_url_direct(creative), expected)
+        self.assertEqual(preprocess_video_for_vision(creative), (expected, "cdn"))
+        self.assertEqual(_pick_video_url(creative), expected)
+        self.assertEqual(pick_video_url(creative), expected)
+        self.assertEqual(pick_video_urls(creative), [expected])
+        self.assertEqual(_pick_video_url_from_raw(creative), expected)
+
+    def test_resource_video_webp_url_is_normalized_when_top_level_video_missing(self) -> None:
+        from ua_workflows.shared.media.resolve import pick_video_url_direct
+        from ua_workflows.video_enhancer.sync import pick_video_url
+
+        creative = {
+            "resource_urls": [
+                {"image_url": "https://example.com/cover.image"},
+                {"video_url": "https://cdn.example.com/material.WEBP"},
+            ]
+        }
+
+        self.assertEqual(pick_video_url_direct(creative), "https://cdn.example.com/material.mp4")
+        self.assertEqual(pick_video_url(creative), "https://cdn.example.com/material.mp4")
+
     def test_cover_history_lookback_defaults_to_sixty_days(self) -> None:
         from ua_workflows.video_enhancer.cover_dedupe import _cover_history_lookback_days
 

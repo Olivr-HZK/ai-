@@ -52,7 +52,11 @@ from lark_oapi.api.drive.v1.model import (
     UploadAllMediaResponse,
 )
 from ua_workflows.shared.guangdada.detail_url import try_build_url_spa
-from ua_workflows.shared.media.resolve import is_playable_ads_creative, pick_playable_html_url
+from ua_workflows.shared.media.resolve import (
+    is_playable_ads_creative,
+    normalize_video_url_for_consumption,
+    pick_playable_html_url,
+)
 from ua_workflows.video_enhancer.sync import (
     BATCH_SIZE,
     batch_create_records,
@@ -660,7 +664,7 @@ def _arrow2_row_fields_dict(
     body = str(c.get("body") or "")
     preview_raw = str(c.get("preview_img_url") or "").strip()
     mat_type = _normalize_arrow2_material_type_for_select(classify_arrow2_material_type(c))
-    vu_base = str(it.get("video_url") or "").strip() or pick_video_url(c)
+    vu_base = normalize_video_url_for_consumption(str(it.get("video_url") or "").strip()) or pick_video_url(c)
     playable_base = pick_playable_html_url(c)
 
     link_video = ""

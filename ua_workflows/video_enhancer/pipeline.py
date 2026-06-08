@@ -41,6 +41,7 @@ load_project_env()
 from ua_workflows.shared.llm.client import print_openrouter_key_meter
 
 from ua_workflows.shared.media.cover_embedding import maybe_run_cover_embedding_after_library
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.video_enhancer.cover_dedupe import apply_intraday_cover_style_dedupe, is_cover_style_intraday_enabled
 from ua_workflows.video_enhancer.crawl_similarity import merge_cover_similarity_counts
 from ua_workflows.video_enhancer.review_dashboard import write_filter_review_dashboard
@@ -763,7 +764,7 @@ def main() -> None:
             failed_analysis.append(
                 {
                     "ad_key": ad_key,
-                    "video_url": str(it.get("video_url") or ""),
+                    "video_url": normalize_video_url_for_consumption(str(it.get("video_url") or "")),
                     "error": text or "empty analysis",
                 }
             )

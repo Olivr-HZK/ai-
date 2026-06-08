@@ -5,6 +5,8 @@ from collections import defaultdict
 from typing import Any, Dict, List
 from urllib.parse import urlparse, urlunparse
 
+from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
+
 
 def _ad_key(item: Dict[str, Any]) -> str:
     creative = item.get("creative") or {}
@@ -40,10 +42,10 @@ def _canonical_url(value: Any) -> str:
 
 def _first_video_url(creative: Dict[str, Any]) -> str:
     if creative.get("video_url"):
-        return str(creative.get("video_url") or "").strip()
+        return normalize_video_url_for_consumption(str(creative.get("video_url") or "").strip())
     for row in creative.get("resource_urls") or []:
         if isinstance(row, dict) and row.get("video_url"):
-            return str(row.get("video_url") or "").strip()
+            return normalize_video_url_for_consumption(str(row.get("video_url") or "").strip())
     return ""
 
 
