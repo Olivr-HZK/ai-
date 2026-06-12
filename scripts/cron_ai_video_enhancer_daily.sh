@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Video Enhancer：昨日（UTC+8）全流程，含分析、多维表同步、浩鹏 TopN 与筛选漏斗报告推送。
+# Video Enhancer：昨日（UTC+8）全流程，含分析、多维表同步与筛选漏斗报告；浩鹏 TopN 需显式开启。
 # 建议 crontab（北京时间由 TZ 固定，不依赖本机系统时区）：
 #   20 5 * * * /path/to/ai-/scripts/cron_ai_video_enhancer_daily.sh >> /path/to/ai-/logs/cron_video_enhancer.log 2>&1
 set -euo pipefail
