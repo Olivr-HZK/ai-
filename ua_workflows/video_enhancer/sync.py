@@ -280,6 +280,22 @@ def get_lark_client() -> lark.Client:
     return _LARK_CLIENT
 
 
+def _upload_all_media_safely(
+    req: UploadAllMediaRequest,
+    *,
+    media_label: str,
+    source: str,
+) -> UploadAllMediaResponse | None:
+    try:
+        return get_lark_client().drive.v1.media.upload_all(req)
+    except Exception as e:
+        print(
+            f"[sync] 上传{media_label}附件失败，跳过附件: "
+            f"{type(e).__name__}: {e} source={(source or '')[:80]!r}"
+        )
+        return None
+
+
 def upload_image_as_attachment(image_url: str, app_token: str) -> str | None:
     if not image_url:
         return None
@@ -304,8 +320,8 @@ def upload_image_as_attachment(image_url: str, app_token: str) -> str | None:
         .build()
     )
     req = UploadAllMediaRequest.builder().request_body(body).build()
-    resp: UploadAllMediaResponse = get_lark_client().drive.v1.media.upload_all(req)
-    if resp.success() and resp.data and getattr(resp.data, "file_token", None):
+    resp = _upload_all_media_safely(req, media_label="封面图", source=image_url)
+    if resp and resp.success() and resp.data and getattr(resp.data, "file_token", None):
         tk = resp.data.file_token
         _IMAGE_CACHE[image_url] = tk
         return tk
@@ -396,8 +412,8 @@ def upload_video_as_attachment(video_url: str, app_token: str, ad_key: str = "")
         .build()
     )
     req = UploadAllMediaRequest.builder().request_body(body).build()
-    resp2: UploadAllMediaResponse = get_lark_client().drive.v1.media.upload_all(req)
-    if resp2.success() and resp2.data and getattr(resp2.data, "file_token", None):
+    resp2 = _upload_all_media_safely(req, media_label="视频", source=v)
+    if resp2 and resp2.success() and resp2.data and getattr(resp2.data, "file_token", None):
         tk = resp2.data.file_token
         _VIDEO_CACHE[v] = tk
         return tk

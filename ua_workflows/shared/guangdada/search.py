@@ -1059,6 +1059,9 @@ async def _dismiss_login_security_modal_if_needed(page) -> None:
     - GUANGDADA_CAPTCHA_MANUAL_GATE=0 可临时恢复旧的取消/关闭行为。
     - GUANGDADA_FEISHU_CONFIRM_TIMEOUT_SEC 控制等待飞书确认的秒数，默认 900。
     - GUANGDADA_FEISHU_CALLBACK_PORT 控制本地确认回调端口，默认 0（随机可用端口）。
+    - GUANGDADA_FEISHU_CALLBACK_HOST 控制本地确认回调绑定地址，默认 127.0.0.1。
+    - GUANGDADA_FEISHU_CALLBACK_PUBLIC_BASE_URL 控制飞书按钮使用的外部可访问地址；
+      不配置时按钮使用本机地址，只适合在运行爬虫的机器上点击。
     """
     if not await _login_security_modal_visible(page):
         return
@@ -1082,12 +1085,18 @@ async def _dismiss_login_security_modal_if_needed(page) -> None:
             callback_port = max(0, int(os.getenv("GUANGDADA_FEISHU_CALLBACK_PORT") or "0"))
         except Exception as exc:
             print(f"[guangdada] GUANGDADA_FEISHU_CALLBACK_PORT 无效，改用随机端口: {exc}", flush=True)
+        callback_host = (os.getenv("GUANGDADA_FEISHU_CALLBACK_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+        callback_public_base_url = (os.getenv("GUANGDADA_FEISHU_CALLBACK_PUBLIC_BASE_URL") or "").strip()
 
-        waiter = await start_feishu_confirmation_waiter(port=callback_port)
+        waiter = await start_feishu_confirmation_waiter(
+            host=callback_host,
+            port=callback_port,
+            public_base_url=callback_public_base_url,
+        )
         try:
             print(
                 "[guangdada] 检测到安全验证，已启动飞书确认回调: "
-                f"{waiter.confirm_url}",
+                f"{waiter.confirm_url} (bind={waiter.host}:{waiter.port})",
                 flush=True,
             )
             sent = False

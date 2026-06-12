@@ -1044,7 +1044,12 @@ def update_arrow2_daily_insights_raw_json(target_date: str, ad_key: str, raw_obj
         conn.close()
 
 
-def prune_arrow2_daily_insights_not_in_raw(target_date: str, raw_payload: Dict[str, Any]) -> int:
+def prune_arrow2_daily_insights_not_in_raw(
+    target_date: str,
+    raw_payload: Dict[str, Any],
+    *,
+    crawl_workflow: str = "",
+) -> int:
     items = get_arrow2_pipeline_items_from_raw_payload(raw_payload)
     keep: set[str] = set()
     for item in items:
@@ -1062,10 +1067,22 @@ def prune_arrow2_daily_insights_not_in_raw(target_date: str, raw_payload: Dict[s
     try:
         cur = conn.cursor()
         ph = ",".join(["?"] * len(keep))
-        cur.execute(
-            f"DELETE FROM arrow2_daily_insights WHERE target_date = ? AND ad_key NOT IN ({ph})",
-            (target_date, *tuple(keep)),
-        )
+        workflow = (crawl_workflow or "").strip()
+        if workflow:
+            cur.execute(
+                f"""
+                DELETE FROM arrow2_daily_insights
+                WHERE target_date = ?
+                  AND crawl_workflow = ?
+                  AND ad_key NOT IN ({ph})
+                """,
+                (target_date, workflow, *tuple(keep)),
+            )
+        else:
+            cur.execute(
+                f"DELETE FROM arrow2_daily_insights WHERE target_date = ? AND ad_key NOT IN ({ph})",
+                (target_date, *tuple(keep)),
+            )
         n = cur.rowcount
         conn.commit()
         return n

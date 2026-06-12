@@ -34,6 +34,7 @@ from ua_workflows.shared.guangdada.competitor_utils import (
     _is_resume_advertising,
     advertiser_matches_product,
 )
+from ua_workflows.video_enhancer.competitor_list import sync_competitor_config_if_enabled
 from ua_workflows.video_enhancer.crawl_similarity import annotate_crawl_similarity_counts
 
 
@@ -79,6 +80,20 @@ def _load_workflow_competitors(products: list[str] | None = None):
         selected = [c for c in candidates if c.product.strip().lower() in wanted]
         return selected
     return candidates
+
+
+def _sync_competitor_list_before_crawl() -> None:
+    if (os.getenv("VE_COMPETITOR_LIST_ALREADY_SYNCED") or "").strip() == "1":
+        return
+    result = sync_competitor_config_if_enabled()
+    os.environ["VE_COMPETITOR_LIST_ALREADY_SYNCED"] = "1"
+    if result.ok:
+        print(
+            f"[competitor-list] 已从多维表竞品list同步 {result.competitor_count} 个正式竞品 "
+            f"-> {Path(result.config_path).name}"
+        )
+    else:
+        print(f"[competitor-list] 未同步，沿用本地竞品配置：{result.error}")
 
 
 def _target_date_ymd(value: str | None) -> str | None:
@@ -195,6 +210,7 @@ async def main():
     )
     args = parser.parse_args()
 
+    _sync_competitor_list_before_crawl()
     selected_products = [x.strip() for x in (args.products or "").split(",") if x.strip()]
     competitors = _load_workflow_competitors(products=selected_products or None)
     if not competitors:

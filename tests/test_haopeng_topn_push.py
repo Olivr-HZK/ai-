@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
-from pathlib import Path
 from argparse import Namespace
+from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,10 +18,12 @@ from ua_workflows.video_enhancer.haopeng_topn_push import (
     build_card_payload,
     build_im_card,
     classify_play_kind,
+    enrich_results_from_bitable,
     load_or_generate_report,
     merge_report_rows_from_source,
     render_topn_markdown,
 )
+from ua_workflows.video_enhancer import haopeng_topn_push as topn_mod
 
 
 class PushHaopengTopNToFeishuTest(unittest.TestCase):
@@ -34,6 +37,77 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
             "新玩法候选",
         )
         self.assertEqual(classify_play_kind({"matched_play_label": ""}), "新玩法候选")
+
+    def test_find_default_report_path_prefers_target_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "2026-05-27_label_prior.json").write_text("{}", encoding="utf-8")
+            (tmp_path / "2026-05-28_label_prior.json").write_text("{}", encoding="utf-8")
+            (tmp_path / "manual_2026-05-28_label_prior.json").write_text("{}", encoding="utf-8")
+
+            old_dir = topn_mod.DEFAULT_EXPERIMENT_DIR
+            topn_mod.DEFAULT_EXPERIMENT_DIR = tmp_path
+            try:
+                self.assertEqual(
+                    topn_mod.find_default_report_path("2026-05-27").name,
+                    "2026-05-27_label_prior.json",
+                )
+                self.assertEqual(
+                    topn_mod.find_default_report_path("2026-05-28").name,
+                    "manual_2026-05-28_label_prior.json",
+                )
+            finally:
+                topn_mod.DEFAULT_EXPERIMENT_DIR = old_dir
+
+    def test_resolve_webhook_does_not_fallback_to_generic_bot_webhook(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
+                "FEISHU_UA_WEBHOOK": "",
+                "VE_FLOW_REPORT_FEISHU_WEBHOOK": "",
+                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "",
+            },
+            clear=False,
+        ):
+            self.assertEqual(topn_mod.resolve_webhook(), "")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
+                "FEISHU_UA_WEBHOOK": "https://example.invalid/ua",
+                "VE_FLOW_REPORT_FEISHU_WEBHOOK": "",
+                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "",
+            },
+            clear=False,
+        ):
+            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/ua")
+
+    def test_resolve_webhook_prefers_topn_then_flow_report_group(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
+                "FEISHU_UA_WEBHOOK": "https://example.invalid/ua",
+                "VE_FLOW_REPORT_FEISHU_WEBHOOK": "https://example.invalid/flow",
+                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "",
+            },
+            clear=False,
+        ):
+            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/flow")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
+                "FEISHU_UA_WEBHOOK": "https://example.invalid/ua",
+                "VE_FLOW_REPORT_FEISHU_WEBHOOK": "https://example.invalid/flow",
+                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "https://example.invalid/topn",
+            },
+            clear=False,
+        ):
+            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/topn")
 
     def test_render_topn_markdown_hides_backtest_fields_by_default(self) -> None:
         report = {
@@ -88,6 +162,7 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
         self.assertIn("**产品** AI Mirror", md)
         self.assertIn("**Hook** 普通自拍一键变成手绘生活拼贴", md)
         self.assertIn("**风险** 低风险", md)
+        self.assertIn("不代表浩鹏已审核", md)
         self.assertNotIn("理由：", md)
         self.assertNotIn("ID：", md)
         self.assertNotIn("手绘类正样本反馈极佳", md)
@@ -132,6 +207,7 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
 
         self.assertIn("采纳+入素材库：8/10", md)
         self.assertIn("**浩鹏实际** 采纳", md)
+        self.assertNotIn("不代表浩鹏已审核", md)
 
     def test_render_topn_markdown_skips_admob_and_youtube_rows(self) -> None:
         report = {
@@ -304,6 +380,31 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
             history_start_date="2026-05-25",
             reviewer_field="浩鹏接受情况",
         )
+
+    def test_bitable_enrich_skips_reviewer_field_by_default(self) -> None:
+        report = {"results": [{"ad_key": "a1", "video_url": ""}]}
+        fake_records = [
+            {
+                "fields": {
+                    "广告ID": "a1",
+                    "视频链接": "https://video.example/a1.mp4",
+                    "浩鹏接受情况": "采纳",
+                }
+            }
+        ]
+
+        with patch(
+            "ua_workflows.video_enhancer.haopeng_topn_push.fetch_bitable_records",
+            create=True,
+            return_value=fake_records,
+        ), patch(
+            "ua_workflows.video_enhancer.feedback_training.fetch_bitable_records",
+            return_value=fake_records,
+        ):
+            enrich_results_from_bitable(report, "https://example.invalid/base/xxx?table=tbl", "浩鹏接受情况")
+
+        self.assertEqual(report["results"][0]["video_url"], "https://video.example/a1.mp4")
+        self.assertNotIn("actual_hp", report["results"][0])
 
 
 if __name__ == "__main__":

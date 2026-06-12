@@ -2,7 +2,7 @@ UA 素材 · 三工作流版
 
 本项目现在只保留三条生产工作流：
 
-1. **Video Enhancer**：竞品素材抓取、结构化灵感分析、玩法资产判断、日报推送。
+1. **Video Enhancer**：竞品素材抓取、结构化灵感分析、玩法资产判断、飞书多维表同步与浩鹏 TopN 推送。
 2. **Arrow2 latest_yesterday**：Arrow2 竞品每日最新素材。
 3. **Arrow2 exposure_top10**：Arrow2 竞品展示估值素材。
 

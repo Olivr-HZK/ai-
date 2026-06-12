@@ -14,8 +14,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ua_workflows.shared.config import DATA_DIR, load_project_env
-from ua_workflows.shared.guangdada.login import login
 from ua_workflows.shared.guangdada.proxy import prepare_playwright_proxy_for_crawl
+from ua_workflows.shared.guangdada.search import (
+    GuangdadaHumanVerificationConfirmed,
+    _await_post_login_shell,
+    _dismiss_login_security_modal_if_needed,
+    _guangdada_human_check_restart_limit,
+    _login_or_handle_human_check,
+)
 from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 
 NEW_CHARTS_URL = "https://www.guangdada.net/modules/creative/charts/new-charts"
@@ -46,6 +52,12 @@ INTERRUPTION_TEXTS = [
     "请完成验证",
     "人机验证",
 ]
+
+HUMAN_CHECK_INTERRUPTION_TEXTS = {
+    "请完成安全验证",
+    "请完成验证",
+    "人机验证",
+}
 
 
 def _debug_print(enabled: bool, message: str) -> None:
@@ -401,6 +413,8 @@ async def _raise_if_interrupted(page: Any, *, step: str) -> None:
     text = await _page_text(page)
     for marker in INTERRUPTION_TEXTS:
         if marker in text:
+            if marker in HUMAN_CHECK_INTERRUPTION_TEXTS:
+                await _dismiss_login_security_modal_if_needed(page)
             raise RuntimeError(f"广大大页面中断: {step}: {marker}")
 
 
@@ -730,6 +744,7 @@ async def collect_new_charts_ai_tools(
     headless: bool,
     scroll_rounds: int,
     wait_after_filter_ms: int,
+    _human_check_restart_count: int = 0,
 ) -> dict[AiToolCategory, list[dict[str, Any]]]:
     """Collect raw Guangdada creative rows for selected AI tool categories."""
     from playwright.async_api import async_playwright
@@ -754,15 +769,20 @@ async def collect_new_charts_ai_tools(
             context_kw["storage_state"] = str(AUTH_STATE_PATH)
         context = await browser.new_context(**context_kw)
         page = await context.new_page()
+        closed = False
         try:
             if auth_mode == "env-login" or not AUTH_STATE_PATH.exists():
                 if not email or not password:
                     raise RuntimeError("请在 .env 设置 GUANGDADA_EMAIL/GUANGDADA_USERNAME 和 GUANGDADA_PASSWORD")
-                ok = await login(page, email, password)
+                ok = await _login_or_handle_human_check(page, email, password)
                 if not ok:
                     raise RuntimeError("广大大邮箱登录失败")
+                await _await_post_login_shell(page)
                 AUTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
                 await context.storage_state(path=str(AUTH_STATE_PATH))
+            elif auth_mode == "auth-state":
+                await page.goto(NEW_CHARTS_URL, wait_until="domcontentloaded", timeout=90000)
+                await _await_post_login_shell(page)
             elif auth_mode == "manual":
                 await page.goto(NEW_CHARTS_URL, wait_until="domcontentloaded", timeout=90000)
                 print("请在打开的浏览器中完成登录/验证后回到终端按回车继续。", file=sys.stderr)
@@ -798,9 +818,34 @@ async def collect_new_charts_ai_tools(
                     )
                     print(f"[new-charts] {category.label}: 捕获 {len(per_category[category])} 条原始创意", flush=True)
             return per_category
-        finally:
+        except GuangdadaHumanVerificationConfirmed:
             await context.close()
             await browser.close()
+            closed = True
+            limit_n = _guangdada_human_check_restart_limit()
+            if _human_check_restart_count >= limit_n:
+                raise RuntimeError(
+                    f"广大大安全验证已确认，但已达到重启次数上限 {limit_n}，请手动重跑周榜采集"
+                )
+            print(
+                "[new-charts] 已收到飞书「已完成」确认，关闭当前浏览器并重新启动周榜采集入口…",
+                flush=True,
+            )
+            return await collect_new_charts_ai_tools(
+                categories=categories,
+                category_mode=category_mode,
+                limit=limit,
+                auth_mode=auth_mode,
+                debug=debug,
+                headless=headless,
+                scroll_rounds=scroll_rounds,
+                wait_after_filter_ms=wait_after_filter_ms,
+                _human_check_restart_count=_human_check_restart_count + 1,
+            )
+        finally:
+            if not closed:
+                await context.close()
+                await browser.close()
 
 
 def write_payload_files(payload: dict[str, Any], *, output_prefix: str | None = None) -> tuple[Path, Path]:
@@ -855,6 +900,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 async def run_async(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any]]:
     category_names = args.categories or ["AI图像生成", "AI视频"]
     categories = [resolve_ai_tool_category(name) for name in category_names]
+    os.environ.setdefault("TARGET_DATE", str(args.date or ""))
+    os.environ.setdefault("GUANGDADA_WORKFLOW_NAME", "VE竞品周检查新创意榜")
+    os.environ.setdefault("GUANGDADA_WORKFLOW_STEP", "新创意榜采集安全验证")
     per_category_raw = await collect_new_charts_ai_tools(
         categories=categories,
         category_mode=args.category_mode,

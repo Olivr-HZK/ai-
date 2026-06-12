@@ -14,6 +14,7 @@ from typing import Any, Iterable
 import requests
 
 from ua_workflows.shared.config import CONFIG_DIR, DATA_DIR, REPORTS_DIR, load_project_env
+from ua_workflows.video_enhancer.competitor_list import load_competitors_from_bitable
 from ua_workflows.video_enhancer.haopeng_ai_filter import fetch_rows_from_bitable
 
 POSITIVE_STATUSES = {"采纳", "接受", "入素材库"}
@@ -110,6 +111,23 @@ def load_current_ve_competitors(
         if isinstance(section, dict):
             out.update(str(name).strip() for name in section if str(name).strip())
     return out
+
+
+def load_current_ve_competitors_from_bitable_or_config(
+    bitable_url: str = "",
+    *,
+    config_path: Path = CONFIG_DIR / "ai_product.json",
+) -> set[str]:
+    url = (bitable_url or os.getenv("VIDEO_ENHANCER_BITABLE_URL") or "").strip()
+    if url:
+        try:
+            rows = load_competitors_from_bitable(url)
+            products = {row.product for row in rows if row.product}
+            if products:
+                return products
+        except Exception as exc:
+            print(f"[weekly-competitor-review] 竞品list 读取失败，改用本地配置：{exc}")
+    return load_current_ve_competitors(config_path=config_path)
 
 
 def _crawl_report_path(data_dir: Path, day: dt.date) -> Path:
@@ -605,7 +623,7 @@ def run_weekly_review(
         week_start=week_start,
         data_dir=Path(data_dir),
         feedback_rows=feedback_rows,
-        current_competitors=load_current_ve_competitors(),
+        current_competitors=load_current_ve_competitors_from_bitable_or_config(bitable),
         chart_paths=chart_paths,
         reviewer_field=reviewer_field,
         material_threshold=material_threshold,

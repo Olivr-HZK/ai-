@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -105,6 +107,28 @@ class NewChartsAiToolsTest(unittest.TestCase):
         self.assertEqual(report["field_counts"]["ad_key"], 1)
         self.assertEqual(report["field_counts"]["video_url"], 1)
         self.assertEqual(report["missing_counts"]["title"], 2)
+
+    def test_security_interruption_routes_to_human_gate(self) -> None:
+        from ua_workflows.shared.guangdada import new_charts_ai_tools as mod
+
+        async def fake_page_text(page: object) -> str:
+            self.assertEqual(page, "page")
+            return "请完成验证"
+
+        async def fake_human_gate(page: object) -> None:
+            self.assertEqual(page, "page")
+            raise mod.GuangdadaHumanVerificationConfirmed("confirmed")
+
+        async def scenario() -> None:
+            with patch.object(mod, "_page_text", fake_page_text), patch.object(
+                mod,
+                "_dismiss_login_security_modal_if_needed",
+                fake_human_gate,
+            ):
+                with self.assertRaises(mod.GuangdadaHumanVerificationConfirmed):
+                    await mod._raise_if_interrupted("page", step="打开新创意榜")
+
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -23,18 +23,32 @@ class FeishuConfirmationResult:
 
 
 class FeishuConfirmationWaiter:
-    def __init__(self, *, server: asyncio.AbstractServer, host: str, port: int, path: str, token: str) -> None:
+    def __init__(
+        self,
+        *,
+        server: asyncio.AbstractServer,
+        host: str,
+        port: int,
+        path: str,
+        token: str,
+        public_base_url: str = "",
+    ) -> None:
         self._server = server
         self.host = host
         self.port = port
         self.path = path
         self.token = token
+        self.public_base_url = public_base_url.rstrip("/")
         self._event = asyncio.Event()
         self._result: FeishuConfirmationResult | None = None
 
     @property
     def confirm_url(self) -> str:
-        return f"http://{self.host}:{self.port}{self.path}?token={self.token}"
+        query = urlencode({"token": self.token})
+        if self.public_base_url:
+            return f"{self.public_base_url}{self.path}?{query}"
+        host = "127.0.0.1" if self.host in {"0.0.0.0", "::"} else self.host
+        return f"http://{host}:{self.port}{self.path}?{query}"
 
     async def wait(self, *, timeout_sec: int) -> FeishuConfirmationResult:
         try:
@@ -58,6 +72,7 @@ async def start_feishu_confirmation_waiter(
     port: int = 0,
     path: str = "/guangdada-human-check/confirm",
     token: str | None = None,
+    public_base_url: str = "",
 ) -> FeishuConfirmationWaiter:
     token = token or secrets.token_urlsafe(18)
     waiter_ref: dict[str, FeishuConfirmationWaiter] = {}
@@ -104,7 +119,14 @@ async def start_feishu_confirmation_waiter(
     server = await asyncio.start_server(handle, host=host, port=port)
     sockets = server.sockets or []
     bound_port = int(sockets[0].getsockname()[1]) if sockets else port
-    waiter = FeishuConfirmationWaiter(server=server, host=host, port=bound_port, path=path, token=token)
+    waiter = FeishuConfirmationWaiter(
+        server=server,
+        host=host,
+        port=bound_port,
+        path=path,
+        token=token,
+        public_base_url=public_base_url,
+    )
     waiter_ref["waiter"] = waiter
     return waiter
 

@@ -75,6 +75,34 @@ class GuangdadaFeishuCallbackTest(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_confirmation_waiter_can_publish_external_callback_url(self) -> None:
+        from ua_workflows.shared.guangdada.interrupt_alerts import (
+            start_feishu_confirmation_waiter,
+        )
+
+        async def scenario() -> None:
+            waiter = await start_feishu_confirmation_waiter(
+                host="127.0.0.1",
+                public_base_url="https://callback.example.test/bridge",
+            )
+            try:
+                self.assertEqual(
+                    waiter.confirm_url,
+                    f"https://callback.example.test/bridge{waiter.path}?token={waiter.token}",
+                )
+                wait_task = asyncio.create_task(waiter.wait(timeout_sec=3))
+                local_url = f"http://127.0.0.1:{waiter.port}{waiter.path}?token={waiter.token}"
+                body = await asyncio.to_thread(
+                    lambda: urllib.request.urlopen(local_url, timeout=3).read().decode("utf-8")
+                )
+                self.assertIn("已收到", body)
+                result = await wait_task
+                self.assertTrue(result.confirmed)
+            finally:
+                await waiter.close()
+
+        asyncio.run(scenario())
+
     def test_send_im_card_uses_project_app_message_api(self) -> None:
         from ua_workflows.shared.guangdada.interrupt_alerts import send_security_verification_im_card
 

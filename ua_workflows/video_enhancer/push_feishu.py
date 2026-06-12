@@ -297,10 +297,14 @@ def main() -> None:
 
     webhook = (args.feishu_webhook or "").strip()
     if not webhook:
-        webhook = os.getenv("FEISHU_UA_WEBHOOK", "") or os.getenv("FEISHU_BOT_WEBHOOK", "")
+        webhook = (
+            os.getenv("VIDEO_ENHANCER_MATERIAL_DAILY_FEISHU_WEBHOOK")
+            or os.getenv("VE_FLOW_REPORT_FEISHU_WEBHOOK")
+            or os.getenv("FEISHU_UA_WEBHOOK", "")
+        )
     webhook = (webhook or "").strip()
     if not webhook:
-        print("[feishu-card] 未配置 FEISHU_UA_WEBHOOK/FEISHU_BOT_WEBHOOK，跳过卡片推送。")
+        print("[feishu-card] 未配置 VIDEO_ENHANCER_MATERIAL_DAILY_FEISHU_WEBHOOK/VE_FLOW_REPORT_FEISHU_WEBHOOK/FEISHU_UA_WEBHOOK，跳过卡片推送。")
         return
 
     card_title = f"AI工具竞品日报 {target_date}｜新素材"

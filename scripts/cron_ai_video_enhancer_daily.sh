@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Video Enhancer：昨日（UTC+8）全流程，含分析与飞书/企业微信等多维表后续（与 run_video_enhancer.py 默认一致）。
+# Video Enhancer：昨日（UTC+8）全流程，含分析、多维表同步、浩鹏 TopN 与筛选漏斗报告推送。
 # 建议 crontab（北京时间由 TZ 固定，不依赖本机系统时区）：
 #   20 5 * * * /path/to/ai-/scripts/cron_ai_video_enhancer_daily.sh >> /path/to/ai-/logs/cron_video_enhancer.log 2>&1
 set -euo pipefail
@@ -18,26 +18,4 @@ fi
 
 echo "======== $(date '+%F %T %Z') cron_ai_video_enhancer_daily start ========"
 "$ROOT/.venv/bin/python" "$ROOT/scripts/run_video_enhancer.py"
-
-DAILY_PUSH_CHAT_ID="$("$ROOT/.venv/bin/python" - <<'PY'
-import os
-
-from ua_workflows.shared.config import load_project_env
-
-load_project_env()
-print((os.getenv("FEISHU_DAILY_PUSH_CHAT_ID") or "").strip())
-PY
-)"
-
-if [[ -z "$DAILY_PUSH_CHAT_ID" ]]; then
-  echo "[cron] 未配置 FEISHU_DAILY_PUSH_CHAT_ID，跳过浩鹏 TopN 二次筛选 IM 推送。"
-  exit 0
-fi
-
-echo "======== $(date '+%F %T %Z') cron_ai_video_enhancer_daily haopeng_topn start ========"
-"$ROOT/.venv/bin/python" "$ROOT/scripts/run_ve_haopeng_topn_push.py" \
-  --top-n 10 \
-  --send-mode im \
-  --chat-id "$DAILY_PUSH_CHAT_ID"
-
 echo "======== $(date '+%F %T %Z') cron_ai_video_enhancer_daily done ========"

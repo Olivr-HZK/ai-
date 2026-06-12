@@ -44,7 +44,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--solve-timeout-sec", type=int, default=900, help="等待飞书「已完成」回调的秒数")
     parser.add_argument("--require-captcha", action="store_true", help="未检测到验证码时以失败退出")
     parser.add_argument("--skip-login", action="store_true", help="跳过账号密码登录，直接打开 URL")
+    parser.add_argument("--callback-host", default="", help="本地飞书确认回调绑定地址，默认 127.0.0.1")
     parser.add_argument("--callback-port", type=int, default=0, help="本地飞书确认回调端口；默认随机端口")
+    parser.add_argument("--callback-public-base-url", default="", help="飞书按钮使用的外部可访问回调 base URL")
     parser.add_argument("--keep-open", action="store_true", help="结束前保持浏览器打开 30 秒便于观察")
     return parser.parse_args()
 
@@ -119,7 +121,15 @@ async def run() -> int:
                 return 5 if args.require_captcha else 0
 
             print("[captcha-test] 已检测到安全验证，启动飞书确认回调")
-            waiter = await start_feishu_confirmation_waiter(port=max(0, int(args.callback_port or 0)))
+            waiter = await start_feishu_confirmation_waiter(
+                host=(args.callback_host or os.getenv("GUANGDADA_FEISHU_CALLBACK_HOST") or "127.0.0.1").strip(),
+                port=max(0, int(args.callback_port or os.getenv("GUANGDADA_FEISHU_CALLBACK_PORT") or 0)),
+                public_base_url=(
+                    args.callback_public_base_url
+                    or os.getenv("GUANGDADA_FEISHU_CALLBACK_PUBLIC_BASE_URL")
+                    or ""
+                ).strip(),
+            )
             try:
                 try:
                     sent = _send_guangdada_security_verification_alert(

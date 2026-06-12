@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--output-prefix",
         default="",
-        help="输出文件前缀；默认 workflow_arrow2_<date>",
+        help="输出文件前缀；默认 latest_yesterday 为 workflow_arrow2_<date>，其它 pull_id 为 workflow_arrow2_<pull_id>_<date>",
     )
     p.add_argument(
         "--pull-only",
@@ -114,10 +114,14 @@ def main() -> None:
         td = _beijing_yesterday_iso()
     os.environ["TARGET_DATE"] = td
 
-    prefix = (args.output_prefix or "").strip() or f"workflow_arrow2_{td}"
-    raw_path = DATA_DIR / f"{prefix}_raw.json"
-
     pull_id = (args.pull_only or "").strip() or "exposure_top10"
+    if (args.output_prefix or "").strip():
+        prefix = args.output_prefix.strip()
+    elif pull_id == "latest_yesterday":
+        prefix = f"workflow_arrow2_{td}"
+    else:
+        prefix = f"workflow_arrow2_{pull_id}_{td}"
+    raw_path = DATA_DIR / f"{prefix}_raw.json"
 
     # 统一使用 detail-v2 逐张点击爬虫
     cmd = [
@@ -155,6 +159,7 @@ def main() -> None:
     raw["workflow"] = "arrow2_competitor"
 
     from ua_workflows.shared.db.arrow2 import (
+        derive_crawl_workflow_from_item,
         get_arrow2_pipeline_items_from_raw_payload,
         init_db as init_a2,
         prune_arrow2_daily_insights_not_in_raw,
@@ -178,7 +183,13 @@ def main() -> None:
         raw["items"] = items2
         raw["items_deduped_by_ad_key"] = items2
         raw["cover_style_report"] = cov_rep
-        prune_arrow2_daily_insights_not_in_raw(td, raw)
+        workflows = {
+            derive_crawl_workflow_from_item(item)
+            for item in items2
+            if isinstance(item, dict)
+        }
+        prune_workflow = next(iter(workflows)) if len(workflows) == 1 else ""
+        prune_arrow2_daily_insights_not_in_raw(td, raw, crawl_workflow=prune_workflow)
         cov_path = DATA_DIR / f"{prefix}_cover_style_intraday.json"
         cov_path.write_text(json.dumps(cov_rep, ensure_ascii=False, indent=2), encoding="utf-8")
         print(

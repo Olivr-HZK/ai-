@@ -60,7 +60,9 @@ REVIEW_ARGS=(--run-date "$RUN_DATE")
 if [[ -f "$CHART_RAW" ]]; then
   REVIEW_ARGS+=(--chart-raw "$CHART_RAW")
 fi
-REVIEW_ARGS+=("${EXTRA_ARGS[@]}")
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  REVIEW_ARGS+=("${EXTRA_ARGS[@]}")
+fi
 
 echo "======== $(date '+%F %T %Z') weekly_competitor_review card start ========"
 "$PYTHON" "$ROOT/scripts/run_ve_weekly_competitor_review.py" "${REVIEW_ARGS[@]}"

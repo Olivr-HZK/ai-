@@ -36,10 +36,12 @@ def link_escape(value: Any) -> str:
     return md_escape(value).replace("[", "［").replace("]", "］")
 
 
-def find_default_report_path() -> Path:
-    candidates = sorted(DEFAULT_EXPERIMENT_DIR.glob("*_label_prior.json"))
+def find_default_report_path(target_date: str = "") -> Path:
+    date_text = str(target_date or "").strip()
+    pattern = f"*{date_text}*_label_prior.json" if date_text else "*_label_prior.json"
+    candidates = sorted(DEFAULT_EXPERIMENT_DIR.glob(pattern))
     if not candidates:
-        raise FileNotFoundError(f"未找到 TopN 实验文件: {DEFAULT_EXPERIMENT_DIR}/*_label_prior.json")
+        raise FileNotFoundError(f"未找到 TopN 实验文件: {DEFAULT_EXPERIMENT_DIR}/{pattern}")
     return candidates[-1]
 
 
@@ -238,6 +240,8 @@ def render_topn_markdown(
     if model:
         lines.append(f"- 模型：{model}")
     lines.append(f"- 策略：{strategy}（玩法标签历史先验 + 相似正负样本）")
+    if not include_backtest:
+        lines.append("- 说明：以下为模型预测/排序，不代表浩鹏已审核；不展示当天「浩鹏接受情况」。")
     summary_text = (
         actual_summary(
             report,
@@ -304,7 +308,11 @@ def resolve_webhook(explicit_webhook: str = "") -> str:
     webhook = (explicit_webhook or "").strip()
     if webhook:
         return webhook
-    return (os.getenv("FEISHU_UA_WEBHOOK", "") or os.getenv("FEISHU_BOT_WEBHOOK", "")).strip()
+    return (
+        os.getenv("VE_HAOPENG_TOPN_FEISHU_WEBHOOK", "")
+        or os.getenv("VE_FLOW_REPORT_FEISHU_WEBHOOK", "")
+        or os.getenv("FEISHU_UA_WEBHOOK", "")
+    ).strip()
 
 
 def post_card(webhook: str, title: str, md_text: str, *, bitable_url: str = "") -> requests.Response:
@@ -416,7 +424,13 @@ def enrich_results_with_media(report: dict[str, Any]) -> None:
         conn.close()
 
 
-def enrich_results_from_bitable(report: dict[str, Any], bitable_url: str, reviewer_field: str) -> None:
+def enrich_results_from_bitable(
+    report: dict[str, Any],
+    bitable_url: str,
+    reviewer_field: str,
+    *,
+    include_reviewer: bool = False,
+) -> None:
     if not bitable_url:
         return
     try:
@@ -437,19 +451,19 @@ def enrich_results_from_bitable(report: dict[str, Any], bitable_url: str, review
         ad_key = cell_to_text(fields.get("广告ID"))
         if not ad_key:
             continue
-        rows.append(
-            {
-                "ad_key": ad_key,
-                "product": cell_to_text(fields.get("产品")),
-                "core": cell_to_text(fields.get("核心卖点")),
-                "play_label": cell_to_text(fields.get("玩法")) or cell_to_text(fields.get("玩法资产")),
-                "platform": cell_to_text(fields.get("平台")),
-                "video_url": cell_to_text(fields.get("视频链接")),
-                "cover_url": cell_to_text(fields.get("封面图链接")),
-                "title": cell_to_text(fields.get("标题")),
-                "actual_hp": cell_to_text(fields.get(reviewer_field)),
-            }
-        )
+        row = {
+            "ad_key": ad_key,
+            "product": cell_to_text(fields.get("产品")),
+            "core": cell_to_text(fields.get("核心卖点")),
+            "play_label": cell_to_text(fields.get("玩法")) or cell_to_text(fields.get("玩法资产")),
+            "platform": cell_to_text(fields.get("平台")),
+            "video_url": cell_to_text(fields.get("视频链接")),
+            "cover_url": cell_to_text(fields.get("封面图链接")),
+            "title": cell_to_text(fields.get("标题")),
+        }
+        if include_reviewer:
+            row["actual_hp"] = cell_to_text(fields.get(reviewer_field))
+        rows.append(row)
     merge_report_rows_from_source(report, rows)
 
 
@@ -479,7 +493,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receive-id-type", default="chat_id", help="飞书 IM receive_id_type，默认 chat_id")
     parser.add_argument("--feishu-webhook", default="", help="飞书群机器人 webhook")
     parser.add_argument("--bitable-url", default="", help="VE 主多维表 URL，用于补视频/封面链接")
-    parser.add_argument("--reviewer-field", default="浩鹏接受情况", help="主表接受情况字段名")
+    parser.add_argument("--reviewer-field", default="浩鹏接受情况", help="回测复盘时读取的主表接受情况字段名，仅 --include-backtest 使用")
     parser.add_argument("--dry-run", action="store_true", help="只打印卡片 Markdown，不推送")
     parser.add_argument("--include-backtest", action="store_true", help="显示回测命中和浩鹏实际结果，默认隐藏")
     parser.add_argument("--no-db-enrich", action="store_true", help="不从本地库补视频/封面链接")
@@ -524,7 +538,12 @@ def main() -> None:
         enrich_results_with_media(report)
     bitable_url = (args.bitable_url or os.getenv("VIDEO_ENHANCER_BITABLE_URL") or "").strip()
     if not args.no_bitable_enrich and missing_media_links(report, top_n=args.top_n) and bitable_url:
-        enrich_results_from_bitable(report, bitable_url, args.reviewer_field)
+        enrich_results_from_bitable(
+            report,
+            bitable_url,
+            args.reviewer_field,
+            include_reviewer=bool(args.include_backtest),
+        )
     target_date = str(report.get("target_date") or "").strip()
     title = args.title or f"VE浩鹏采纳预测 Top{args.top_n} {target_date}"
     md_text = render_topn_markdown(report, top_n=args.top_n, include_backtest=args.include_backtest)
@@ -537,7 +556,10 @@ def main() -> None:
     if args.send_mode == "webhook":
         webhook = resolve_webhook(args.feishu_webhook)
         if not webhook:
-            raise SystemExit("[haopeng-topn-card] 未配置 FEISHU_UA_WEBHOOK/FEISHU_BOT_WEBHOOK，无法推送。")
+            raise SystemExit(
+                "[haopeng-topn-card] 未配置 VE_HAOPENG_TOPN_FEISHU_WEBHOOK/"
+                "VE_FLOW_REPORT_FEISHU_WEBHOOK/FEISHU_UA_WEBHOOK，无法推送。"
+            )
         post_card(webhook, title, md_text, bitable_url=bitable_url)
         return
 

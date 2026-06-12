@@ -290,6 +290,29 @@ class VeTemplateNormalizationTest(unittest.TestCase):
         )
         self.assertEqual(_normalize_bitable_field_value("玩法", "AI 场景角色生成", field_info), [])
 
+    def test_media_upload_exception_is_non_blocking(self) -> None:
+        from json import JSONDecodeError
+
+        from ua_workflows.video_enhancer.sync import _upload_all_media_safely
+
+        class _FakeMedia:
+            def upload_all(self, _req):
+                raise JSONDecodeError("Expecting value", "", 0)
+
+        class _FakeClient:
+            class drive:
+                class v1:
+                    media = _FakeMedia()
+
+        with patch("ua_workflows.video_enhancer.sync.get_lark_client", return_value=_FakeClient()):
+            self.assertIsNone(
+                _upload_all_media_safely(
+                    object(),
+                    media_label="视频",
+                    source="https://example.com/video.mp4",
+                )
+            )
+
     def test_daily_similarity_count_includes_same_day_cover_removed_members(self) -> None:
         from ua_workflows.video_enhancer.sync import build_daily_similarity_count_map
 

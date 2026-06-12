@@ -44,6 +44,7 @@ from ua_workflows.shared.media.cover_embedding import maybe_run_cover_embedding_
 from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.video_enhancer.cover_dedupe import apply_intraday_cover_style_dedupe, is_cover_style_intraday_enabled
 from ua_workflows.video_enhancer.crawl_similarity import merge_cover_similarity_counts
+from ua_workflows.video_enhancer.competitor_list import sync_competitor_config_if_enabled
 from ua_workflows.video_enhancer.review_dashboard import write_filter_review_dashboard
 
 from ua_workflows.video_enhancer.filter_reports import (
@@ -166,6 +167,33 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="跳过封面日内 CLIP 视觉聚类去重（抓取后直接用全量 raw 入库并继续后续步骤）",
     )
+    p.add_argument(
+        "--no-topn-push",
+        action="store_true",
+        help="跳过浩鹏 TopN 二次筛选生成与推送",
+    )
+    p.add_argument(
+        "--topn-input-json",
+        default="",
+        help="指定已有浩鹏 TopN JSON；不传时从主多维表生成目标日筛选结果",
+    )
+    p.add_argument(
+        "--topn-send-mode",
+        choices=["im", "webhook"],
+        default=None,
+        help="浩鹏 TopN 发送方式；不传则优先用 VE_HAOPENG_TOPN_SEND_MODE，其次按 FEISHU_DAILY_PUSH_CHAT_ID 自动选择",
+    )
+    p.add_argument(
+        "--topn-chat-id",
+        default="",
+        help="浩鹏 TopN 飞书 IM chat_id；不传则使用 FEISHU_DAILY_PUSH_CHAT_ID",
+    )
+    p.add_argument(
+        "--topn-top-n",
+        type=int,
+        default=int((os.getenv("VE_HAOPENG_TOPN_TOP_N") or "10").strip() or "10"),
+        help="浩鹏 TopN 推送条数，默认 10",
+    )
     return p.parse_args()
 
 
@@ -219,6 +247,49 @@ def _run(cmd: list[str]) -> None:
     if timeout_sec > 0:
         kwargs["timeout"] = timeout_sec
     subprocess.run(cmd, **kwargs)
+
+
+def _env_flag_enabled(name: str, default: str = "1") -> bool:
+    value = (os.getenv(name) or default).strip().lower()
+    return value not in ("0", "false", "no", "off", "")
+
+
+def _resolve_topn_send_mode(args: argparse.Namespace) -> str:
+    explicit = (args.topn_send_mode or os.getenv("VE_HAOPENG_TOPN_SEND_MODE") or "").strip().lower()
+    if explicit in {"im", "webhook"}:
+        return explicit
+    if (args.topn_chat_id or os.getenv("FEISHU_DAILY_PUSH_CHAT_ID") or "").strip():
+        return "im"
+    return "webhook"
+
+
+def _run_haopeng_topn_push(py: str, args: argparse.Namespace, target_date: str) -> None:
+    if args.no_topn_push or not _env_flag_enabled("VE_HAOPENG_TOPN_PUSH_ENABLED", "1"):
+        print("[haopeng-topn] 已跳过（--no-topn-push 或 VE_HAOPENG_TOPN_PUSH_ENABLED=0）。")
+        return
+
+    cmd = [
+        py,
+        "-m",
+        "ua_workflows.video_enhancer.haopeng_topn_push",
+        "--date",
+        target_date,
+        "--top-n",
+        str(args.topn_top_n),
+        "--send-mode",
+        _resolve_topn_send_mode(args),
+    ]
+    if args.topn_input_json.strip():
+        cmd.extend(["--input-json", args.topn_input_json.strip()])
+    if args.topn_chat_id.strip():
+        cmd.extend(["--chat-id", args.topn_chat_id.strip()])
+    if os.getenv("VE_HAOPENG_TOPN_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}:
+        cmd.append("--dry-run")
+
+    try:
+        _run(cmd)
+    except subprocess.CalledProcessError as e:
+        print(f"[haopeng-topn] 生成/推送失败（exit={e.returncode}），主流程继续。")
 
 
 def _extract_ad_keys(raw_payload: dict) -> list[str]:
@@ -468,6 +539,15 @@ def main() -> None:
     args = parse_args()
     bitable_url = _resolve_bitable_url(args)
     cluster_bitable_url = _resolve_cluster_bitable_url(args)
+    competitor_sync = sync_competitor_config_if_enabled(bitable_url=bitable_url)
+    if competitor_sync.ok:
+        print(
+            f"[competitor-list] 已从多维表竞品list同步 {competitor_sync.competitor_count} 个正式竞品 "
+            f"-> {Path(competitor_sync.config_path).name}"
+        )
+        os.environ["VE_COMPETITOR_LIST_ALREADY_SYNCED"] = "1"
+    else:
+        print(f"[competitor-list] 未同步，沿用本地竞品配置：{competitor_sync.error}")
     if args.date:
         target_date = args.date
     else:
@@ -1137,7 +1217,10 @@ def main() -> None:
     else:
         print("[sync] 已按参数跳过多维表同步（--no-bitable-sync）。")
 
-    # 5) 飞书卡片推送（独立于多维表同步）
+    # 5) 浩鹏 TopN 二次筛选与推送：从主多维表读取目标日素材和历史反馈。
+    _run_haopeng_topn_push(py, args, target_date)
+
+    # 6) 飞书卡片推送（独立于多维表同步）
     if not args.no_card:
         card_cmd = [
             py,
@@ -1153,7 +1236,7 @@ def main() -> None:
     else:
         print("[card] 已按参数跳过飞书卡片推送（--no-card）。")
 
-    # 6) 将本次推送建议写入专用 pipeline DB（推送表）
+    # 7) 将本次推送建议写入专用 pipeline DB（推送表）
     init_pipeline_db()
     suggestion_payload = json.loads(sugg_json_path.read_text(encoding="utf-8")) if sugg_json_path.exists() else {}
 
@@ -1182,7 +1265,7 @@ def main() -> None:
         f"daily_ua_push_content: {n_push} 条。"
     )
 
-    # 7) 企业微信推送 + Google Sheet 同步
+    # 8) 企业微信推送 + Google Sheet 同步
     multi_cmd = [
         py,
         "-m",
