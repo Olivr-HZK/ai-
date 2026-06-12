@@ -77,6 +77,41 @@ def _short_key(value: Any, n: int = 12) -> str:
     return text[:n] + ("..." if len(text) > n else "")
 
 
+def _format_material_time(value: Any) -> str:
+    if value in (None, "", 0, "0"):
+        return "-"
+    text = str(value).strip()
+    try:
+        timestamp = float(text)
+    except (TypeError, ValueError):
+        return text
+    if abs(timestamp) > 10_000_000_000:
+        timestamp = timestamp / 1000
+    try:
+        return datetime.fromtimestamp(timestamp, timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    except (OSError, OverflowError, ValueError):
+        return text
+
+
+def _cover_filter_scope(row: dict[str, Any], target_date: str, matched_date: Any = "") -> str:
+    reason = str(row.get("reason") or "").strip()
+    if reason == "cover_style_cluster":
+        return "今日同样素材筛选"
+    if reason == "cover_style_cluster_vs_yesterday":
+        return "历史筛选"
+    if matched_date and str(matched_date) == target_date:
+        return "今日同样素材筛选"
+    return "历史筛选"
+
+
+def _cover_group_scope_label(scope_counts: Counter[str]) -> str:
+    if scope_counts.get("今日同样素材筛选") and not scope_counts.get("历史筛选"):
+        return "今日同样素材筛选"
+    if scope_counts.get("历史筛选") and not scope_counts.get("今日同样素材筛选"):
+        return "历史筛选"
+    return "混合筛选"
+
+
 def _first_text(row: dict[str, Any]) -> str:
     for key in ("effect_one_liner", "play_fingerprint", "ad_one_liner", "title", "body"):
         value = str(row.get(key) or "").strip()
@@ -199,6 +234,8 @@ def _raw_today_rows(raw_payload: dict[str, Any], product_by_appid: dict[str, str
             "video_url": "",
             "title": str(creative.get("title") or ""),
             "body": str(creative.get("body") or ""),
+            "first_seen": creative.get("first_seen") or item.get("first_seen") or "",
+            "created_at": creative.get("created_at") or item.get("created_at") or "",
         }
         for res in creative.get("resource_urls") or []:
             if isinstance(res, dict):
@@ -288,6 +325,8 @@ def _review_row_from_raw_item(
         "appid",
         "platform",
         "creative_type",
+        "advertiser_name",
+        "page_name",
         "title",
         "body",
         "preview_img_url",
@@ -489,6 +528,22 @@ def _query_creative_meta(ad_keys: set[str]) -> dict[str, dict[str, Any]]:
             )
             for row in cur.fetchall():
                 out[str(row["ad_key"])] = dict(row)
+            cur.execute(
+                f"""
+                SELECT ad_key, MIN(NULLIF(first_seen, 0)) AS first_seen,
+                       MIN(NULLIF(created_at, 0)) AS created_at
+                FROM daily_creative_insights
+                WHERE ad_key IN ({ph})
+                GROUP BY ad_key
+                """,
+                chunk,
+            )
+            for row in cur.fetchall():
+                current = out.setdefault(str(row["ad_key"]), {"ad_key": str(row["ad_key"])})
+                if row["first_seen"] not in (None, ""):
+                    current["first_seen"] = row["first_seen"]
+                if row["created_at"] not in (None, ""):
+                    current["created_at"] = row["created_at"]
         return out
     finally:
         conn.close()
@@ -881,7 +936,13 @@ def _card_html(
     link = _media_url(row)
     open_a = f'<a href="{_h(link)}" target="_blank" rel="noreferrer">' if link else ""
     close_a = "</a>" if link else ""
-    kv = [("ad_key", ad_key), ("产品", row.get("product") or ""), *extra]
+    kv = [
+        ("ad_key", ad_key),
+        ("产品", row.get("product") or ""),
+        ("First seen", _format_material_time(row.get("first_seen"))),
+        ("Created at", _format_material_time(row.get("created_at"))),
+        *extra,
+    ]
     kv_html = "".join(f"<div>{_h(k)}</div><div>{_h(v)}</div>" for k, v in kv)
     return (
         f'<article class="card"><div class="thumb">{open_a}{img_html}{close_a}'
@@ -900,7 +961,10 @@ def _render_cover_section(
     meta: dict[str, dict[str, Any]],
     today_meta: dict[str, dict[str, Any]],
 ) -> str:
-    parts = [f'<h2 class="section-title">{_h(title)}</h2>']
+    parts = [
+        f'<h2 class="section-title">{_h(title)}</h2>',
+        '<div class="note">筛选类型说明：今日同样素材筛选 = 目标日内部相似素材合并，只保留当日代表；历史筛选 = 命中目标日前历史素材或历史指纹。</div>',
+    ]
     for idx, group in enumerate(groups, 1):
         kept_key = str(group["key"])
         members = group["members"]
@@ -909,18 +973,33 @@ def _render_cover_section(
         product = str(hist.get("product") or members[0].get("product") or "")
         dates = sorted({str(m.get("matched_date") or m.get("first_seen_date") or hist.get("first_target_date") or "") for m in members})
         reasons = sorted({str(m.get("reason") or mode) for m in members})
+        scope_counts: Counter[str] = Counter(
+            _cover_filter_scope(m, target_date, m.get("matched_date") or m.get("first_seen_date") or hist.get("first_target_date") or "")
+            for m in members
+        )
+        scope_label = _cover_group_scope_label(scope_counts)
+        representative_ribbon = "今日代表" if scope_label == "今日同样素材筛选" else ("历史命中" if scope_label == "历史筛选" else "命中代表")
+        representative_subtitle = "今日同样素材代表" if scope_label == "今日同样素材筛选" else ("历史筛选代表" if scope_label == "历史筛选" else "混合筛选代表")
         search_blob = " ".join(
-            [product, appid, kept_key, _first_text(hist), " ".join(str(m.get("ad_key") or "") for m in members), " ".join(reasons)]
+            [
+                product,
+                appid,
+                kept_key,
+                _first_text(hist),
+                " ".join(str(m.get("ad_key") or "") for m in members),
+                " ".join(reasons),
+                " ".join(scope_counts),
+            ]
         ).lower()
         cards = [
             _card_html(
                 target_date,
                 kept_key,
                 hist,
-                "历史命中",
+                representative_ribbon,
                 "keep",
-                "历史代表封面",
-                [("首次", hist.get("first_target_date") or ", ".join(dates)), ("展示", hist.get("best_all_exposure_value") or hist.get("exposure") or "-")],
+                representative_subtitle,
+                [("筛选类型", scope_label), ("代表日期", hist.get("first_target_date") or ", ".join(dates)), ("展示", hist.get("best_all_exposure_value") or hist.get("exposure") or "-")],
             )
         ]
         for member in members:
@@ -939,19 +1018,27 @@ def _render_cover_section(
                 row["image_url"] = hist.get("image_url") or ""
                 row["video_url"] = normalize_video_url_for_consumption(str(hist.get("video_url") or ""))
                 row["title"] = row.get("title") or "同簇代表封面"
+            today_date = row.get("target_date") or member.get("target_date") or target_date
+            matched_date = member.get("matched_date") or member.get("first_seen_date") or hist.get("first_target_date") or ""
+            filter_scope = _cover_filter_scope(member, target_date, matched_date)
+            match_date_label = "今日代表日期" if filter_scope == "今日同样素材筛选" else "历史命中日期"
             extra = [
+                ("筛选类型", filter_scope),
+                ("今日素材日期", today_date),
+                (match_date_label, matched_date),
                 ("命中", kept_key),
-                ("日期", member.get("matched_date") or ""),
                 ("原因", member.get("reason") or ""),
             ]
             if member.get("similarity") not in (None, ""):
                 extra.append(("相似度", member.get("similarity")))
-            cards.append(_card_html(target_date, ad_key, row, "今日剔除", "drop", "跨日重复封面", extra))
+            cards.append(_card_html(target_date, ad_key, row, "今日剔除", "drop", filter_scope, extra))
         parts.append(
             f'<section class="cluster" data-search="{_h(search_blob)}">'
-            f'<div class="cluster-head"><div><div class="cluster-title">{_h(mode)} 簇 {idx:02d} · {_h(product)}</div>'
-            f'<div class="cluster-meta">appid: {_h(appid)} · 历史日期: {_h(", ".join(d for d in dates if d) or "-")}</div></div>'
-            f'<div class="badges"><span class="badge keep">历史代表 {_h(_short_key(kept_key))}</span>'
+            f'<div class="cluster-head"><div><div class="cluster-title">{_h(mode)} 簇 {idx:02d} · {_h(scope_label)} · {_h(product)}</div>'
+            f'<div class="cluster-meta">appid: {_h(appid)} · 证据日期: {_h(", ".join(d for d in dates if d) or "-")}</div></div>'
+            f'<div class="badges"><span class="badge keep">{_h(representative_ribbon)} {_h(_short_key(kept_key))}</span>'
+            f'<span class="badge warn">今日同样素材筛选 {scope_counts.get("今日同样素材筛选", 0)} 条</span>'
+            f'<span class="badge reason">历史筛选 {scope_counts.get("历史筛选", 0)} 条</span>'
             f'<span class="badge drop">今日剔除 {len(members)} 条</span>'
             f'<span class="badge reason">{_h(", ".join(reasons))}</span></div></div>'
             f'<div class="cards">{"".join(cards)}</div></section>'
@@ -1120,6 +1207,8 @@ def _merge_item_meta(item: dict[str, Any], meta: dict[str, dict[str, Any]], toda
         "appid",
         "platform",
         "creative_type",
+        "advertiser_name",
+        "page_name",
         "title",
         "body",
         "preview_img_url",
@@ -1132,6 +1221,8 @@ def _merge_item_meta(item: dict[str, Any], meta: dict[str, dict[str, Any]], toda
         "best_all_exposure_value",
         "best_impression",
         "all_exposure_value",
+        "first_seen",
+        "created_at",
     ):
         value = item.get(key)
         if value not in (None, ""):
@@ -1180,6 +1271,67 @@ def _render_material_section(
             f'<div class="cluster-head"><div><div class="cluster-title">{_h(product)}</div>'
             f'<div class="cluster-meta">{len(items)} 条素材</div></div>'
             f'<div class="badges"><span class="badge {ribbon_cls}">{_h(ribbon)}</span></div></div>'
+            f'<div class="cards">{"".join(cards)}</div></section>'
+        )
+    return "".join(parts)
+
+
+def _render_advertiser_grouped_material_section(
+    *,
+    title: str,
+    rows: list[dict[str, Any]],
+    target_date: str,
+    meta: dict[str, dict[str, Any]],
+    today_meta: dict[str, dict[str, Any]],
+    ribbon: str,
+    ribbon_cls: str,
+    empty_text: str,
+) -> str:
+    parts = [f'<h2 class="section-title">{_h(title)}</h2>']
+    if not rows:
+        parts.append(f'<div class="note">{_h(empty_text)}</div>')
+        return "".join(parts)
+
+    by_advertiser: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in rows:
+        row = _merge_item_meta(item, meta, today_meta)
+        advertiser = str(
+            row.get("advertiser_name")
+            or item.get("advertiser_name")
+            or row.get("page_name")
+            or item.get("page_name")
+            or "未知广告主"
+        ).strip() or "未知广告主"
+        by_advertiser[advertiser].append({**item, "_row": row})
+
+    for advertiser, items in sorted(by_advertiser.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        products = sorted({str((item.get("_row") or {}).get("product") or item.get("product") or "未知") for item in items})
+        search_blob = " ".join(
+            [
+                advertiser,
+                " ".join(products),
+                " ".join(str(item.get("ad_key") or "") for item in items),
+                " ".join(str((item.get("_row") or {}).get("effect_one_liner") or "") for item in items),
+                " ".join(str((item.get("_row") or {}).get("play_fingerprint") or "") for item in items),
+            ]
+        ).lower()
+        cards: list[str] = []
+        for item in items:
+            row = item.get("_row") or {}
+            ad_key = str(row.get("ad_key") or item.get("ad_key") or "")
+            extra = [
+                ("状态", item.get("_review_status") or ribbon),
+                ("玩法资产", item.get("_play_asset_name") or "待沉淀"),
+                ("子标签", item.get("_play_asset_subtags") or "-"),
+                ("玩法族", _play_family(row, item)),
+                ("展示", row.get("best_all_exposure_value") or row.get("all_exposure_value") or row.get("best_impression") or "-"),
+            ]
+            cards.append(_card_html(target_date, ad_key, row, ribbon, ribbon_cls, _first_text(row), extra))
+        parts.append(
+            f'<section class="cluster" data-search="{_h(search_blob)}">'
+            f'<div class="cluster-head"><div><div class="cluster-title">{_h(advertiser)}</div>'
+            f'<div class="cluster-meta">{len(items)} 条素材 · 产品：{_h(", ".join(products))}</div></div>'
+            f'<div class="badges"><span class="badge {ribbon_cls}">{_h(ribbon)} {len(items)} 条</span></div></div>'
             f'<div class="cards">{"".join(cards)}</div></section>'
         )
     return "".join(parts)
@@ -1796,16 +1948,6 @@ def write_filter_review_dashboard(
         for product, vals in sorted(product_counts.items(), key=lambda kv: (-(kv[1]["clip"] + kv[1]["fingerprint"] + kv[1]["one_liner"]), kv[0]))
     )
 
-    def kept_extra(item: dict[str, Any], row: dict[str, Any]) -> list[tuple[str, Any]]:
-        return [
-            ("状态", item.get("_review_status") or "保留"),
-            ("玩法资产", item.get("_play_asset_name") or "待沉淀"),
-            ("子标签", item.get("_play_asset_subtags") or "-"),
-            ("资产置信", item.get("_play_asset_confidence") or "-"),
-            ("玩法族", _play_family(row)),
-            ("展示", row.get("best_all_exposure_value") or row.get("all_exposure_value") or row.get("best_impression") or "-"),
-        ]
-
     def push_extra(item: dict[str, Any], row: dict[str, Any]) -> list[tuple[str, Any]]:
         return [
             ("推送段", item.get("narrow_novelty_label") or item.get("play_asset_novelty_label") or "狭义新"),
@@ -1896,13 +2038,12 @@ def write_filter_review_dashboard(
     {_render_material_section(title="第三层 · 业务硬拦（不进多维表）", rows=business_hard_rows, target_date=target_date, meta=meta, today_meta=today_meta, ribbon="不入表", ribbon_cls="drop", empty_text="第三层没有业务硬拦素材", extra_builder=business_hard_extra)}
     {_render_play_asset_library_section(play_assets)}
     {_render_one_liner_section(one_liner_groups, target_date, meta, today_meta, cover_hit_by_ad)}
-    {_render_asset_grouped_material_section(title="未筛掉素材 · 按玩法资产归类", rows=kept_rows, target_date=target_date, meta=meta, today_meta=today_meta, ribbon="当前保留", ribbon_cls="keep", empty_text="没有保留素材")}
-    {_render_material_section(title="未筛掉 / 当前看板保留素材", rows=kept_rows, target_date=target_date, meta=meta, today_meta=today_meta, ribbon="当前保留", ribbon_cls="keep", empty_text="没有保留素材", extra_builder=kept_extra)}
     <h2 class="section-title">日报推送筛选逻辑</h2>
     <div class="note">{_h(daily_funnel_note)}</div>
     {_render_material_section(title="日报新玩法 / 老玩法新迭代推送段", rows=new_push_rows, target_date=target_date, meta=meta, today_meta=today_meta, ribbon="进入推送", ribbon_cls="keep", empty_text="没有日报狭义新素材", extra_builder=push_extra)}
     {_render_material_section(title="日报新口径未推送素材", rows=asset_variant_filtered_rows, target_date=target_date, meta=meta, today_meta=today_meta, ribbon="未推送", ribbon_cls="warn", empty_text="没有被新日报口径过滤掉的素材", extra_builder=asset_variant_filtered_extra)}
     {_render_material_section(title="口径差异：只从聚类剔除、未从日报候选硬拦", rows=cluster_only_rows, target_date=target_date, meta=meta, today_meta=today_meta, ribbon="cluster-only", ribbon_cls="warn", empty_text="没有 cluster-only 差异素材", extra_builder=cluster_only_extra)}
+    {_render_advertiser_grouped_material_section(title="今天同步多维表素材 · 按广告主", rows=final_bitable_rows, target_date=target_date, meta=meta, today_meta=today_meta, ribbon="已同步多维表", ribbon_cls="keep", empty_text="没有同步到多维表的素材")}
   </main>
   <script>
     const search = document.querySelector('#search');

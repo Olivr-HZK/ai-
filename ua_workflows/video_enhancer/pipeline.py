@@ -25,6 +25,7 @@ python scripts/workflow_video_enhancer_full_pipeline.py \
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import subprocess
@@ -32,13 +33,14 @@ import sys
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs, urlparse
 
 from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT, load_project_env, project_env_values
 
 load_project_env()
 
-from ua_workflows.shared.llm.client import print_openrouter_key_meter
+from ua_workflows.shared.llm.client import flush_usage, print_openrouter_key_meter
 
 from ua_workflows.shared.media.cover_embedding import maybe_run_cover_embedding_after_library
 from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
@@ -46,6 +48,17 @@ from ua_workflows.video_enhancer.cover_dedupe import apply_intraday_cover_style_
 from ua_workflows.video_enhancer.crawl_similarity import merge_cover_similarity_counts
 from ua_workflows.video_enhancer.competitor_list import sync_competitor_config_if_enabled
 from ua_workflows.video_enhancer.review_dashboard import write_filter_review_dashboard
+from ua_workflows.video_enhancer.video_content_backfill import (
+    apply_llm_video_content_fallback_to_missing,
+    apply_video_content_records_to_raw_payload,
+    fetch_missing_video_content_by_adkeys,
+    material_video_content_from_creative,
+)
+from ua_workflows.video_enhancer.video_content_llm_filter import run_pipeline_llm_video_content_filter
+from ua_workflows.video_enhancer.video_content_minimal_analysis import (
+    apply_minimal_analysis_to_results,
+    seed_analysis_results_from_raw,
+)
 
 from ua_workflows.video_enhancer.filter_reports import (
     write_cover_filter_step_json,
@@ -249,9 +262,31 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, **kwargs)
 
 
-def _env_flag_enabled(name: str, default: str = "1") -> bool:
-    value = (os.getenv(name) or default).strip().lower()
-    return value not in ("0", "false", "no", "off", "")
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
 
 
 def _resolve_topn_send_mode(args: argparse.Namespace) -> str:
@@ -264,8 +299,8 @@ def _resolve_topn_send_mode(args: argparse.Namespace) -> str:
 
 
 def _run_haopeng_topn_push(py: str, args: argparse.Namespace, target_date: str) -> None:
-    if args.no_topn_push or not _env_flag_enabled("VE_HAOPENG_TOPN_PUSH_ENABLED", "1"):
-        print("[haopeng-topn] 已跳过（--no-topn-push 或 VE_HAOPENG_TOPN_PUSH_ENABLED=0）。")
+    if args.no_topn_push or not _env_bool("VE_HAOPENG_TOPN_ENABLED", False):
+        print("[haopeng-topn] 已跳过（--no-topn-push 或 VE_HAOPENG_TOPN_ENABLED 未开启）。")
         return
 
     cmd = [
@@ -307,6 +342,132 @@ def _extract_ad_keys(raw_payload: dict) -> list[str]:
         seen.add(k)
         out.append(k)
     return out
+
+
+def _video_content_records_from_raw_payload(raw_payload: dict[str, Any], target_date: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in raw_payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        creative = item.get("creative")
+        if not isinstance(creative, dict):
+            continue
+        ad_key = str(creative.get("ad_key") or "").strip()
+        if not ad_key:
+            continue
+        video_content, content_source = material_video_content_from_creative(creative)
+        records.append(
+            {
+                "target_date": target_date,
+                "ad_key": ad_key,
+                "product": _product_from_item(item),
+                "appid": str(item.get("appid") or creative.get("appid") or "").strip(),
+                "video_content": video_content,
+                "content_source": content_source,
+                "raw_found": True,
+                "preview_img_url": str(creative.get("preview_img_url") or "").strip(),
+                "video_url": str(creative.get("video_url") or "").strip(),
+                "image_url": str(creative.get("image_url") or "").strip(),
+                "raw_item": item,
+            }
+        )
+    return records
+
+
+def _count_missing_video_content(records: list[dict[str, Any]]) -> int:
+    return sum(1 for record in records if not str(record.get("video_content") or "").strip())
+
+
+def _fill_video_content_after_cover(
+    raw_payload: dict[str, Any],
+    *,
+    target_date: str,
+    output_prefix: str,
+    backfill_fn: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    llm_fallback_fn: Callable[..., dict[str, Any]] | None = None,
+    write_report: bool = True,
+) -> dict[str, Any]:
+    records = _video_content_records_from_raw_payload(raw_payload, target_date)
+    initial_missing = _count_missing_video_content(records)
+    summary: dict[str, Any] = {
+        "target_date": target_date,
+        "total": len(records),
+        "initial_with_video_content": len(records) - initial_missing,
+        "initial_missing_video_content": initial_missing,
+        "guangdada_backfill_enabled": _env_bool("VE_VIDEO_CONTENT_BACKFILL_ENABLED", True),
+        "llm_fallback_enabled": _env_bool("VE_VIDEO_CONTENT_LLM_FALLBACK_ENABLED", True),
+        "guangdada_backfill": {"skipped": True},
+        "llm_fallback": {"skipped": True},
+        "raw_payload_updated": 0,
+    }
+    if not records or not initial_missing:
+        summary["with_video_content"] = len(records) - initial_missing
+        summary["missing_video_content"] = initial_missing
+        return summary
+
+    if summary["guangdada_backfill_enabled"]:
+        if backfill_fn is None:
+            backfill_fn = fetch_missing_video_content_by_adkeys
+        try:
+            summary["guangdada_backfill"] = asyncio.run(
+                backfill_fn(
+                    records,
+                    retries=max(1, _env_int("VE_VIDEO_CONTENT_BACKFILL_RETRIES", 3)),
+                    debug=_env_bool("VE_VIDEO_CONTENT_BACKFILL_DEBUG", False),
+                    setup_search=True,
+                    max_scroll_rounds=max(1, _env_int("VE_VIDEO_CONTENT_BACKFILL_MAX_SCROLL_ROUNDS", 1)),
+                    use_direct=_env_bool("VE_VIDEO_CONTENT_BACKFILL_USE_DIRECT", True),
+                    date_range=None,
+                    skip_time_filter=True,
+                )
+            )
+        except Exception as exc:
+            summary["guangdada_backfill"] = {"error": str(exc)}
+
+    if _count_missing_video_content(records) and summary["llm_fallback_enabled"]:
+        if llm_fallback_fn is None:
+            llm_fallback_fn = apply_llm_video_content_fallback_to_missing
+        try:
+            summary["llm_fallback"] = llm_fallback_fn(
+                records,
+                limit=max(0, _env_int("VE_VIDEO_CONTENT_LLM_FALLBACK_LIMIT", 0)),
+            )
+        except Exception as exc:
+            summary["llm_fallback"] = {"error": str(exc)}
+
+    summary["raw_payload_updated"] = apply_video_content_records_to_raw_payload(raw_payload, records)
+    missing = _count_missing_video_content(records)
+    summary["with_video_content"] = len(records) - missing
+    summary["missing_video_content"] = missing
+    if write_report:
+        path = DATA_DIR / f"{output_prefix}_video_content_fill_report.json"
+        path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        summary["report_path"] = str(path)
+    return summary
+
+
+def _print_video_content_fill_summary(summary: dict[str, Any]) -> None:
+    initial_missing = int(summary.get("initial_missing_video_content") or 0)
+    if not initial_missing:
+        print("\n[step:video-content] 封面后素材均已有视频内容，无需补抓/兜底。")
+        return
+    backfill = summary.get("guangdada_backfill") if isinstance(summary.get("guangdada_backfill"), dict) else {}
+    llm = summary.get("llm_fallback") if isinstance(summary.get("llm_fallback"), dict) else {}
+    direct = backfill.get("direct") if isinstance(backfill.get("direct"), dict) else {}
+    search = backfill.get("search") if isinstance(backfill.get("search"), dict) else {}
+    report = Path(str(summary.get("report_path") or "")).name if summary.get("report_path") else ""
+    print(
+        "\n[step:video-content] 三层视频内容补全："
+        f"初始缺失 {initial_missing}，"
+        f"广大大 direct+search 补到 {int(direct.get('updated') or 0) + int(search.get('updated') or 0)}，"
+        f"LLM 兜底补到 {int(llm.get('updated') or 0)}，"
+        f"最终缺失 {summary.get('missing_video_content', 0)}"
+        + (f"；报告 {report}" if report else "")
+    )
+    if backfill.get("error"):
+        print(f"  · 广大大补抓失败，已继续 LLM 兜底：{backfill.get('error')}")
+    if llm.get("error"):
+        print(f"  · LLM 兜底失败：{llm.get('error')}")
 
 
 _CRAWL_REMOVAL_LABELS = {
@@ -636,6 +797,12 @@ def main() -> None:
         output_prefix=output_prefix,
         target_date=target_date,
     )
+    video_content_summary = _fill_video_content_after_cover(
+        raw_payload,
+        target_date=target_date,
+        output_prefix=output_prefix,
+    )
+    _print_video_content_fill_summary(video_content_summary)
     raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     detail = (raw_payload.get("filter_report") or {}).get("inspiration_detail") or {}
     print("\n[step:inspiration-gate] 灵感分析准入（raw 不删条，仅统计）")
@@ -669,8 +836,82 @@ def main() -> None:
         "filter_report": raw_payload.get("filter_report"),
     }
 
+    llm_video_filter_payload: dict[str, Any] = {}
+    llm_video_filter_apply: dict[str, Any] = {}
+    n_llm_video_filter = 0
+    llm_video_filter_already_applied = False
+    text_only_analysis_by_ad: dict[str, dict[str, Any]] = {}
+    text_only_flow_enabled = _env_bool("VE_VIDEO_CONTENT_TEXT_ONLY_FLOW_ENABLED", True)
+    if text_only_flow_enabled:
+        text_only_results = seed_analysis_results_from_raw(
+            pipeline_raw_payload,
+            target_date=target_date,
+        )
+        if _env_bool("VE_LLM_VIDEO_FILTER_ENABLED", True):
+            try:
+                llm_video_filter_payload = run_pipeline_llm_video_content_filter(
+                    target_date=target_date,
+                    raw_payload=pipeline_raw_payload,
+                    analysis_results=text_only_results,
+                    output_prefix=output_prefix,
+                    model=(os.getenv("VE_LLM_VIDEO_FILTER_MODEL") or "qwen/qwen3.7-max").strip(),
+                    timeout=_env_float("VE_LLM_VIDEO_FILTER_TIMEOUT", 90.0),
+                    chunk_size=max(1, _env_int("VE_LLM_VIDEO_FILTER_CHUNK_SIZE", 3)),
+                    max_workers=max(1, _env_int("VE_LLM_VIDEO_FILTER_MAX_WORKERS", 4)),
+                    history_days=max(1, _env_int("VE_LLM_VIDEO_FILTER_HISTORY_DAYS", 7)),
+                )
+                llm_video_filter_apply = llm_video_filter_payload.get("apply_summary") or {}
+                n_llm_video_filter = int(llm_video_filter_apply.get("applied") or 0)
+                llm_video_filter_already_applied = True
+            except Exception as e:
+                llm_video_filter_payload = {"error": str(e)}
+                llm_video_filter_apply = {}
+                n_llm_video_filter = 0
+                print(f"[llm-video-filter] pre-analysis skipped: {e}")
+        else:
+            print("[llm-video-filter] 已关闭（VE_LLM_VIDEO_FILTER_ENABLED=0），跳过同步前视频内容大模型筛选。")
+
+        minimal_summary = apply_minimal_analysis_to_results(
+            text_only_results,
+            model=(os.getenv("VE_VIDEO_CONTENT_MINIMAL_ANALYSIS_MODEL") or os.getenv("VE_LLM_VIDEO_FILTER_MODEL") or "qwen/qwen3.7-max").strip(),
+            timeout=_env_float("VE_VIDEO_CONTENT_MINIMAL_ANALYSIS_TIMEOUT", 60.0),
+            max_workers=max(1, _env_int("VE_VIDEO_CONTENT_MINIMAL_ANALYSIS_WORKERS", 6)),
+        )
+        minimal_report_path = DATA_DIR / f"{output_prefix}_video_content_minimal_analysis.json"
+        minimal_report_path.write_text(
+            json.dumps(
+                {
+                    "target_date": target_date,
+                    "mode": "video_content_text_only",
+                    "llm_filter_summary": (llm_video_filter_payload.get("summary") if isinstance(llm_video_filter_payload, dict) else {}),
+                    "apply_summary": llm_video_filter_apply,
+                    "minimal_analysis_summary": minimal_summary,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        flush_usage(target_date)
+        text_only_analysis_by_ad = {
+            str(row.get("ad_key") or "").strip(): row
+            for row in text_only_results
+            if isinstance(row, dict) and str(row.get("ad_key") or "").strip()
+        }
+        print(
+            "\n[step:text-only-analysis] 已启用视频内容轻量分析替代多模态："
+            f"候选 {minimal_summary.get('total', 0)}，"
+            f"LLM筛掉 {n_llm_video_filter}，"
+            f"生成核心卖点 {minimal_summary.get('generated', 0)}，"
+            f"本地兜底 {minimal_summary.get('fallback', 0)}；报告 {minimal_report_path.name}"
+        )
+    else:
+        print("[step:text-only-analysis] 已关闭（VE_VIDEO_CONTENT_TEXT_ONLY_FLOW_ENABLED=0），继续旧多模态分析流程。")
+
     pipeline_ad_keys = _extract_ad_keys(pipeline_raw_payload)
     existing_analysis = load_existing_success_analysis_by_ad_keys(pipeline_ad_keys)
+    if text_only_analysis_by_ad:
+        existing_analysis.update(text_only_analysis_by_ad)
 
     _lb = resolve_inspiration_crossday_lookback_days()
     deduped_items, dedup_report = get_deduped_items_for_analysis(
@@ -902,6 +1143,56 @@ def main() -> None:
             "（主表不同步；不进入方向卡片）"
         )
 
+    # 2.8b) 视频内容大模型筛选：同广告主内做历史去重 + 日内去重，并补充业务硬拦
+    llm_video_filter_enabled = _env_bool("VE_LLM_VIDEO_FILTER_ENABLED", True)
+    if llm_video_filter_already_applied:
+        summary = llm_video_filter_payload.get("summary") if isinstance(llm_video_filter_payload, dict) else {}
+        final_counts = summary.get("final_counts") if isinstance(summary, dict) else {}
+        print(
+            "[llm-video-filter] 已在轻量分析前完成："
+            f"目标 {summary.get('target_records', 0) if isinstance(summary, dict) else 0} 条，"
+            f"业务硬拦 {final_counts.get('业务硬拦', 0) if isinstance(final_counts, dict) else 0}，"
+            f"历史重复 {final_counts.get('历史重复', 0) if isinstance(final_counts, dict) else 0}，"
+            f"日内重复 {final_counts.get('日内重复', 0) if isinstance(final_counts, dict) else 0}，"
+            f"保留 {final_counts.get('保留', 0) if isinstance(final_counts, dict) else 0}"
+        )
+    elif llm_video_filter_enabled:
+        try:
+            llm_video_filter_payload = run_pipeline_llm_video_content_filter(
+                target_date=target_date,
+                raw_payload=raw_payload,
+                analysis_results=combined_results,
+                output_prefix=output_prefix,
+                model=(os.getenv("VE_LLM_VIDEO_FILTER_MODEL") or "qwen/qwen3.7-max").strip(),
+                timeout=_env_float("VE_LLM_VIDEO_FILTER_TIMEOUT", 90.0),
+                chunk_size=max(1, _env_int("VE_LLM_VIDEO_FILTER_CHUNK_SIZE", 3)),
+                max_workers=max(1, _env_int("VE_LLM_VIDEO_FILTER_MAX_WORKERS", 4)),
+                history_days=max(1, _env_int("VE_LLM_VIDEO_FILTER_HISTORY_DAYS", 7)),
+            )
+            llm_video_filter_apply = llm_video_filter_payload.get("apply_summary") or {}
+            n_llm_video_filter = int(llm_video_filter_apply.get("applied") or 0)
+            summary = llm_video_filter_payload.get("summary") or {}
+            final_counts = summary.get("final_counts") or {}
+            report_name = Path(str(summary.get("report_path") or "")).name if summary.get("report_path") else ""
+            print(
+                "[llm-video-filter] 视频内容大模型筛选："
+                f"目标 {summary.get('target_records', 0)} 条，"
+                f"业务硬拦 {final_counts.get('业务硬拦', 0)}，"
+                f"历史重复 {final_counts.get('历史重复', 0)}，"
+                f"日内重复 {final_counts.get('日内重复', 0)}，"
+                f"保留 {final_counts.get('保留', 0)}，"
+                f"workers={summary.get('max_workers', 1)}"
+                + (f"；报告 {report_name}" if report_name else "")
+            )
+            flush_usage(target_date)
+        except Exception as e:
+            llm_video_filter_payload = {"error": str(e)}
+            llm_video_filter_apply = {}
+            n_llm_video_filter = 0
+            print(f"[llm-video-filter] skipped: {e}")
+    else:
+        print("[llm-video-filter] 已关闭（VE_LLM_VIDEO_FILTER_ENABLED=0），跳过视频内容大模型筛选。")
+
     # 2.8d) 日内玩法硬去重（默认关闭）：同 appid 同批次相似玩法仅保留展示估值更高的代表素材
     intraday_effect_details: list[dict] = []
     n_intraday_effect = 0
@@ -1032,6 +1323,8 @@ def main() -> None:
     if human_photo_details:
         sample = human_photo_details[:3]
         print(f"[human-photo-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
+    if llm_video_filter_apply:
+        print(f"[llm-video-filter] 应用摘要：{json.dumps(llm_video_filter_apply, ensure_ascii=False)}")
     if intraday_effect_details:
         sample = intraday_effect_details[:3]
         print(f"[intraday-effect-filter] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
@@ -1046,7 +1339,16 @@ def main() -> None:
         print(f"[embedding-dup-candidate] 命中样例：{json.dumps(sample, ensure_ascii=False)}")
 
     # 如有 2.8/2.9 标记，回写 analysis JSON
-    if n_adult or n_human_photo or n_intraday_effect or n_old_effect or n_effect_embedding_dup or n_embedding_dup or n_le:
+    if (
+        n_adult
+        or n_human_photo
+        or n_llm_video_filter
+        or n_intraday_effect
+        or n_old_effect
+        or n_effect_embedding_dup
+        or n_embedding_dup
+        or n_le
+    ):
         analysis_payload["results"] = combined_results
         analysis_path.write_text(json.dumps(analysis_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

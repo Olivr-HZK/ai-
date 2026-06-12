@@ -58,6 +58,7 @@ def init_db() -> None:
               impression INTEGER,
               country_codes_json TEXT,
               geo_targeting_json TEXT,
+              guangdada_video_content TEXT,
               raw_json TEXT,
               insight_analysis TEXT,
               insight_ua_suggestion TEXT,
@@ -163,6 +164,7 @@ def init_db() -> None:
               -- 分析结果
               insight_analysis TEXT,
               insight_ua_suggestion TEXT,
+              guangdada_video_content TEXT,
 
               -- 相似性备注
               dedup_reason TEXT,            -- 'exact'|'ahash'|'text'|'manual'
@@ -296,6 +298,16 @@ def init_db() -> None:
             cur.execute("ALTER TABLE creative_library ADD COLUMN country_codes_json TEXT")
         if "geo_targeting_json" not in cl_cols_geo:
             cur.execute("ALTER TABLE creative_library ADD COLUMN geo_targeting_json TEXT")
+        # Guangdada detail page built-in video-content paragraph. Only this
+        # text is persisted for future text dedupe experiments.
+        cur.execute("PRAGMA table_info(daily_creative_insights)")
+        dci_cols_gdd = {str(r["name"]) for r in cur.fetchall()}
+        if "guangdada_video_content" not in dci_cols_gdd:
+            cur.execute("ALTER TABLE daily_creative_insights ADD COLUMN guangdada_video_content TEXT")
+        cur.execute("PRAGMA table_info(creative_library)")
+        cl_cols_gdd = {str(r["name"]) for r in cur.fetchall()}
+        if "guangdada_video_content" not in cl_cols_gdd:
+            cur.execute("ALTER TABLE creative_library ADD COLUMN guangdada_video_content TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -518,6 +530,7 @@ def upsert_creative_library(
             all_exp = int(creative.get("all_exposure_value") or 0)
             country_codes_json = _country_codes_json_from_creative(creative)
             geo_targeting_json = _geo_targeting_json_from_creative(creative)
+            guangdada_video_content = _guangdada_video_content_from_creative(creative)
             analysis_raw = analysis_by_ad.get(ad_key, "")
             if isinstance(analysis_raw, dict):
                 analysis = str(analysis_raw.get("analysis") or "")
@@ -632,6 +645,9 @@ def upsert_creative_library(
                          geo_targeting_json = CASE
                            WHEN COALESCE(TRIM(?), '') <> ''
                            THEN ? ELSE geo_targeting_json END,
+                         guangdada_video_content = CASE
+                           WHEN COALESCE(TRIM(?), '') <> ''
+                           THEN ? ELSE guangdada_video_content END,
                          updated_at_local = datetime('now','localtime')
                        WHERE ad_key = ?""",
                     (target_date, inc, new_heat, new_imp, new_exp,
@@ -652,6 +668,7 @@ def upsert_creative_library(
                      play_asset_classification_reason, play_asset_classification_reason,
                      country_codes_json, country_codes_json,
                      geo_targeting_json, geo_targeting_json,
+                     guangdada_video_content, guangdada_video_content,
                      ad_key),
                 )
                 upserted += 1
@@ -738,14 +755,14 @@ def upsert_creative_library(
                      best_heat, best_impression, best_all_exposure_value,
                      country_codes_json, geo_targeting_json,
                      first_target_date, last_target_date, appearance_count,
-                     insight_analysis, insight_ua_suggestion, insight_cover_style, dedup_reason,
+                     insight_analysis, insight_ua_suggestion, guangdada_video_content, insight_cover_style, dedup_reason,
                      effect_one_liner, ad_one_liner,
                      play_fingerprint, differentiator, template_fingerprint,
                      play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
                      play_asset_novelty_label, play_asset_match_source, play_asset_classification_reason,
                      created_at_local, updated_at_local
                    ) VALUES (
-                     ?, ?, ?, ?,
+                     ?, ?, ?, ?, ?,
                      ?, ?,
                      ?, ?, ?, ?,
                      ?, ?,
@@ -770,7 +787,7 @@ def upsert_creative_library(
                     heat, impression, all_exp,
                     country_codes_json, geo_targeting_json,
                     target_date, target_date,
-                    analysis, ua_single, cover_style_str, dedup_reason,
+                    analysis, ua_single, guangdada_video_content, cover_style_str, dedup_reason,
                     effect_one_liner, ad_one_liner,
                     play_fingerprint, differentiator, template_fingerprint,
                     play_asset_id, play_asset_name, play_asset_subtag_ids, play_asset_subtag_names,
@@ -855,6 +872,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           first_seen, created_at, last_seen,
           heat, all_exposure_value, impression,
           country_codes_json, geo_targeting_json,
+          guangdada_video_content,
           raw_json, insight_analysis, insight_ua_suggestion, insight_cover_style,
           effect_one_liner, ad_one_liner,
           play_fingerprint, differentiator, template_fingerprint,
@@ -869,6 +887,7 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
           ?, ?, ?,
           ?, ?, ?,
           ?, ?,
+          ?,
           ?, ?, ?, ?,
           ?, ?,
           ?, ?, ?,
@@ -898,6 +917,11 @@ UPSERT_DAILY_CREATIVE_INSIGHT_SQL = """
             WHEN COALESCE(TRIM(excluded.geo_targeting_json), '') <> ''
             THEN excluded.geo_targeting_json
             ELSE daily_creative_insights.geo_targeting_json
+          END,
+          guangdada_video_content=CASE
+            WHEN COALESCE(TRIM(excluded.guangdada_video_content), '') <> ''
+            THEN excluded.guangdada_video_content
+            ELSE daily_creative_insights.guangdada_video_content
           END,
           raw_json=excluded.raw_json,
           insight_analysis=CASE
@@ -1014,6 +1038,21 @@ def _json_for_optional(value: Any) -> str:
     return text
 
 
+def _guangdada_video_content_from_creative(creative: Dict[str, Any]) -> str:
+    text = str(creative.get("guangdada_video_content") or "").strip()
+    if text:
+        return text
+    # Backward compatibility for transient smoke outputs produced before the
+    # storage shape was narrowed to guangdada_video_content.
+    analysis = creative.get("guangdada_detail_analysis")
+    if not isinstance(analysis, dict):
+        return ""
+    script = analysis.get("script_analysis")
+    if not isinstance(script, dict):
+        return ""
+    return str(script.get("video_content") or "").strip()
+
+
 def _params_tuple_for_daily_creative_insight(
     crawl_date: Any,
     target_date: str,
@@ -1043,6 +1082,7 @@ def _params_tuple_for_daily_creative_insight(
     impression = creative.get("impression")
     country_codes_json = _country_codes_json_from_creative(creative)
     geo_targeting_json = _geo_targeting_json_from_creative(creative)
+    guangdada_video_content = _guangdada_video_content_from_creative(creative)
     raw_json = json.dumps(creative, ensure_ascii=False)
     if isinstance(analysis_raw, dict):
         insight = str(analysis_raw.get("analysis") or "")
@@ -1121,6 +1161,7 @@ def _params_tuple_for_daily_creative_insight(
         int(impression or 0) if impression is not None else None,
         country_codes_json,
         geo_targeting_json,
+        guangdada_video_content,
         raw_json,
         insight,
         ua_single,
@@ -2120,12 +2161,16 @@ def _row_from_item_and_patched_analysis(
         if isinstance(c.get("pipeline_tags"), list)
         else list(ex_meta.get("pipeline_tags") or []),
         "analysis": analysis,
-        "inspiration_enrichment": "none",
+        "inspiration_enrichment": str(ex_meta.get("inspiration_enrichment") or "none"),
         "ua_suggestion_single": ua_sugg,
-        "style_filter_match_summary": "",
+        "style_filter_match_summary": str(ex_meta.get("style_filter_match_summary") or ""),
         "material_tags": list(ex_meta.get("material_tags") or []),
         "arrow2_material_category": str(ex_meta.get("arrow2_material_category") or ""),
         "ad_one_liner": str(ex_meta.get("ad_one_liner") or ""),
+        "hook_one_liner": str(ex_meta.get("hook_one_liner") or ""),
+        "voiceover_script": str(ex_meta.get("voiceover_script") or ""),
+        "ad_breakdown": copy.deepcopy(ex_meta.get("ad_breakdown") or {}),
+        "risk_level": str(ex_meta.get("risk_level") or ""),
         "effect_one_liner": str(ex_meta.get("effect_one_liner") or ""),
         "play_fingerprint": str(ex_meta.get("play_fingerprint") or ""),
         "differentiator": str(ex_meta.get("differentiator") or ""),
@@ -2139,6 +2184,7 @@ def _row_from_item_and_patched_analysis(
         "play_asset_classification_reason": str(ex_meta.get("play_asset_classification_reason") or ""),
         "exclude_from_bitable": bool(ex_meta.get("exclude_from_bitable", False)),
         "exclude_from_cluster": bool(ex_meta.get("exclude_from_cluster", False)),
+        "llm_video_content_filter_match": copy.deepcopy(ex_meta.get("llm_video_content_filter_match") or {}),
     }
 
 
@@ -2183,6 +2229,13 @@ def combined_analysis_results_for_pipeline(
                         "video_url": ex.get("video_url", ""),
                         "preview_img_url": ex.get("preview_img_url", ""),
                         "pipeline_tags": ex.get("pipeline_tags") or [],
+                        "inspiration_enrichment": ex.get("inspiration_enrichment", ""),
+                        "style_filter_match_summary": ex.get("style_filter_match_summary", ""),
+                        "material_tags": ex.get("material_tags") or [],
+                        "hook_one_liner": ex.get("hook_one_liner", ""),
+                        "voiceover_script": ex.get("voiceover_script", ""),
+                        "ad_breakdown": ex.get("ad_breakdown") or {},
+                        "risk_level": ex.get("risk_level", ""),
                         "effect_one_liner": ex.get("effect_one_liner", ""),
                         "ad_one_liner": ex.get("ad_one_liner", ""),
                         "play_fingerprint": ex.get("play_fingerprint", ""),
@@ -2195,6 +2248,9 @@ def combined_analysis_results_for_pipeline(
                         "play_asset_novelty_label": ex.get("play_asset_novelty_label", ""),
                         "play_asset_match_source": ex.get("play_asset_match_source", ""),
                         "play_asset_classification_reason": ex.get("play_asset_classification_reason", ""),
+                        "exclude_from_bitable": ex.get("exclude_from_bitable", False),
+                        "exclude_from_cluster": ex.get("exclude_from_cluster", False),
+                        "llm_video_content_filter_match": ex.get("llm_video_content_filter_match") or {},
                     },
                 )
             )
@@ -2235,6 +2291,13 @@ def combined_analysis_results_for_pipeline(
                         "video_url": ex0.get("video_url", ""),
                         "preview_img_url": ex0.get("preview_img_url", ""),
                         "pipeline_tags": ex0.get("pipeline_tags") or [],
+                        "inspiration_enrichment": ex0.get("inspiration_enrichment", ""),
+                        "style_filter_match_summary": ex0.get("style_filter_match_summary", ""),
+                        "material_tags": ex0.get("material_tags") or [],
+                        "hook_one_liner": ex0.get("hook_one_liner", ""),
+                        "voiceover_script": ex0.get("voiceover_script", ""),
+                        "ad_breakdown": ex0.get("ad_breakdown") or {},
+                        "risk_level": ex0.get("risk_level", ""),
                         "effect_one_liner": ex0.get("effect_one_liner", ""),
                         "ad_one_liner": ex0.get("ad_one_liner", ""),
                         "play_fingerprint": ex0.get("play_fingerprint", ""),
@@ -2247,6 +2310,9 @@ def combined_analysis_results_for_pipeline(
                         "play_asset_novelty_label": ex0.get("play_asset_novelty_label", ""),
                         "play_asset_match_source": ex0.get("play_asset_match_source", ""),
                         "play_asset_classification_reason": ex0.get("play_asset_classification_reason", ""),
+                        "exclude_from_bitable": ex0.get("exclude_from_bitable", False),
+                        "exclude_from_cluster": ex0.get("exclude_from_cluster", False),
+                        "llm_video_content_filter_match": ex0.get("llm_video_content_filter_match") or {},
                     },
                 )
             else:

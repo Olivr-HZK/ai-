@@ -6,6 +6,155 @@ from unittest.mock import patch
 
 
 class VeTemplateNormalizationTest(unittest.TestCase):
+    def test_filter_review_cards_show_first_seen_and_created_at(self) -> None:
+        from unittest.mock import patch
+
+        from ua_workflows.video_enhancer.review_dashboard import _card_html
+
+        with patch("ua_workflows.video_enhancer.review_dashboard._local_image_path", return_value=""):
+            with patch("ua_workflows.video_enhancer.review_dashboard._cache_image", return_value=""):
+                html = _card_html(
+                    "2026-06-08",
+                    "ad_001",
+                    {
+                        "product": "Pixverse",
+                        "title": "素材标题",
+                        "first_seen": 1780902000,
+                        "created_at": 1780946962,
+                    },
+                    "当前保留",
+                    "keep",
+                    "素材标题",
+                    [],
+                )
+
+        self.assertIn("First seen", html)
+        self.assertIn("Created at", html)
+        self.assertIn("2026-06-08 15:00", html)
+        self.assertIn("2026-06-09 03:29", html)
+
+    def test_filter_review_cross_day_drop_labels_today_and_history_dates(self) -> None:
+        from ua_workflows.video_enhancer.review_dashboard import _render_cover_section
+
+        with patch("ua_workflows.video_enhancer.review_dashboard._local_image_path", return_value=""):
+            with patch("ua_workflows.video_enhancer.review_dashboard._cache_image", return_value=""):
+                html = _render_cover_section(
+                    title="封面图去重",
+                    groups=[
+                        {
+                            "key": "hist_001",
+                            "members": [
+                                {
+                                    "ad_key": "today_001",
+                                    "product": "Pixverse",
+                                    "matched_date": "2026-05-09",
+                                    "reason": "ahash(dist=0)",
+                                }
+                            ],
+                        }
+                    ],
+                    mode="指纹",
+                    target_date="2026-06-08",
+                    meta={
+                        "hist_001": {
+                            "ad_key": "hist_001",
+                            "product": "Pixverse",
+                            "first_target_date": "2026-05-09",
+                        }
+                    },
+                    today_meta={"today_001": {"ad_key": "today_001", "product": "Pixverse", "target_date": "2026-06-08"}},
+                )
+
+        self.assertIn("今日素材日期", html)
+        self.assertIn("2026-06-08", html)
+        self.assertIn("历史命中日期", html)
+        self.assertIn("2026-05-09", html)
+
+    def test_filter_review_distinguishes_today_same_material_and_history_filters(self) -> None:
+        from ua_workflows.video_enhancer.review_dashboard import _render_cover_section
+
+        with patch("ua_workflows.video_enhancer.review_dashboard._local_image_path", return_value=""):
+            with patch("ua_workflows.video_enhancer.review_dashboard._cache_image", return_value=""):
+                html = _render_cover_section(
+                    title="封面图去重",
+                    groups=[
+                        {
+                            "key": "today_rep",
+                            "members": [
+                                {
+                                    "ad_key": "today_drop",
+                                    "product": "Pixverse",
+                                    "matched_date": "2026-06-08",
+                                    "reason": "cover_style_cluster",
+                                }
+                            ],
+                        },
+                        {
+                            "key": "history_rep",
+                            "members": [
+                                {
+                                    "ad_key": "history_drop",
+                                    "product": "Pixverse",
+                                    "matched_date": "2026-06-07",
+                                    "reason": "cover_style_cluster_vs_yesterday",
+                                }
+                            ],
+                        },
+                    ],
+                    mode="CLIP",
+                    target_date="2026-06-08",
+                    meta={
+                        "today_rep": {"ad_key": "today_rep", "product": "Pixverse", "first_target_date": "2026-06-08"},
+                        "history_rep": {"ad_key": "history_rep", "product": "Pixverse", "first_target_date": "2026-06-07"},
+                    },
+                    today_meta={
+                        "today_drop": {"ad_key": "today_drop", "product": "Pixverse", "target_date": "2026-06-08"},
+                        "history_drop": {"ad_key": "history_drop", "product": "Pixverse", "target_date": "2026-06-08"},
+                    },
+                )
+
+        self.assertIn("筛选类型", html)
+        self.assertIn("今日同样素材筛选", html)
+        self.assertIn("历史筛选", html)
+        self.assertIn("今日代表", html)
+        self.assertIn("今日代表日期", html)
+        self.assertIn("历史命中", html)
+
+    def test_filter_review_synced_materials_group_by_advertiser(self) -> None:
+        from ua_workflows.video_enhancer.review_dashboard import _render_advertiser_grouped_material_section
+
+        with patch("ua_workflows.video_enhancer.review_dashboard._local_image_path", return_value=""):
+            with patch("ua_workflows.video_enhancer.review_dashboard._cache_image", return_value=""):
+                html = _render_advertiser_grouped_material_section(
+                    title="今天同步多维表素材 · 按广告主",
+                    rows=[
+                        {
+                            "ad_key": "ad_001",
+                            "advertiser_name": "Nova Bailey",
+                            "product": "AI Video - AI Video Generator",
+                            "effect_one_liner": "照片生成动态视频",
+                        },
+                        {
+                            "ad_key": "ad_002",
+                            "advertiser_name": "Velgo Studio",
+                            "product": "AI Video - AI Video Generator",
+                            "effect_one_liner": "照片生成跳舞视频",
+                        },
+                    ],
+                    target_date="2026-06-08",
+                    meta={},
+                    today_meta={},
+                    ribbon="已同步多维表",
+                    ribbon_cls="keep",
+                    empty_text="没有同步到多维表的素材",
+                )
+
+        self.assertIn("今天同步多维表素材 · 按广告主", html)
+        self.assertIn("Nova Bailey", html)
+        self.assertIn("Velgo Studio", html)
+        self.assertIn("已同步多维表 1 条", html)
+        self.assertIn("产品：AI Video - AI Video Generator", html)
+
     def test_video_webp_urls_are_normalized_to_mp4_for_consumers(self) -> None:
         from ua_workflows.shared.db.video_enhancer import _pick_video_url_from_raw
         from ua_workflows.shared.media.resolve import (
@@ -655,6 +804,70 @@ class VeTemplateNormalizationTest(unittest.TestCase):
         self.assertEqual(row["removed_reasons"]["cover_crossday_fingerprint"], 1)
         self.assertEqual(row["removed_reasons"]["cover_clip_crossday"], 1)
         self.assertEqual(row["removed_reasons"]["cover_clip_intraday"], 1)
+
+    def test_fill_video_content_after_cover_uses_backfill_then_llm(self) -> None:
+        from ua_workflows.video_enhancer.pipeline import _fill_video_content_after_cover
+
+        raw_payload = {
+            "items": [
+                {"product": "PixVerse", "creative": {"ad_key": "direct_a", "video_url": "https://example.com/a.mp4"}},
+                {"product": "PixVerse", "creative": {"ad_key": "llm_b", "preview_img_url": "https://example.com/b.jpg"}},
+                {"product": "PixVerse", "creative": {"ad_key": "existing_c", "guangdada_video_content": "已有内容"}},
+            ]
+        }
+
+        async def fake_backfill(records, **kwargs):
+            for record in records:
+                if record["ad_key"] == "direct_a":
+                    record["video_content"] = "广大大补抓内容"
+                    record["content_source"] = "guangdada_direct_material_script_analysis"
+                    record["raw_item"] = {
+                        "product": "PixVerse",
+                        "creative": {
+                            "ad_key": "direct_a",
+                            "guangdada_video_content": "广大大补抓内容",
+                        },
+                    }
+            return {"direct": {"requested": 1, "updated": 1}, "search": {"requested": 0, "updated": 0}}
+
+        def fake_llm(records, **kwargs):
+            for record in records:
+                if record["ad_key"] == "llm_b":
+                    record["video_content"] = "LLM 兜底内容"
+                    record["content_source"] = "llm_video_content_fallback"
+                    record["raw_item"] = {
+                        "product": "PixVerse",
+                        "creative": {
+                            "ad_key": "llm_b",
+                            "guangdada_video_content": "LLM 兜底内容",
+                            "material_script_analysis": {
+                                "source": "llm_video_content_fallback",
+                                "script_analysis": {"video_content": "LLM 兜底内容"},
+                            },
+                        },
+                    }
+            return {"requested": 1, "updated": 1, "skipped_no_media": 0, "failed": 0}
+
+        summary = _fill_video_content_after_cover(
+            raw_payload,
+            target_date="2026-06-12",
+            output_prefix="workflow_video_enhancer_2026-06-12",
+            backfill_fn=fake_backfill,
+            llm_fallback_fn=fake_llm,
+            write_report=False,
+        )
+
+        by_key = {item["creative"]["ad_key"]: item["creative"] for item in raw_payload["items"]}
+        self.assertEqual(by_key["direct_a"]["guangdada_video_content"], "广大大补抓内容")
+        self.assertEqual(by_key["llm_b"]["guangdada_video_content"], "LLM 兜底内容")
+        self.assertEqual(
+            by_key["llm_b"]["material_script_analysis"]["script_analysis"]["video_content"],
+            "LLM 兜底内容",
+        )
+        self.assertEqual(by_key["existing_c"]["guangdada_video_content"], "已有内容")
+        self.assertEqual(summary["initial_missing_video_content"], 2)
+        self.assertEqual(summary["missing_video_content"], 0)
+        self.assertEqual(summary["raw_payload_updated"], 2)
 
     def test_flow_report_flags_low_product_volume_with_retry_command(self) -> None:
         from ua_workflows.video_enhancer.flow_report import detect_product_volume_alerts

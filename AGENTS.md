@@ -2,6 +2,16 @@
 
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
 
+## 2026-06-12
+
+### [VE] 视频内容大模型去重与业务硬拦并入主流程
+
+- `ua_workflows/video_enhancer/video_content_llm_filter.py`（新增）：把 6.11 看板验证过的「广大大视频内容/素材脚本分析」筛选逻辑抽成生产模块。按同广告主分组，只比较目标日前历史素材与目标日已处理素材，避免 6.8 与 6.9/6.10 这类未来日期互比；业务硬拦优先于去重，命中后写 `exclude_from_bitable` / `exclude_from_cluster` 与素材标签。
+- `ua_workflows/video_enhancer/video_content_minimal_analysis.py`（新增）：用视频内容文本生成主表同步够用的极简字段，只给未被 LLM 去重/业务硬拦排除的素材调用文本模型生成 `analysis` 与 `effect_one_liner`；已排除素材写本地筛选摘要，不再浪费后续模型。
+- `ua_workflows/video_enhancer/pipeline.py`：主流程在封面去重后补全视频内容，随后先执行 LLM 视频内容去重/业务硬拦，再把极简 analysis 注入 `existing_analysis`，默认跳过旧多模态分析队列（`VE_VIDEO_CONTENT_TEXT_ONLY_FLOW_ENABLED=1`）；如需回退旧多模态，可设 `VE_VIDEO_CONTENT_TEXT_ONLY_FLOW_ENABLED=0`。报告写入 `data/workflow_video_enhancer_{date}_llm_video_content_filter.json` 与 `data/workflow_video_enhancer_{date}_video_content_minimal_analysis.json`。
+- `ua_workflows/video_enhancer/pipeline.py` / `scripts/cron_ai_video_enhancer_daily.sh`：浩鹏 TopN 二次筛选推送暂时默认关闭；cron 外层只调用主流程，不再额外追加 TopN，主流程也只有显式设置 `VE_HAOPENG_TOPN_ENABLED=1` 才会在同步后执行 TopN。
+- `tests/test_ve_video_content_filtering.py` / `tests/test_cron_video_enhancer_daily.py`：新增回归测试覆盖历史只看目标日前、日内只看已处理目标日素材、业务硬拦优先级高于重复去重、极简字段只为保留素材生成，以及浩鹏 TopN 默认关闭。
+
 ## 2026-06-11
 
 ### [VE] 竞品自动更新、爬取去重与同步能力补记
@@ -15,19 +25,33 @@
 - `ua_workflows/video_enhancer/cover_dedupe.py` / `crawl_similarity.py` / `pipeline.py`：封面去重包含跨日 URL/ahash/素材指纹与 CLIP 视觉聚类。CLIP 默认阈值 `0.75`，历史参照默认 60 天，硬去重默认 7 天；7 天内历史命中剔除，7 天外历史命中保留当天最高展示估值代表并打「历史簇持续发力」类标签；同日相似封面只保留代表，剔除成员会计入代表的「日内相似素材数」。
 - `ua_workflows/video_enhancer/pipeline.py` / `ua_workflows/shared/db/video_enhancer.py`：分析入队前还会做日内/跨日素材去重与历史分析复用，重复项复用 canonical 分析结果，不重复消耗 LLM；同步前会补跑成人/色情、人像照片特效硬拦、可选日内玩法重复、老玩法重复、embedding 高置信重复与已投放匹配等过滤/标记。
 - `ua_workflows/video_enhancer/sync.py`：多维表同步前默认开启同玩法同模板去重（`BITABLE_TEMPLATE_DEDUP_ENABLED=1`），同产品/同玩法桶内按模板 exact 与封面 CLIP 相似合并，只保留展示估值/曝光/热度最高代表；模板文本相似默认关闭，仅设置 `BITABLE_TEMPLATE_DEDUP_TEXT_SIMILARITY_ENABLED=1` 时启用。同步报告会按产品记录硬排除、同模板合并、同玩法非代表、低采纳优先级跳过与最终写入数。
-- `ua_workflows/video_enhancer/sync.py`：同步写主表时会读取真实字段类型并归一化值，尤其是「玩法」多选字段只写已有选项、不自动创建 AI 新建议；封面和视频会尽量以附件写入，同时保留链接字段；素材标签聚合风险、玩法判断、历史持续发力、优先级等信号。当前主流程默认只发浩鹏 TopN 和漏斗报告，旧素材日报/企微/Google Sheet 需要显式开关。
+- `ua_workflows/video_enhancer/sync.py`：同步写主表时会读取真实字段类型并归一化值，尤其是「玩法」多选字段只写已有选项、不自动创建 AI 新建议；封面和视频会尽量以附件写入，同时保留链接字段；素材标签聚合风险、玩法判断、历史持续发力、优先级等信号。当前主流程默认发筛选漏斗报告，旧素材日报/企微/Google Sheet 与浩鹏 TopN 需要显式开关。
 
 ## 2026-06-02
+
+### [VE] 素材留存维护 dry-run 与归档标记入口
+
+- `ua_workflows/video_enhancer/retention.py`（新增）：提供低风险留存维护逻辑。多维表记录默认只评估归档候选；实际执行时只写「生命周期状态=已归档」「归档日期」「归档原因」，不调用飞书删除接口。归档候选默认要求超过 45 天，且没有 `待定` / `采纳` / `入素材库` 等保留信号，也没有 `历史簇持续发力` 标签。
+- `scripts/run_ve_retention.py` / `scripts/cron_ve_retention_weekly.sh`（新增）：前者提供手工入口，后者提供每周 dry-run 定时入口；默认只写 `reports/ve_retention_{date}.json`，不改多维表、不删本地文件。实际写归档标记需显式传 `--apply-bitable`，实际清本地产物需显式传 `--apply-local`。
+- 本地产物清理范围仅限 `data/` 与 `reports/` 下的 JSON / JSONL / Markdown / HTML / 图片等运行产物，以及 `data/remote_snapshots/ve/` 中超过保留份数的非 DB 快照产物；明确排除 SQLite 主库、远端 VE 快照 DB 与 `creative_library`，保留跨日去重、持续发力、回测和反馈训练所需历史。
+- `.gitignore` / `docs/workflows.md` / `docs/cron-schedules.md` / `docs/setup-and-data.md`：补充 VE 留存维护说明、周一 dry-run cron 示例、执行开关与报告忽略规则。
+- `tests/test_ve_retention.py`（新增）：覆盖多维表归档候选判定、待定/采纳/历史持续发力保护、本地文件保留规则、飞书 batch_update 归档字段 payload 与 dry-run 报告摘要。
+
+### [VE/广大大] 新创意榜 AI 工具视频素材本地 raw 落盘
+
+- `ua_workflows/shared/guangdada/new_charts_ai_tools.py`（新增）：采集广大大「新创意榜」工具类 AI 工具下 `AI图像生成` / `AI视频` 类目的视频素材，整理为 VE raw 兼容 JSON（`target_date` / `total` / `competitors` / `items` / `filter_report`），并额外输出字段完备性报告；当前只写本地 `data/guangdada_new_charts_ai_tools_{date}_raw.json` 与 `_completeness.json`，暂不写入多维表。
+- `scripts/run_new_charts_ai_tools.py`（新增）：提供可复用入口，支持 `.env` 账号密码登录、保存/复用登录态、指定类目、每类目 TopN、headed 调试和本地输出前缀。
+- `tests/test_new_charts_ai_tools.py`（新增）：覆盖类目别名解析、广大大 NAPI 创意列表抽取、视频链接归一、VE raw payload 构造与字段完备性统计。
 
 ### [VE] 浩鹏二次 AI 筛选 TopN 推送链路补齐
 
 - `ua_workflows/video_enhancer/haopeng_ai_filter.py`（新增）：从 VE 主多维表读取目标日素材与 2026-05-25 起的浩鹏有效反馈，按产品调用 `qwen/qwen3.7-max` 做二次 AI 筛选，输出 `data/haopeng_topn_experiments/{date}_label_prior.json`；该步骤不写回多维表、不影响主流程拦截，只生产推送输入。
 - `ua_workflows/video_enhancer/haopeng_topn_push.py`：未传 `--input-json` 时默认先生成当天二次 AI 筛选 JSON，再推送 TopN；保留 `--input-json` 与 `--use-latest-local` 兼容旧实验文件推送；新增 `--generate-only` 便于服务器只验证筛选产物。生产推送默认不展示「浩鹏接受情况」/ `actual_hp`，只有显式 `--include-backtest` 做复盘时才读取并展示。
-- `ua_workflows/video_enhancer/pipeline.py`：VE 主流程默认不再发送旧「AI工具竞品日报」素材卡片，也不再默认触发企业微信或 Google Sheet；同步完成后默认调用 `haopeng_topn_push` 生成并推送「VE 浩鹏采纳预测 TopN」。TopN 未指定群时走 `VE_HAOPENG_TOPN_FEISHU_WEBHOOK`，没有专用值时复用筛选漏斗报告群 `VE_FLOW_REPORT_FEISHU_WEBHOOK`，最后才尝试 `FEISHU_UA_WEBHOOK`；不会兜底到通用测试群 `FEISHU_BOT_WEBHOOK`。
+- `ua_workflows/video_enhancer/pipeline.py`：VE 主流程默认不再发送旧「AI工具竞品日报」素材卡片，也不再默认触发企业微信或 Google Sheet；同步完成后保留 `haopeng_topn_push` 节点用于生成并推送「VE 浩鹏采纳预测 TopN」。TopN 未指定群时走 `VE_HAOPENG_TOPN_FEISHU_WEBHOOK`，没有专用值时复用筛选漏斗报告群 `VE_FLOW_REPORT_FEISHU_WEBHOOK`，最后才尝试 `FEISHU_UA_WEBHOOK`；不会兜底到通用测试群 `FEISHU_BOT_WEBHOOK`。2026-06-12 起该节点默认关闭，需 `VE_HAOPENG_TOPN_ENABLED=1` 才执行。
 - `scripts/run_ve_haopeng_ai_filter.py`（新增）/ `scripts/run_ve_haopeng_topn_push.py`：前者只生成二次筛选 JSON，后者默认“生成 + 推送”。模型可用 `VE_HAOPENG_FILTER_MODEL` 覆盖，历史起点可用 `VE_HAOPENG_HISTORY_START_DATE` 覆盖。
 - `ua_workflows/video_enhancer/haopeng_ai_filter.py` / `haopeng_topn_push.py`：当前固化为 2026-06-01 高命中口径：只用目标日前历史浩鹏反馈判断采纳偏好，目标日反馈只用于事后回测，进入模型前排除 `admob` / `youtube`，飞书卡片展示非排除渠道 Top10（不因 `hold` 强制少推）。
 - `ua_workflows/video_enhancer/haopeng_topn_push.py`：TopN 卡片末尾追加“查看多维表格”按钮，链接到 `VIDEO_ENHANCER_BITABLE_URL`，便于当天查看浩鹏反馈；默认不展示回测字段，除非手动传 `--include-backtest`。
-- `scripts/cron_ai_video_enhancer_daily.sh`：保持只执行 `run_video_enhancer.py`；浩鹏 TopN 与筛选漏斗报告都由主流程发出，避免 cron 额外推测试群或重复推送。
+- `scripts/cron_ai_video_enhancer_daily.sh`：保持只执行 `run_video_enhancer.py`；浩鹏 TopN 只在主流程开关开启时发出，筛选漏斗报告仍由主流程发出，避免 cron 额外推测试群或重复推送。
 - `.gitignore`：忽略 `data/haopeng_topn_experiments/`，避免每日二次筛选 JSON 进入版本管理。
 - `tests/test_haopeng_ai_filter.py` / `tests/test_haopeng_topn_push.py`：覆盖多维表字段归一、二次筛选报告格式、排序与推送入口默认生成行为。
 
