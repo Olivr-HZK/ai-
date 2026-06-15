@@ -150,6 +150,7 @@ def call_text(
     user: str,
     *,
     models: Sequence[str] | None = None,
+    timeout: float | None = None,
 ) -> str:
     """纯文本 LLM 调用，按 models 列表依次尝试。"""
     key = _or_key()
@@ -170,6 +171,7 @@ def call_text(
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
+                    timeout=timeout,
                 )
                 _accumulate("openrouter", model, getattr(r, "usage", None))
                 choices = getattr(r, "choices", None) or []
@@ -195,6 +197,7 @@ def call_text(
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
+                timeout=timeout,
             )
             _accumulate("openai", model, getattr(r, "usage", None))
             choices = getattr(r, "choices", None) or []
@@ -219,6 +222,7 @@ def call_vision(
     vision_models: Sequence[str] | None = None,
     text_fallback_system: str | None = None,
     text_fallback_models: Sequence[str] | None = None,
+    timeout: float | None = None,
     quiet: bool = False,
 ) -> str:
     """
@@ -254,6 +258,7 @@ def call_vision(
                             ],
                         },
                     ],
+                    timeout=timeout,
                 )
                 _accumulate("openrouter", model, getattr(r, "usage", None))
                 choices = getattr(r, "choices", None) or []
@@ -272,7 +277,7 @@ def call_vision(
     fb_models = list(text_fallback_models or [resolve_text_model()])
     if not quiet:
         print(f"[llm-client] all vision models exhausted, text fallback → {fb_models[0]}")
-    return call_text(fb_sys, user_text, models=fb_models)
+    return call_text(fb_sys, user_text, models=fb_models, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
