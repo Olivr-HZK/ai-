@@ -7,6 +7,15 @@ data/*.json
 data/*.db
 data/haopeng_topn_experiments/
 data/remote_snapshots/
+data/ve_template_copy_jobs*/
+data/ve_template_copy_runs*/
+data/ve_template_*_jobs*/
+data/ve_template_*_runs*/
+data/ve_template_real_test/
+data/ve_template_trigger_*.log
+data/ve_template_trigger_*.local
+data/ve_template_trigger_public_url.txt
+data/ve_template_*workflow_payload.tmp.json
 data/ve_feedback_training_dataset_*.jsonl
 data/models/ve_feedback_preference_nb_*.json
 guangdada_auth.json

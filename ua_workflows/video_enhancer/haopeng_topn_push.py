@@ -14,6 +14,12 @@ import requests
 from dotenv import dotenv_values, load_dotenv
 
 from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT, load_project_env
+from ua_workflows.video_enhancer.feedback_rating import (
+    RATING_LABELS,
+    legacy_status_to_rating,
+    normalize_rating_value,
+    resolve_feedback_rating,
+)
 
 
 DEFAULT_EXPERIMENT_DIR = DATA_DIR / "haopeng_topn_experiments"
@@ -162,6 +168,18 @@ def actual_summary(
     top_summary = summary.get(f"top{top_n}") if isinstance(summary.get(f"top{top_n}"), dict) else {}
     if force_recalculate or not top_summary:
         summary_rows = (rows if rows is not None else pushable_result_rows(report))[:top_n]
+        rating_values = [_rating_from_row(row) for row in summary_rows]
+        rated = [r for r in rating_values if r in {1, 2, 3, 4, 5}]
+        if rated:
+            counts = {rating: rated.count(rating) for rating in (5, 4, 3, 2, 1)}
+            dist = " / ".join(
+                f"{RATING_LABELS[rating]} {count}" for rating, count in counts.items() if count
+            )
+            unrated = len(summary_rows) - len(rated)
+            if unrated:
+                dist = f"{dist} / 未评分 {unrated}" if dist else f"未评分 {unrated}"
+            avg = sum(rated) / len(rated)
+            return f"5星命中 {counts.get(5, 0)}/{top_n}；平均评分 {avg:.2f}；评分分布：{dist}"
         accepted = sum(1 for r in summary_rows if str(r.get("actual_hp") or "").strip() == "采纳")
         library = sum(1 for r in summary_rows if str(r.get("actual_hp") or "").strip() == "入素材库")
         return f"采纳 {accepted}/{top_n}；采纳+入素材库：{accepted + library}/{top_n}"
@@ -188,6 +206,23 @@ def actual_summary(
         if count_parts or extra:
             parts.append("实际分布：" + " / ".join(count_parts + extra))
     return "；".join(parts)
+
+
+def _rating_from_row(row: dict[str, Any]) -> int | None:
+    rating = normalize_rating_value(row.get("rating"))
+    if rating is not None:
+        return rating
+    rating = normalize_rating_value(row.get("rating_label"))
+    if rating is not None:
+        return rating
+    return legacy_status_to_rating(row.get("actual_hp"))
+
+
+def _rating_field_for_reviewer_field(reviewer_field: str) -> str:
+    text = str(reviewer_field or "").strip()
+    if text.endswith("接受情况") and text != "接受情况":
+        return text[: -len("接受情况")] + "评分"
+    return "浩鹏评分"
 
 
 def format_material_line(index: int, row: dict[str, Any], include_actual: bool) -> list[str]:
@@ -462,7 +497,17 @@ def enrich_results_from_bitable(
             "title": cell_to_text(fields.get("标题")),
         }
         if include_reviewer:
+            feedback = resolve_feedback_rating(
+                fields,
+                reviewer="haopeng",
+                rating_field=_rating_field_for_reviewer_field(reviewer_field),
+                status_field=reviewer_field,
+            )
             row["actual_hp"] = cell_to_text(fields.get(reviewer_field))
+            row["rating"] = feedback.rating
+            row["rating_label"] = feedback.rating_label
+            row["rating_source_field"] = feedback.source_field
+            row["rating_source_value"] = feedback.source_value
         rows.append(row)
     merge_report_rows_from_source(report, rows)
 

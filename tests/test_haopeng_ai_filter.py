@@ -37,8 +37,33 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual(row["core"], "自拍生成复古棒球球员卡")
         self.assertEqual(row["play_label"], "球员卡")
         self.assertEqual(row["actual_hp"], "采纳")
+        self.assertEqual(row["rating"], 5)
+        self.assertEqual(row["rating_label"], "5星")
         self.assertEqual(row["platform"], "tiktok")
         self.assertEqual(row["video_url"], "https://example.com/v.mp4")
+
+    def test_normalize_bitable_record_prefers_rating_field(self) -> None:
+        from ua_workflows.video_enhancer.haopeng_ai_filter import normalize_bitable_record
+
+        row = normalize_bitable_record(
+            {
+                "record_id": "rec1",
+                "fields": {
+                    "广告ID": "ad_1",
+                    "产品": "Glam AI",
+                    "抓取日期": "2026-05-28",
+                    "核心卖点": "自拍生成复古棒球球员卡",
+                    "玩法": "球员卡",
+                    "浩鹏评分": "5星",
+                    "浩鹏接受情况": "不采纳",
+                },
+            },
+            reviewer_field="浩鹏接受情况",
+        )
+
+        self.assertEqual(row["rating"], 5)
+        self.assertEqual(row["rating_source_field"], "浩鹏评分")
+        self.assertEqual(row["actual_hp"], "不采纳")
 
     def test_build_report_scores_candidates_with_ai_and_sorts_topn_shape(self) -> None:
         from ua_workflows.video_enhancer.haopeng_ai_filter import build_report_from_rows
@@ -50,6 +75,8 @@ class HaopengAiFilterTest(unittest.TestCase):
                 "date": "2026-05-27",
                 "core": "自拍生成手绘拼贴",
                 "play_label": "手绘拼贴",
+                "rating": 5,
+                "rating_label": "5星",
                 "actual_hp": "采纳",
             },
             {
@@ -58,6 +85,8 @@ class HaopengAiFilterTest(unittest.TestCase):
                 "date": "2026-05-27",
                 "core": "附近聊天导流",
                 "play_label": "",
+                "rating": 1,
+                "rating_label": "1星",
                 "actual_hp": "不采纳",
             },
             {
@@ -115,6 +144,7 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual(report["target_date"], "2026-05-28")
         self.assertEqual(report["name"], "label_prior")
         self.assertEqual(report["history_window"], "2026-05-25..2026-05-27")
+        self.assertEqual(report["history_rating_counts"], {"1星": 1, "5星": 1})
         self.assertEqual([r["ad_key"] for r in report["results"]], ["c1", "c2"])
         self.assertEqual(report["results"][0]["accept_score"], 88)
         self.assertEqual(report["results"][0]["matched_play_label"], "球员卡")
@@ -188,7 +218,7 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual([row["ad_key"] for row in report["results"]], ["c_tiktok"])
         self.assertEqual(report["excluded_platform_counts"], {"admob": 1, "youtube": 1})
 
-    def test_ai_prompt_uses_haopeng_preference_history_as_positive_signal(self) -> None:
+    def test_ai_prompt_uses_haopeng_rating_history_as_positive_signal(self) -> None:
         from ua_workflows.video_enhancer.haopeng_ai_filter import build_ai_prompt
 
         prompt = build_ai_prompt(
@@ -199,6 +229,8 @@ class HaopengAiFilterTest(unittest.TestCase):
                     "ad_key": "h1",
                     "date": "2026-05-30",
                     "status": "采纳",
+                    "rating": 5,
+                    "rating_label": "5星",
                     "core": "自拍生成复古棒球球员卡",
                     "play_label": "球员卡",
                     "hook": "普通自拍变成球员卡",
@@ -214,10 +246,11 @@ class HaopengAiFilterTest(unittest.TestCase):
             ],
         )
 
-        self.assertIn("历史浩鹏反馈", prompt)
-        self.assertIn("优先推荐“浩鹏会采纳”的素材", prompt)
-        self.assertIn("其次是“入素材库”式有价值变体", prompt)
+        self.assertIn("历史浩鹏评分偏好", prompt)
+        self.assertIn("5星=强烈值得复刻/制作", prompt)
+        self.assertIn("3星=中等参考价值", prompt)
         self.assertIn("历史没有同款具体玩法", prompt)
+        self.assertNotIn("历史浩鹏有效反馈", prompt)
         self.assertNotIn("历史采纳/入素材库只说明大方向有效", prompt)
         self.assertNotIn("同一个大方向下，只有出现新场景", prompt)
         self.assertNotIn("不需要凑满 Top10", prompt)

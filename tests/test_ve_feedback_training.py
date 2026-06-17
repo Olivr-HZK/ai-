@@ -142,6 +142,76 @@ class VeFeedbackTrainingTest(unittest.TestCase):
             ["complete"],
         )
 
+    def test_normalize_record_prefers_rating_and_exports_rating_metadata(self) -> None:
+        from ua_workflows.video_enhancer.feedback_training import normalize_record
+
+        sample = normalize_record(
+            {
+                "record_id": "rec_rating",
+                "fields": {
+                    "广告ID": "ad_rating",
+                    "标题": "AI 模板素材",
+                    "核心卖点": "自拍生成节日大片",
+                    "浩鹏评分": "5星",
+                    "浩鹏接受情况": "不采纳",
+                },
+            }
+        )
+
+        self.assertEqual(sample.rating, 5)
+        self.assertEqual(sample.rating_label, "5星")
+        self.assertEqual(sample.rating_source_field, "浩鹏评分")
+        self.assertEqual(sample.rating_source_value, "5星")
+        self.assertEqual(sample.accept_status, "不采纳")
+        self.assertEqual(sample.label, 1)
+
+    def test_two_star_is_exported_but_not_binary_labeled(self) -> None:
+        from ua_workflows.video_enhancer.feedback_training import normalize_record
+
+        sample = normalize_record(
+            {
+                "record_id": "rec_two",
+                "fields": {
+                    "广告ID": "ad_two",
+                    "标题": "AI 模板素材",
+                    "核心卖点": "自拍生成节日大片",
+                    "浩鹏评分": "2星",
+                    "浩鹏接受情况": "采纳",
+                },
+            }
+        )
+
+        self.assertEqual(sample.rating, 2)
+        self.assertEqual(sample.rating_label, "2星")
+        self.assertIsNone(sample.label)
+
+    def test_export_dataset_includes_rating_metadata(self) -> None:
+        from ua_workflows.video_enhancer.feedback_training import export_dataset, normalize_record
+
+        sample = normalize_record(
+            {
+                "record_id": "rec_export",
+                "fields": {
+                    "广告ID": "ad_export",
+                    "标题": "AI 模板素材",
+                    "核心卖点": "自拍生成节日大片",
+                    "浩鹏评分": "5星",
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dataset_path = export_dataset(
+                [sample],
+                run_date="2026-06-15",
+                output_path=Path(tmp) / "dataset.jsonl",
+            )
+            text = dataset_path.read_text(encoding="utf-8")
+
+        self.assertIn('"rating": 5', text)
+        self.assertIn('"rating_label": "5星"', text)
+        self.assertIn('"rating_source_field": "浩鹏评分"', text)
+
 
 if __name__ == "__main__":
     unittest.main()

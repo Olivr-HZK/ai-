@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - dotenv is available in prod, optional in
     load_dotenv = None  # type: ignore[assignment]
 
 from ua_workflows.shared.config import DATA_DIR, REPORTS_DIR
+from ua_workflows.video_enhancer.feedback_rating import resolve_feedback_rating
 
 
 DEFAULT_BITABLE_URL = (
@@ -171,6 +172,12 @@ class FeedbackSample:
     ad_key: str
     accept_status: str
     label: int | None
+    rating: int | None
+    rating_label: str
+    rating_source_field: str
+    rating_source_value: str
+    legacy_accept_status: str
+    invalid_rating: bool
     feature: dict[str, Any]
     media: dict[str, Any]
     audit: dict[str, Any]
@@ -314,6 +321,14 @@ def label_from_accept_status(status: str) -> int | None:
     return LABEL_VALUE_MAP.get(normalized)
 
 
+def label_from_rating(rating: int | None) -> int | None:
+    if rating == 5:
+        return LABEL_ACCEPTED
+    if rating == 1:
+        return LABEL_REJECTED
+    return None
+
+
 def build_feature_text(feature: dict[str, Any]) -> str:
     parts: list[str] = []
     for key in TEXT_FEATURE_KEYS:
@@ -350,14 +365,21 @@ def normalize_record(record: dict[str, Any]) -> FeedbackSample:
     feature = {key: cell_to_text(fields.get(field_name)) for key, field_name in MATERIAL_FEATURE_FIELDS.items()}
     media = {key: _cell_to_jsonable(fields.get(field_name)) for key, field_name in MEDIA_METADATA_FIELDS.items()}
     audit = {key: cell_to_text(fields.get(field_name)) for key, field_name in AUDIT_FIELDS.items()}
-    accept_status = normalize_accept_status(fields.get(LABEL_FIELD))
-    label = label_from_accept_status(accept_status)
+    feedback = resolve_feedback_rating(fields, reviewer="haopeng")
+    accept_status = feedback.legacy_status or normalize_accept_status(fields.get(LABEL_FIELD))
+    label = label_from_rating(feedback.rating)
     ad_key = audit.get("ad_key") or cell_to_text(fields.get("广告ID")) or record_id
     return FeedbackSample(
         record_id=record_id,
         ad_key=ad_key,
         accept_status=accept_status,
         label=label,
+        rating=feedback.rating,
+        rating_label=feedback.rating_label,
+        rating_source_field=feedback.source_field,
+        rating_source_value=feedback.source_value,
+        legacy_accept_status=feedback.legacy_status,
+        invalid_rating=feedback.invalid_rating,
         feature=feature,
         media=media,
         audit=audit,
@@ -376,6 +398,12 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 ad_key TEXT,
                 accept_status TEXT,
                 label INTEGER,
+                rating INTEGER,
+                rating_label TEXT,
+                rating_source_field TEXT,
+                rating_source_value TEXT,
+                legacy_accept_status TEXT,
+                invalid_rating INTEGER NOT NULL DEFAULT 0,
                 feature_text TEXT,
                 feature_json TEXT NOT NULL,
                 media_json TEXT NOT NULL,
@@ -389,6 +417,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
             )
             """
         )
+        _ensure_feedback_record_columns(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ve_feedback_training_runs (
@@ -411,6 +440,24 @@ def init_db(db_path: Path = DB_PATH) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ve_feedback_ad_key ON ve_feedback_records(ad_key)")
 
 
+def _ensure_feedback_record_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(ve_feedback_records)").fetchall()
+    }
+    columns = {
+        "rating": "INTEGER",
+        "rating_label": "TEXT",
+        "rating_source_field": "TEXT",
+        "rating_source_value": "TEXT",
+        "legacy_accept_status": "TEXT",
+        "invalid_rating": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE ve_feedback_records ADD COLUMN {name} {ddl}")
+
+
 def upsert_samples(
     samples: Iterable[FeedbackSample],
     *,
@@ -421,10 +468,15 @@ def upsert_samples(
     now = _now_local()
     status_counts: Counter[str] = Counter()
     stats: dict[str, Any] = {"total": 0, "accepted": 0, "rejected": 0, "pending": 0}
+    rating_counts: Counter[str] = Counter()
+    invalid_rating = 0
     with sqlite3.connect(db_path) as conn:
         for sample in samples:
             stats["total"] += 1
             status_counts[sample.accept_status or "<empty>"] += 1
+            rating_counts[sample.rating_label or "<unrated>"] += 1
+            if sample.invalid_rating:
+                invalid_rating += 1
             if sample.label == LABEL_ACCEPTED:
                 stats["accepted"] += 1
             elif sample.label == LABEL_REJECTED:
@@ -434,16 +486,24 @@ def upsert_samples(
             conn.execute(
                 """
                 INSERT INTO ve_feedback_records (
-                    record_id, ad_key, accept_status, label, feature_text,
+                    record_id, ad_key, accept_status, label,
+                    rating, rating_label, rating_source_field, rating_source_value,
+                    legacy_accept_status, invalid_rating, feature_text,
                     feature_json, media_json, audit_json, raw_fields_json,
                     source_app_token, source_table_id, source_view_id,
                     first_pulled_at, last_pulled_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(record_id) DO UPDATE SET
                     ad_key=excluded.ad_key,
                     accept_status=excluded.accept_status,
                     label=excluded.label,
+                    rating=excluded.rating,
+                    rating_label=excluded.rating_label,
+                    rating_source_field=excluded.rating_source_field,
+                    rating_source_value=excluded.rating_source_value,
+                    legacy_accept_status=excluded.legacy_accept_status,
+                    invalid_rating=excluded.invalid_rating,
                     feature_text=excluded.feature_text,
                     feature_json=excluded.feature_json,
                     media_json=excluded.media_json,
@@ -459,6 +519,12 @@ def upsert_samples(
                     sample.ad_key,
                     sample.accept_status,
                     sample.label,
+                    sample.rating,
+                    sample.rating_label,
+                    sample.rating_source_field,
+                    sample.rating_source_value,
+                    sample.legacy_accept_status,
+                    1 if sample.invalid_rating else 0,
                     sample.feature_text,
                     json.dumps(sample.feature, ensure_ascii=False, sort_keys=True),
                     json.dumps(sample.media, ensure_ascii=False, sort_keys=True),
@@ -472,6 +538,8 @@ def upsert_samples(
                 ),
             )
     stats["status_counts"] = dict(status_counts.most_common())
+    stats["rating_counts"] = dict(rating_counts.most_common())
+    stats["invalid_rating"] = invalid_rating
     return stats
 
 
@@ -494,7 +562,9 @@ def load_labeled_samples(db_path: Path = DB_PATH) -> list[FeedbackSample]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT record_id, ad_key, accept_status, label, feature_text,
+            SELECT record_id, ad_key, accept_status, label,
+                   rating, rating_label, rating_source_field, rating_source_value,
+                   legacy_accept_status, invalid_rating, feature_text,
                    feature_json, media_json, audit_json, raw_fields_json
             FROM ve_feedback_records
             WHERE label IN (0, 1)
@@ -508,6 +578,12 @@ def load_labeled_samples(db_path: Path = DB_PATH) -> list[FeedbackSample]:
                 ad_key=str(row["ad_key"] or ""),
                 accept_status=str(row["accept_status"] or ""),
                 label=int(row["label"]),
+                rating=int(row["rating"]) if row["rating"] is not None else None,
+                rating_label=str(row["rating_label"] or ""),
+                rating_source_field=str(row["rating_source_field"] or ""),
+                rating_source_value=str(row["rating_source_value"] or ""),
+                legacy_accept_status=str(row["legacy_accept_status"] or ""),
+                invalid_rating=bool(row["invalid_rating"]),
                 feature=json.loads(row["feature_json"] or "{}"),
                 media=json.loads(row["media_json"] or "{}"),
                 audit=json.loads(row["audit_json"] or "{}"),
@@ -536,6 +612,11 @@ def export_dataset(
                 "label": sample.label,
                 "label_name": "accepted" if sample.label == LABEL_ACCEPTED else "rejected",
                 "accept_status": sample.accept_status,
+                "legacy_accept_status": sample.legacy_accept_status,
+                "rating": sample.rating,
+                "rating_label": sample.rating_label,
+                "rating_source_field": sample.rating_source_field,
+                "rating_source_value": sample.rating_source_value,
                 "feature": sample.feature,
                 "feature_text": sample.feature_text,
             }
@@ -720,12 +801,14 @@ def write_report(
     model_path: Path | None,
     metrics: dict[str, Any],
     status_counts: dict[str, int] | None = None,
+    rating_counts: dict[str, int] | None = None,
     complete_profile: str = "any",
     output_path: Path | None = None,
 ) -> Path:
     out_path = output_path or (REPORTS_DIR / f"ve_feedback_training_{run_date}.md")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     label_counts = Counter(s.label for s in labeled_samples)
+    report_rating_counts = rating_counts or dict(Counter(s.rating_label or "<未评分>" for s in labeled_samples))
     lines = [
         f"# VE 反馈训练日报 {run_date}",
         "",
@@ -735,8 +818,8 @@ def write_report(
         "",
         f"- 多维表拉取记录：{pulled_count}",
         f"- 可训练样本：{len(labeled_samples)}",
-        f"- 接受：{label_counts.get(LABEL_ACCEPTED, 0)}",
-        f"- 删除：{label_counts.get(LABEL_REJECTED, 0)}",
+        f"- 5星高意向：{label_counts.get(LABEL_ACCEPTED, 0)}",
+        f"- 1星低意向：{label_counts.get(LABEL_REJECTED, 0)}",
         f"- 模型状态：{metrics.get('status', 'unknown')}",
     ]
     if complete_profile != "any":
@@ -755,6 +838,10 @@ def write_report(
         lines.extend(["## 接受情况分布", ""])
         for status, count in status_counts.items():
             lines.append(f"- {status}: {count}")
+    if report_rating_counts:
+        lines.extend(["", "## 评分分布", ""])
+        for rating, count in report_rating_counts.items():
+            lines.append(f"- {rating}: {count}")
     lines.append("")
     lines.extend(
         [
@@ -867,6 +954,7 @@ def run_feedback_training(
         model_path=model_path,
         metrics=metrics,
         status_counts=pull_stats.get("status_counts") or {},
+        rating_counts=pull_stats.get("rating_counts") or {},
         complete_profile=complete_profile,
         output_path=output_path_with_profile(REPORTS_DIR, "ve_feedback_training", run_date, "md", complete_profile),
     )

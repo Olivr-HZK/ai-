@@ -15,6 +15,12 @@ from typing import Any
 from ua_workflows.shared.config import DATA_DIR, load_project_env
 from ua_workflows.shared.llm.client import call_text, flush_usage
 from ua_workflows.video_enhancer.feedback_training import cell_to_text, fetch_bitable_records
+from ua_workflows.video_enhancer.feedback_rating import (
+    RATING_LABELS,
+    legacy_status_to_rating,
+    normalize_rating_value,
+    resolve_feedback_rating,
+)
 
 
 DEFAULT_MODEL = "qwen/qwen3.7-max"
@@ -81,10 +87,42 @@ def is_excluded_topn_platform(value: Any) -> bool:
     return _normalize_platform(value) in EXCLUDED_TOPN_PLATFORMS
 
 
+def _rating_field_for_reviewer_field(reviewer_field: str) -> str:
+    text = str(reviewer_field or "").strip()
+    if text.endswith("接受情况") and text != "接受情况":
+        return text[: -len("接受情况")] + "评分"
+    return "浩鹏评分"
+
+
+def _row_rating(row: dict[str, Any]) -> int | None:
+    rating = normalize_rating_value(row.get("rating"))
+    if rating is not None:
+        return rating
+    rating = normalize_rating_value(row.get("rating_label"))
+    if rating is not None:
+        return rating
+    return legacy_status_to_rating(row.get("actual_hp"))
+
+
+def _with_rating(row: dict[str, Any]) -> dict[str, Any]:
+    rating = _row_rating(row)
+    out = dict(row)
+    if rating is not None:
+        out["rating"] = rating
+        out["rating_label"] = out.get("rating_label") or RATING_LABELS.get(rating, "")
+    return out
+
+
 def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "浩鹏接受情况") -> dict[str, Any]:
     fields = record.get("fields") or {}
     if not isinstance(fields, dict):
         fields = {}
+    feedback = resolve_feedback_rating(
+        fields,
+        reviewer="haopeng",
+        rating_field=_rating_field_for_reviewer_field(reviewer_field),
+        status_field=reviewer_field,
+    )
     ad_key = _first_text(fields, ("广告ID", "ad_key")) or str(record.get("record_id") or record.get("id") or "")
     date_value = fields.get("抓取日期")
     if date_value in (None, ""):
@@ -98,6 +136,11 @@ def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "�
         "core": _first_text(fields, ("核心卖点", "玩法指纹", "AI分析结果", "标题")),
         "play_label": _first_text(fields, ("玩法", "玩法资产", "玩法指纹")),
         "actual_hp": _first_text(fields, (reviewer_field, "接受情况")),
+        "rating": feedback.rating,
+        "rating_label": feedback.rating_label,
+        "rating_source_field": feedback.source_field,
+        "rating_source_value": feedback.source_value,
+        "rating_invalid": feedback.invalid_rating,
         "video_url": _first_text(fields, ("视频链接", "视频")),
         "cover_url": _first_text(fields, ("封面图链接", "封面图")),
         "title": _first_text(fields, ("标题", "素材标题")),
@@ -124,6 +167,8 @@ def _history_payload(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "ad_key": row.get("ad_key", ""),
             "date": row.get("date", ""),
             "status": row.get("actual_hp", ""),
+            "rating": row.get("rating"),
+            "rating_label": row.get("rating_label", ""),
             "platform": row.get("platform", ""),
             "core": clamp(row.get("core"), 140),
             "play_label": row.get("play_label", ""),
@@ -160,24 +205,26 @@ def build_ai_prompt(
 ) -> str:
     return f"""你是 Video Enhancer 竞品素材的二次筛选助手。你的任务不是拦截主流程，而是从当天素材中挑出最可能被浩鹏采纳的推荐素材。
 
-浩鹏字段定义：
-- 采纳：APP 内部还未上线该类型内容；上线到 APP 模版后，对用户付费意愿提高有价值、好玩、可能产生付费。
-- 入素材库：APP 端内已有，但我们素材没有制作过这类型变体内容。
-- 不采纳：App 端内已有、之前制作素材投放过，或与 App 受众完全不符。
-- 重复抓取：重复素材。
-- 待定：实现难度大，且相对采纳对当前增长方向价值较低。待定不作为正负样本。
+浩鹏评分定义：
+- 5星=强烈值得复刻/制作；APP 内部还未上线该类型内容，或上线到 APP 模板后对付费意愿提高有明显价值、好玩、可能产生付费。
+- 4星=有明显参考价值；可优先作为素材库或变体方向观察。
+- 3星=中等参考价值；方向可观察，但不等同于强正样本。
+- 2星=低优先级；价值有限或适配度较弱。
+- 1星=低价值或重复/不适配；App 端内已有、之前制作素材投放过、重复抓取，或与 App 受众完全不符。
+- 待定/空值不作为正负样本。
 
 判断要求：
-- 只根据输入中的核心卖点、玩法标签、Hook/脚本、素材标签、封面/视频链接和历史浩鹏反馈判断。
-- 优先推荐“浩鹏会采纳”的素材，其次是“入素材库”式有价值变体。
+- 只根据输入中的核心卖点、玩法标签、Hook/脚本、素材标签、封面/视频链接和历史浩鹏评分偏好判断。
+- 优先推荐与历史 5 星相似但不重复、且具有新模板画面或新片段价值的素材。
+- 历史 4 星是较强参考，历史 3 星只说明方向可观察，不能当作强正样本；历史 1 星相似素材要降分。
 - 命中已有明确玩法标签时，不要标成纯新玩法，应视为老玩法新变体或重复低价值。
 - 没有明确玩法标签、且历史没有同款具体玩法时，可以标成新玩法候选。
-- 与历史不采纳/重复抓取高度同款、受众不符、或无新模板/新场景/新机制时，降分。
+- 与历史 1 星高度同款、受众不符、或无新模板/新场景/新机制时，降分。
 - 生产推送不展示回测字段，reason 要短、能解释为什么值得推。
 
 产品：{product}
 目标日期：{target_date}
-历史浩鹏有效反馈：{json.dumps(history, ensure_ascii=False)}
+历史浩鹏评分偏好：{json.dumps(history, ensure_ascii=False)}
 当天候选素材：{json.dumps(candidates, ensure_ascii=False)}
 
 只输出 JSON 数组，每个候选一个对象：
@@ -292,10 +339,10 @@ def build_report_from_rows(
 ) -> dict[str, Any]:
     history_end = previous_date(target_date)
     history = [
-        row
+        _with_rating(row)
         for row in rows
         if history_start_date <= str(row.get("date") or "") <= history_end
-        and str(row.get("actual_hp") or "") in DECISIVE_STATUSES
+        and _row_rating(row) in {1, 2, 3, 4, 5}
         and str(row.get("core") or "").strip()
     ]
     target_rows = [
@@ -365,6 +412,7 @@ def build_report_from_rows(
         reverse=True,
     )
     status_counts = Counter(str(row.get("actual_hp") or "<空>") for row in history)
+    rating_counts = Counter(str(row.get("rating_label") or "<未评分>") for row in history)
     report = {
         "name": "label_prior",
         "payload_kind": "label_prior",
@@ -375,6 +423,7 @@ def build_report_from_rows(
         "reviewer_field": reviewer_field,
         "model": model,
         "history_effective_count": len(history),
+        "history_rating_counts": dict(rating_counts),
         "target_candidate_count_before_platform_filter": len(target_rows),
         "target_candidate_count": len(candidates),
         "excluded_platforms": sorted(EXCLUDED_TOPN_PLATFORMS),

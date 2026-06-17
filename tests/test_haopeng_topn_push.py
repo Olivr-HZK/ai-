@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ua_workflows.video_enhancer.haopeng_topn_push import (
+    actual_summary,
     build_card_payload,
     build_im_card,
     classify_play_kind,
@@ -27,6 +28,22 @@ from ua_workflows.video_enhancer import haopeng_topn_push as topn_mod
 
 
 class PushHaopengTopNToFeishuTest(unittest.TestCase):
+    def test_actual_summary_uses_rating_distribution_when_available(self) -> None:
+        text = actual_summary(
+            {"results": []},
+            3,
+            rows=[
+                {"rating": 5, "rating_label": "5星"},
+                {"rating": 3, "rating_label": "3星"},
+                {"rating": 1, "rating_label": "1星"},
+            ],
+            force_recalculate=True,
+        )
+
+        self.assertIn("5星命中 1/3", text)
+        self.assertIn("平均评分 3.00", text)
+        self.assertIn("5星 1 / 3星 1 / 1星 1", text)
+
     def test_classify_play_kind_uses_matched_history_label(self) -> None:
         self.assertEqual(
             classify_play_kind({"matched_play_label": "手绘", "play_label": "手绘"}),

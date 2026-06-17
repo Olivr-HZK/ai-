@@ -8,8 +8,10 @@
 | 工作流            | 入口脚本                             | 包路径                            | 用途（简述）                                                        |
 | -------------- | -------------------------------- | ------------------------------ | ------------------------------------------------------------- |
 | Video Enhancer | `scripts/run_video_enhancer.py`  | `ua_workflows/video_enhancer/` | 广大大 **工具** 垂类竞品：抓取 → 封面/入库/视频内容 LLM 筛选 → 极简分析 → 飞书多维表；浩鹏 TopN 默认关闭 |
-| VE 反馈训练        | `scripts/run_ve_feedback_training.py` | `ua_workflows/video_enhancer/feedback_training.py` | 从审核多维表直接拉取「接受情况」，独立落库、导出素材偏好训练集并训练 baseline |
-| VE 浩鹏 TopN 二次筛选 | `scripts/run_ve_haopeng_topn_push.py` / `scripts/run_ve_haopeng_ai_filter.py` | `ua_workflows/video_enhancer/haopeng_ai_filter.py` / `haopeng_topn_push.py` | 从主多维表读取目标日素材与浩鹏历史反馈，二次 AI 筛选后推送 TopN |
+| VE 反馈训练        | `scripts/run_ve_feedback_training.py` | `ua_workflows/video_enhancer/feedback_training.py` | 从审核多维表直接拉取评分/接受情况，独立落库、导出素材偏好训练集并训练 baseline |
+| VE 浩鹏 TopN 二次筛选 | `scripts/run_ve_haopeng_topn_push.py` / `scripts/run_ve_haopeng_ai_filter.py` | `ua_workflows/video_enhancer/haopeng_ai_filter.py` / `haopeng_topn_push.py` | 从主多维表读取目标日素材与浩鹏历史评分偏好，二次 AI 筛选后推送 TopN |
+| VE 3星及以上模板识别任务 | `scripts/run_ve_template_recognition.py` | `ua_workflows/video_enhancer/template_recognition.py` | 从主多维表筛选 3 星及以上素材，生成图片/视频模板识别任务 JSON 与报告 |
+| VE 模板复刻点击触发 | `scripts/run_ve_template_trigger_server.py` | `ua_workflows/video_enhancer/template_trigger_server.py` | 接收多维表按钮或本机链接点击，按记录生成 `aigc-template-copy` 待消费任务 |
 | VE 留存维护        | `scripts/run_ve_retention.py` | `ua_workflows/video_enhancer/retention.py` | 多维表只做归档标记，本地 raw/report/snapshot 产物按保留期清理；默认 dry-run |
 | Arrow2 每日最新    | `scripts/run_arrow2_latest.py`   | `ua_workflows/arrow2/`         | 广大大 **游戏** 垂类：`latest_yesterday`，detail-v2 逐卡点卡，竞品维度的「昨日首见」素材 |
 | Arrow2 展示估值    | `scripts/run_arrow2_exposure.py` | `ua_workflows/arrow2/`         | 同上入口库，`exposure_top10`，偏高高展示估值素材维度                            |
@@ -44,7 +46,7 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **玩法资产库**：`config/ve_play_assets.json` 是本地兜底，协作源是飞书云文档；分析启动时会先尝试拉取最新云文档，失败时继续用本地 JSON。资产库也吸收了内部 Google Sheet「AI产品热点排期表 / 特效上线记录」中的上线主题，用于 aliases、关键词、子标签和案例沉淀。维护方式见 [ve-play-assets.md](./ve-play-assets.md)。
 - **分析字段**：VE 分析会输出并同步「核心卖点」「Hook解析」「脚本/口播」「风险等级」「素材标签」；同时在 analysis JSON/SQLite 中保留 `play_fingerprint`（玩法指纹）和 `differentiator`（差异点）供去重校准。Hook 侧重前 1~3 秒抓人机制；脚本/口播提炼旁白、字幕、画中文字或 CTA，便于后续文案借鉴；风险等级只显示低/中/高，具体原因仍保留在素材标签。
 - **AI 玩法判断**：VE 分析 prompt 会注入压缩后的玩法资产候选清单，并要求模型输出 `玩法资产ID`、`玩法资产名称`、`玩法变种ID`、`玩法变种名称`、`玩法归类`、`玩法判断理由`。日报和多维表同步优先使用 AI 判断；当 ID 无效、缺失或不确定时，再回退到本地关键词/别名/案例规则匹配。
-- **多维表字段**：主表当前实际同步核心素材字段、媒体链接/附件、核心卖点、Hook、脚本/口播、风险等级、AI 分析、抓取日期、广告 ID、接受情况、素材标签，以及「玩法」「玩法指纹」「差异点」「模板指纹」「日内相似素材数」等筛选字段；旧「玩法资产 / 玩法变种 / 玩法新旧 / 玩法判断」内部列仍在字段定义里保持兼容，但日常写入不再依赖这些列。AI 判断命中时，`素材标签` 追加 `玩法判断:AI`；「日内相似素材数」会合并 raw 阶段 exact 相似数、同日封面 CLIP 聚类成员与同步前同模板合并成员，`1` 表示当天无同类相似项。
+- **多维表字段**：主表当前实际同步核心素材字段、媒体链接/附件、核心卖点、Hook、脚本/口播、风险等级、AI 分析、抓取日期、广告 ID、旧 `接受情况`、新增星级评分字段 `浩鹏评分` / `尉蓝评分`、素材标签，以及「玩法」「玩法指纹」「差异点」「模板指纹」「日内相似素材数」等筛选字段；旧「玩法资产 / 玩法变种 / 玩法新旧 / 玩法判断」内部列仍在字段定义里保持兼容，但日常写入不再依赖这些列。AI 判断命中时，`素材标签` 追加 `玩法判断:AI`；「日内相似素材数」会合并 raw 阶段 exact 相似数、同日封面 CLIP 聚类成员与同步前同模板合并成员，`1` 表示当天无同类相似项。
 - **日报素材口径**：仅 Video Enhancer 使用 `load_daily_material_report()` 统一输出「新素材 / 新玩法 / 持续发力」：
   - 新素材：`creative_library.first_target_date = target_date`，通过同步前硬拦截，且同 `appid` 下粗粒度玩法族过去 7 日无精确或相似命中；老玩法换素材不计入新素材
   - 新玩法：严格新素材按同产品粗粒度玩法族聚类后的簇数，不等于素材条数
@@ -57,9 +59,9 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **定时入口**：`scripts/cron_ve_feedback_training_daily.sh`
 - **数据源**：默认读取审核多维表 `CivwbJ2HkazcKTsKnbGclA5RnWc / tblrZZvVuFcjL0kE / vewJtPixtM`，也可用 `VE_FEEDBACK_BITABLE_URL` 覆盖。
 - **数据库**：独立使用 `data/ve_feedback_training.db`，不读写正常 VE 主库。
-- **训练标签**：多维表 `接受情况` 中 `接受` / `采纳` / `入素材库=1`，`删除` / `不采纳=0`，`待定` / `重复抓取` / 空值只留存不训练。
+- **训练标签**：优先读取 `浩鹏评分`（`5星=高意向`、`1星=低意向`、`2~4星=中间分留存`）；评分为空时兼容旧 `浩鹏接受情况` / `接受情况`，其中 `采纳` / `接受=5星`、`入素材库=3星`、`不采纳` / `删除` / `拒绝` / `重复抓取=1星`，`待定` / 空值只留存不训练。
 - **特征口径**：只使用素材字段，例如标题、正文、核心卖点、Hook、脚本/口播、玩法资产/变种、玩法指纹、差异点、AI 分析和素材标签；产品、广告主、日期、热度、展示估值、地区等只进审计字段。
-- **产物**：`data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl`、`data/models/ve_feedback_preference_nb_YYYY-MM-DD.json`、`reports/ve_feedback_training_YYYY-MM-DD.md`。
+- **产物**：`data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl`、`data/models/ve_feedback_preference_nb_YYYY-MM-DD.json`、`reports/ve_feedback_training_YYYY-MM-DD.md`。JSONL 会包含 `rating`、`rating_label`、评分来源字段和值，现有 baseline 暂以 5 星/1 星继续训练二分类。
 - **完整样本训练**：`--complete-profile core` 可只用核心素材字段齐全的样本训练；`core_play` 会额外要求玩法资产/玩法指纹等字段齐全，历史数据当前负样本过少，仅适合观察覆盖率。
 
 更多说明见 [ve-feedback-training.md](./ve-feedback-training.md)。
@@ -69,12 +71,34 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **只生成筛选 JSON**：`scripts/run_ve_haopeng_ai_filter.py --date YYYY-MM-DD`
 - **生成并推送**：`scripts/run_ve_haopeng_topn_push.py --date YYYY-MM-DD --top-n 10`
 - **每日链路**：`scripts/cron_ai_video_enhancer_daily.sh` 只执行 `run_video_enhancer.py`，不在 cron 外层追加 TopN，避免重复推送。TopN 生成与推送保留在主流程内部，但默认关闭，只有 `VE_HAOPENG_TOPN_ENABLED=1` 时才会执行。
-- **数据源**：默认读取 `VIDEO_ENHANCER_BITABLE_URL` 指向的 VE 主表；目标日素材来自「抓取日期」，历史反馈默认从 `2026-05-25` 到目标日前一天，且只使用浩鹏 `采纳 / 入素材库 / 不采纳 / 重复抓取 / 删除 / 拒绝` 等有效反馈，`待定` 不作为正负样本。目标日当天的浩鹏反馈不会传给模型，只在报告落盘后用于人工回测。
-- **筛选口径**：模型仍按“浩鹏会采纳 / 入素材库式有价值变体”的历史偏好判断；目标日候选在进入模型前排除 `admob` / `youtube` 渠道。飞书卡片从非排除渠道结果中展示 Top10，不因为模型标记 `hold` 就强制少推。
+- **数据源**：默认读取 `VIDEO_ENHANCER_BITABLE_URL` 指向的 VE 主表；目标日素材来自「抓取日期」，历史反馈默认从 `2026-05-25` 到目标日前一天。历史偏好优先读 `浩鹏评分`，缺失时兼容旧 `浩鹏接受情况` / `接受情况` 映射；`待定` / 空值不作为正负样本。目标日当天评分不会传给模型，只在报告落盘后用于人工回测。
+- **筛选口径**：模型按浩鹏 1~5 星评分偏好判断，优先推荐与历史 5 星相似但不重复、且具有新模板画面或新片段价值的素材；目标日候选在进入模型前排除 `admob` / `youtube` 渠道。飞书卡片从非排除渠道结果中展示 Top10，不因为模型标记 `hold` 就强制少推。
+- **回测口径**：默认推送隐藏当天实际反馈；显式 `--include-backtest` 时优先展示 `5星命中 / 平均评分 / 评分分布`，没有评分时才兼容旧采纳字段。
 - **卡片入口**：飞书卡片默认隐藏回测字段；末尾会追加“查看多维表格”按钮，链接到 `VIDEO_ENHANCER_BITABLE_URL` 指向的主表，便于当天直接复核浩鹏反馈。
 - **模型**：默认 `qwen/qwen3.7-max`；可用 `VE_HAOPENG_FILTER_MODEL` 或 `--model` 覆盖。
 - **产物**：`data/haopeng_topn_experiments/{date}_label_prior.json`，字段兼容 TopN 飞书卡片渲染。该链路不写回多维表，也不改变 VE 主流程同步/拦截结果。
 - **兼容旧实验文件**：推送脚本传 `--input-json path/to/file.json` 可直接推指定产物；传 `--use-latest-local` 可恢复读取最新本地 `*_label_prior.json` 的旧行为。
+
+## VE 3星及以上模板识别任务（独立任务产物）
+
+- **入口**：`scripts/run_ve_template_recognition.py --date YYYY-MM-DD`
+- **数据源**：默认读取 `VIDEO_ENHANCER_BITABLE_URL` 指向的 VE 主表，默认 reviewer 为浩鹏；可用 `--reviewer weilan` 切到尉蓝评分。
+- **筛选口径**：只选目标日 `3星` 及以上素材；传 `--include-legacy` 时，评分为空但旧字段为 `采纳` / `接受` 的记录也会纳入兼容任务。
+- **任务判断**：根据视频链接、视频时长、脚本/口播、模板指纹、Hook、核心卖点和素材标签做轻量初判，输出 `video_template_candidate`、`image_template_candidate` 或 `needs_manual_review`。
+- **产物**：`data/ve_template_recognition_tasks_YYYY-MM-DD.json` 与 `reports/ve_template_recognition_tasks_YYYY-MM-DD.md`。该链路只整理 `aigc-template-copy` 可消费的来源信息，不自动调用 Eagle、Video Lab 或模板生成 Skill。
+
+## VE 模板复刻点击触发
+
+- **本机触发服务**：`scripts/run_ve_template_trigger_server.py --host 127.0.0.1 --port 8765`，默认读取 `VIDEO_ENHANCER_BITABLE_URL`。`POST /ensure-link` 只在当前记录评分达到 3 星及以上时写入 `模板复刻触发链接`；点击或 `POST /trigger` 才会按 `record_id` / `ad_key` 创建复刻任务。
+- **评分后自动写链接**：`scripts/upsert_ve_template_rating_link_workflow.py --public-url https://xxx.trycloudflare.com --table-name <真实表名> --rating-field-name 浩鹏评分 --reviewer haopeng` 会创建/更新 `SetRecordTrigger -> HTTPClientAction` workflow；当评分字段改到 3 星及以上时，Workflow 调 `/ensure-link` 写回同一条记录的链接。尉蓝评分可再跑一次 `--rating-field-name 尉蓝评分 --reviewer weilan`。
+- **手工触发链接写回**：`scripts/run_ve_template_trigger_links.py --date YYYY-MM-DD --trigger-url http://127.0.0.1:8765/trigger` 会把目标日 3 星及以上素材的 `模板复刻触发链接` 写入主表，并把 `模板复刻状态` 置为 `待触发`。如果只想批量补入口、不改状态，可加 `--include-all-records --link-only`；点击时服务端仍会校验是否满 3 星，低分记录不会进入任务。
+- **触发校验**：只允许评分解析后为 `3星` 及以上的记录进入任务；低于 3 星返回 `not_top_rating`。可设 `VE_TEMPLATE_TRIGGER_TOKEN` 作为点击/Workflow 请求 token。
+- **任务产物**：每次触发写入 `data/ve_template_copy_jobs/{job_id}.json`，状态为 `queued`，其中包含素材来源、建议图片/视频模板类型，以及 `aigc-template-copy` skill handoff 信息。
+- **本地 worker**：`scripts/run_ve_template_copy_worker.py --job data/ve_template_copy_jobs/JOB_ID.json` 会把 job 准备到 `data/ve_template_copy_runs/{job_id}/`：下载源素材、选择 `data/template_model_refs/` 下的默认模特图、生成 `codex_prompt.txt` 与 Video Lab dry-run 参数。默认不调用 Codex、不创建 Video Lab 任务；显式传 `--execute-codex --codex-model gpt-5.5` 才会拉起指定模型的 `codex exec`。
+- **飞书按钮 Workflow**：用 `scripts/build_ve_template_workflow_payload.py --trigger-url https://.../trigger --table-name <真实表名>` 生成 `ButtonTrigger -> HTTPClientAction` 的 Workflow JSON。该 URL 必须能被飞书服务器访问；本机 `127.0.0.1` 只适合在浏览器直接点触发链接，不适合 Base Workflow。
+- **临时公网入口**：本机可用 `cloudflared tunnel --url http://127.0.0.1:8765 --no-autoupdate` 起 Quick Tunnel。URL 改变后，需要更新按钮 Workflow 和评分链接 Workflow：按钮用 `scripts/upsert_ve_template_button_workflow.py --trigger-url https://xxx.trycloudflare.com --token "$(cat data/ve_template_trigger_token.local)"`；评分链接分别用 `scripts/upsert_ve_template_rating_link_workflow.py --public-url https://xxx.trycloudflare.com --rating-field-name 浩鹏评分 --reviewer haopeng` 与 `--rating-field-name 尉蓝评分 --reviewer weilan`。
+- **Mac mini 部署口径**：后续迁到 Mac mini 时，把触发服务和 tunnel 放到远端常驻；如果继续用 Quick Tunnel，每次新 URL 出来后跑同一个 upsert 脚本替换 Workflow URL；如果换成固定域名/命名 tunnel，只需把 `--trigger-url` 固定为该域名。
+- **部署说明**：详见 [ve-template-trigger-deployment.md](./ve-template-trigger-deployment.md)。
 
 ## VE 竞品周检查
 
