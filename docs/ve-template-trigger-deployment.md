@@ -207,18 +207,51 @@ VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
 ```
 
 ```bash
-cloudflared tunnel \
+mkdir -p data/runtime
+: > data/runtime/cloudflared-empty.yml
+
+cloudflared \
+  --config "$PWD/data/runtime/cloudflared-empty.yml" \
+  tunnel \
   --url http://127.0.0.1:8765 \
+  --protocol http2 \
   --no-autoupdate \
-  --logfile data/ve_template_trigger_cloudflared.log
+  --loglevel info \
+  > data/ve_template_trigger_cloudflared.log 2>&1
+```
+
+Mac mini 上如果 `~/.cloudflared/config.yml` 已经配置了别的 named tunnel，Quick Tunnel 也可能自动读到默认配置，导致公网 URL 命中默认 `http_status:404` 而不是本地 `8765` 服务。上面的空 config 是为了隔离 VE 临时 tunnel；启动后必须验证公网健康检查：
+
+```bash
+PUBLIC_URL="$(grep -Eo 'https://[-a-zA-Z0-9]+\.trycloudflare\.com' data/ve_template_trigger_cloudflared.log | tail -n 1)"
+printf '%s\n' "$PUBLIC_URL" > data/ve_template_trigger_public_url.txt
+curl -fsS "$PUBLIC_URL/healthz"
 ```
 
 拿到新 URL 后，在远端或本机任一有 `lark-cli` 权限的环境运行：
 
 ```bash
 VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
+  .venv/bin/python scripts/upsert_ve_template_rating_link_workflow.py \
+  --bitable-url 'https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuFcjL0kE&view=vewGH7cmSs' \
+  --public-url "$PUBLIC_URL" \
+  --table-name 'ai工具video photo爬取表' \
+  --rating-field-name '浩鹏评分' \
+  --reviewer haopeng
+
+VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
+  .venv/bin/python scripts/upsert_ve_template_rating_link_workflow.py \
+  --bitable-url 'https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuFcjL0kE&view=vewGH7cmSs' \
+  --public-url "$PUBLIC_URL" \
+  --table-name 'ai工具video photo爬取表' \
+  --rating-field-name '尉蓝评分' \
+  --reviewer weilan
+
+VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
   .venv/bin/python scripts/upsert_ve_template_button_workflow.py \
-  --trigger-url 'https://xxx.trycloudflare.com'
+  --bitable-url 'https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuFcjL0kE&view=vewGH7cmSs' \
+  --trigger-url "$PUBLIC_URL/trigger" \
+  --table-name 'ai工具video photo爬取表'
 ```
 
 生产稳定版建议改成 Cloudflare named tunnel 或固定域名，这样 Workflow URL 不会因为 Quick Tunnel 重启而变化。
