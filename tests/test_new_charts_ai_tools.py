@@ -29,6 +29,14 @@ class NewChartsAiToolsTest(unittest.TestCase):
         )
         self.assertEqual(category_ui_label(resolve_ai_tool_category("AI视频")), "AI视频生成")
 
+    def test_chart_type_configs_cover_three_weekly_charts(self) -> None:
+        from ua_workflows.shared.guangdada.new_charts_ai_tools import resolve_chart_config
+
+        self.assertEqual(resolve_chart_config("new").slug, "new")
+        self.assertIn("/new-charts", resolve_chart_config("new").url)
+        self.assertIn("/hot-charts", resolve_chart_config("hot").url)
+        self.assertIn("/surge-charts", resolve_chart_config("surge").url)
+
     def test_extract_creative_lists_finds_nested_creative_list(self) -> None:
         from ua_workflows.shared.guangdada.new_charts_ai_tools import extract_creative_lists
 

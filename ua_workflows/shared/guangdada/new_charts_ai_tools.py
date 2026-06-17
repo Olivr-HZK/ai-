@@ -83,6 +83,60 @@ class AiToolCategory:
     slug: str
 
 
+@dataclass(frozen=True)
+class ChartConfig:
+    slug: str
+    name: str
+    url: str
+    workflow_name: str
+
+
+CHART_CONFIGS = {
+    "new": ChartConfig(
+        slug="new",
+        name="新创意榜",
+        url="https://www.guangdada.net/modules/creative/charts/new-charts",
+        workflow_name="VE大盘周榜新创意榜",
+    ),
+    "hot": ChartConfig(
+        slug="hot",
+        name="每周热门榜",
+        url="https://www.guangdada.net/modules/creative/charts/hot-charts",
+        workflow_name="VE大盘周榜热门榜",
+    ),
+    "surge": ChartConfig(
+        slug="surge",
+        name="每周飙升榜",
+        url="https://www.guangdada.net/modules/creative/charts/surge-charts",
+        workflow_name="VE大盘周榜飙升榜",
+    ),
+}
+
+
+def resolve_chart_config(raw: str) -> ChartConfig:
+    key = str(raw or "new").strip().lower().replace("_", "-")
+    aliases = {
+        "new-charts": "new",
+        "new_chart": "new",
+        "新创意榜": "new",
+        "hot-charts": "hot",
+        "hot_chart": "hot",
+        "hot": "hot",
+        "热门榜": "hot",
+        "每周热门榜": "hot",
+        "surge-charts": "surge",
+        "surge_chart": "surge",
+        "rising": "surge",
+        "rise": "surge",
+        "飙升榜": "surge",
+        "每周飙升榜": "surge",
+    }
+    key = aliases.get(key, key)
+    if key not in CHART_CONFIGS:
+        raise ValueError(f"未知创意榜单类型: {raw!r}")
+    return CHART_CONFIGS[key]
+
+
 _CATEGORY_ALIASES = {
     "ai图像生成": AiToolCategory(label="AI工具/AI图像", slug="ai_image"),
     "ai图片生成": AiToolCategory(label="AI工具/AI图像", slug="ai_image"),
@@ -223,6 +277,7 @@ def _normalize_creative_for_ve_raw(
     rank: int,
     video_rank: int,
     category: AiToolCategory,
+    chart_config: ChartConfig = CHART_CONFIGS["new"],
 ) -> dict[str, Any] | None:
     video_url = pick_video_url(creative)
     if not video_url:
@@ -242,7 +297,12 @@ def _normalize_creative_for_ve_raw(
     normalized["new_charts_video_rank"] = video_rank
     normalized["new_charts_category_label"] = category.label
     normalized["new_charts_category_slug"] = category.slug
-    normalized["new_charts_source_url"] = NEW_CHARTS_URL
+    normalized["new_charts_source_url"] = chart_config.url
+    normalized["market_chart_type"] = chart_config.slug
+    normalized["market_chart_name"] = chart_config.name
+    normalized["market_chart_rank"] = rank
+    normalized["market_chart_video_rank"] = video_rank
+    normalized["market_chart_source_url"] = chart_config.url
     normalized.setdefault("creative_type", "video")
     return normalized
 
@@ -252,6 +312,7 @@ def build_ve_raw_payload(
     target_date: str,
     per_category_raw: dict[AiToolCategory, list[dict[str, Any]]],
     source_url: str = NEW_CHARTS_URL,
+    chart_config: ChartConfig = CHART_CONFIGS["new"],
 ) -> dict[str, Any]:
     """Build a VE-compatible raw payload from per-category chart rows."""
     items: list[dict[str, Any]] = []
@@ -259,6 +320,8 @@ def build_ve_raw_payload(
     filter_report: dict[str, Any] = {
         "source": "guangdada_new_charts_ai_tools",
         "source_url": source_url,
+        "chart_type": chart_config.slug,
+        "chart_name": chart_config.name,
         "per_category": {},
     }
 
@@ -271,7 +334,13 @@ def build_ve_raw_payload(
         skipped_duplicate = 0
         skipped_no_video_samples: list[dict[str, Any]] = []
         for raw_rank, raw in enumerate(rows, start=1):
-            normalized = _normalize_creative_for_ve_raw(raw, rank=raw_rank, video_rank=kept + 1, category=category)
+            normalized = _normalize_creative_for_ve_raw(
+                raw,
+                rank=raw_rank,
+                video_rank=kept + 1,
+                category=category,
+                chart_config=chart_config,
+            )
             if not normalized:
                 skipped_no_video += 1
                 if len(skipped_no_video_samples) < 10:
@@ -650,6 +719,7 @@ async def _collect_one_category(
     page: Any,
     category: AiToolCategory,
     *,
+    chart_config: ChartConfig,
     limit: int,
     scroll_rounds: int,
     wait_after_filter_ms: int,
@@ -658,6 +728,7 @@ async def _collect_one_category(
     return await _collect_categories(
         page,
         [category],
+        chart_config=chart_config,
         limit=limit,
         scroll_rounds=scroll_rounds,
         wait_after_filter_ms=wait_after_filter_ms,
@@ -669,6 +740,7 @@ async def _collect_categories(
     page: Any,
     categories: list[AiToolCategory],
     *,
+    chart_config: ChartConfig,
     limit: int,
     scroll_rounds: int,
     wait_after_filter_ms: int,
@@ -695,7 +767,7 @@ async def _collect_categories(
 
     page.on("response", on_response)
     try:
-        await page.goto(NEW_CHARTS_URL, wait_until="domcontentloaded", timeout=90000)
+        await page.goto(chart_config.url, wait_until="domcontentloaded", timeout=90000)
         await page.wait_for_timeout(2500)
         await _raise_if_interrupted(page, step="打开新创意榜")
         await _select_tool_tab(page, debug=debug)
@@ -737,6 +809,7 @@ async def _collect_categories(
 async def collect_new_charts_ai_tools(
     *,
     categories: list[AiToolCategory],
+    chart_config: ChartConfig = CHART_CONFIGS["new"],
     category_mode: str,
     limit: int,
     auth_mode: str,
@@ -781,10 +854,10 @@ async def collect_new_charts_ai_tools(
                 AUTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
                 await context.storage_state(path=str(AUTH_STATE_PATH))
             elif auth_mode == "auth-state":
-                await page.goto(NEW_CHARTS_URL, wait_until="domcontentloaded", timeout=90000)
+                await page.goto(chart_config.url, wait_until="domcontentloaded", timeout=90000)
                 await _await_post_login_shell(page)
             elif auth_mode == "manual":
-                await page.goto(NEW_CHARTS_URL, wait_until="domcontentloaded", timeout=90000)
+                await page.goto(chart_config.url, wait_until="domcontentloaded", timeout=90000)
                 print("请在打开的浏览器中完成登录/验证后回到终端按回车继续。", file=sys.stderr)
                 await asyncio.to_thread(sys.stdin.readline)
                 await context.storage_state(path=str(AUTH_STATE_PATH))
@@ -797,6 +870,7 @@ async def collect_new_charts_ai_tools(
                 rows = await _collect_categories(
                     page,
                     categories,
+                    chart_config=chart_config,
                     limit=limit,
                     scroll_rounds=scroll_rounds,
                     wait_after_filter_ms=wait_after_filter_ms,
@@ -811,6 +885,7 @@ async def collect_new_charts_ai_tools(
                     per_category[category] = await _collect_one_category(
                         page,
                         category,
+                        chart_config=chart_config,
                         limit=limit,
                         scroll_rounds=scroll_rounds,
                         wait_after_filter_ms=wait_after_filter_ms,
@@ -833,6 +908,7 @@ async def collect_new_charts_ai_tools(
             )
             return await collect_new_charts_ai_tools(
                 categories=categories,
+                chart_config=chart_config,
                 category_mode=category_mode,
                 limit=limit,
                 auth_mode=auth_mode,
@@ -865,6 +941,12 @@ def write_payload_files(payload: dict[str, Any], *, output_prefix: str | None = 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="采集广大大新创意榜 AI 工具视频素材并落 VE raw 兼容 JSON")
     parser.add_argument("--date", default=_today_utc8(), help="写入 raw JSON 的 target_date，默认今天（UTC+8）")
+    parser.add_argument(
+        "--chart-type",
+        choices=sorted(CHART_CONFIGS),
+        default="new",
+        help="创意榜单类型：new=新创意榜，hot=每周热门榜，surge=每周飙升榜",
+    )
     parser.add_argument("--limit", type=int, default=100, help="合并模式为榜单总上限，分开模式为每类上限")
     parser.add_argument(
         "--category-mode",
@@ -900,11 +982,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 async def run_async(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any]]:
     category_names = args.categories or ["AI图像生成", "AI视频"]
     categories = [resolve_ai_tool_category(name) for name in category_names]
+    chart_config = resolve_chart_config(args.chart_type)
     os.environ.setdefault("TARGET_DATE", str(args.date or ""))
-    os.environ.setdefault("GUANGDADA_WORKFLOW_NAME", "VE竞品周检查新创意榜")
-    os.environ.setdefault("GUANGDADA_WORKFLOW_STEP", "新创意榜采集安全验证")
+    os.environ.setdefault("GUANGDADA_WORKFLOW_NAME", chart_config.workflow_name)
+    os.environ.setdefault("GUANGDADA_WORKFLOW_STEP", f"{chart_config.name}采集安全验证")
     per_category_raw = await collect_new_charts_ai_tools(
         categories=categories,
+        chart_config=chart_config,
         category_mode=args.category_mode,
         limit=max(1, int(args.limit)),
         auth_mode=args.auth_mode,
@@ -913,7 +997,12 @@ async def run_async(args: argparse.Namespace) -> tuple[Path, Path, dict[str, Any
         scroll_rounds=max(1, int(args.scroll_rounds)),
         wait_after_filter_ms=max(500, int(args.wait_after_filter_ms)),
     )
-    payload = build_ve_raw_payload(target_date=args.date, per_category_raw=per_category_raw)
+    payload = build_ve_raw_payload(
+        target_date=args.date,
+        per_category_raw=per_category_raw,
+        source_url=chart_config.url,
+        chart_config=chart_config,
+    )
     raw_path, completeness_path = write_payload_files(payload, output_prefix=args.output_prefix)
     return raw_path, completeness_path, payload
 
