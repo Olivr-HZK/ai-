@@ -158,7 +158,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--no-card",
         action="store_true",
-        help="只同步多维表，不推送飞书卡片",
+        help="跳过旧素材日报飞书卡片",
+    )
+    p.add_argument(
+        "--send-material-card",
+        action="store_true",
+        help="发送旧素材日报飞书卡片；默认不发，可用 VIDEO_ENHANCER_MATERIAL_DAILY_CARD_ENABLED=1 开启",
     )
     p.add_argument(
         "--no-bitable-sync",
@@ -287,6 +292,15 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return float(default)
+
+
+def _should_send_material_card(args: argparse.Namespace) -> bool:
+    if args.no_card:
+        return False
+    return bool(getattr(args, "send_material_card", False)) or _env_bool(
+        "VIDEO_ENHANCER_MATERIAL_DAILY_CARD_ENABLED",
+        False,
+    )
 
 
 def _resolve_topn_send_mode(args: argparse.Namespace) -> str:
@@ -1522,8 +1536,8 @@ def main() -> None:
     # 5) 浩鹏 TopN 二次筛选与推送：从主多维表读取目标日素材和历史反馈。
     _run_haopeng_topn_push(py, args, target_date)
 
-    # 6) 飞书卡片推送（独立于多维表同步）
-    if not args.no_card:
+    # 6) 旧素材日报飞书卡片（默认关闭；全流程漏斗报告仍由 flow_report 负责）
+    if _should_send_material_card(args):
         card_cmd = [
             py,
             "-m",
@@ -1536,7 +1550,7 @@ def main() -> None:
             card_cmd.extend(["--feishu-webhook", test_webhook])
         _run(card_cmd)
     else:
-        print("[card] 已按参数跳过飞书卡片推送（--no-card）。")
+        print("[card] 已跳过旧素材日报卡片（默认关闭；需 --send-material-card 或 VIDEO_ENHANCER_MATERIAL_DAILY_CARD_ENABLED=1）。")
 
     # 7) 将本次推送建议写入专用 pipeline DB（推送表）
     init_pipeline_db()

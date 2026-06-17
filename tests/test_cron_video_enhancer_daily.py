@@ -48,6 +48,25 @@ class CronVideoEnhancerDailyTest(unittest.TestCase):
             self.assertIn("ua_workflows.video_enhancer.haopeng_topn_push", cmd)
             self.assertIn("--date", cmd)
 
+    def test_material_daily_card_is_disabled_until_explicitly_enabled(self) -> None:
+        from ua_workflows.video_enhancer import pipeline
+
+        args = Namespace(no_card=False, send_material_card=False)
+
+        with patch.dict("os.environ", {"FEISHU_TEST_WEBHOOK": "https://example.invalid/hook"}, clear=True):
+            self.assertFalse(pipeline._should_send_material_card(args))
+
+        with patch.dict("os.environ", {"VIDEO_ENHANCER_MATERIAL_DAILY_CARD_ENABLED": "1"}, clear=True):
+            self.assertTrue(pipeline._should_send_material_card(args))
+
+        args.send_material_card = True
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(pipeline._should_send_material_card(args))
+
+        args.no_card = True
+        with patch.dict("os.environ", {"VIDEO_ENHANCER_MATERIAL_DAILY_CARD_ENABLED": "1"}, clear=True):
+            self.assertFalse(pipeline._should_send_material_card(args))
+
     def test_local_haopeng_experiment_outputs_are_ignored(self) -> None:
         text = GITIGNORE.read_text(encoding="utf-8")
 
