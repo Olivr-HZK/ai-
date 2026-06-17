@@ -400,6 +400,180 @@ def prepare_template_copy_job(
     }
 
 
+def _source_is_video(source_path: Path, job: dict[str, Any]) -> bool:
+    if source_path.suffix.lower() in IMAGE_EXTENSIONS:
+        return False
+    if source_path.suffix.lower() in VIDEO_EXTENSIONS:
+        return True
+    task = job.get("task") if isinstance(job.get("task"), dict) else {}
+    handoff = task.get("aigc_template_copy_input") if isinstance(task.get("aigc_template_copy_input"), dict) else {}
+    source_kind = str(handoff.get("source_kind") or "").strip().lower()
+    if source_kind == "video":
+        return True
+    if source_kind == "image":
+        return False
+    return source_path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def _recognition_from_job(job: dict[str, Any], *, source_path: Path) -> dict[str, Any]:
+    task = job.get("task") if isinstance(job.get("task"), dict) else {}
+    suggested = str(task.get("suggested_template_kind") or "").strip()
+    is_video = _source_is_video(source_path, job)
+    if is_video and suggested != "image_template_candidate":
+        mode = "video_template"
+        template_type = "视频模板"
+    else:
+        mode = "image_template"
+        template_type = "图片模板"
+    reason = str(task.get("template_reason") or "").strip()
+    if not reason:
+        reason = "素材包含视频源，输出关键帧和短视频片段供模板参考。" if is_video else "素材为静态图片源，输出关键参考截图供模板参考。"
+    return {
+        "mode": mode,
+        "template_type": template_type,
+        "suggested_template_kind": suggested,
+        "reason": reason,
+        "source_path": str(source_path),
+    }
+
+
+def _run_subprocess(cmd: list[str], *, timeout_sec: int = 60) -> bool:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
+    except Exception:
+        return False
+    return proc.returncode == 0
+
+
+def _write_placeholder(path: Path, source_path: Path, *, label: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(f"{label}\nsource={source_path}\n".encode("utf-8"))
+
+
+def _extract_reference_screenshot(source_path: Path, target_path: Path, *, is_video: bool) -> Path:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    if is_video:
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg and _run_subprocess(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source_path),
+                "-vf",
+                "select=eq(n\\,0)",
+                "-frames:v",
+                "1",
+                str(target_path),
+            ]
+        ):
+            return target_path
+        _write_placeholder(target_path, source_path, label="reference screenshot placeholder")
+        return target_path
+    if source_path.suffix.lower() in IMAGE_EXTENSIONS:
+        shutil.copyfile(source_path, target_path)
+        return target_path
+    _write_placeholder(target_path, source_path, label="reference screenshot placeholder")
+    return target_path
+
+
+def _extract_reference_video_segment(source_path: Path, target_path: Path, *, is_video: bool) -> Path | None:
+    if not is_video:
+        return None
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg and _run_subprocess(
+        [
+            ffmpeg,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source_path),
+            "-t",
+            "4",
+            "-c",
+            "copy",
+            str(target_path),
+        ],
+        timeout_sec=120,
+    ):
+        return target_path
+    _write_placeholder(target_path, source_path, label="reference video segment placeholder")
+    return target_path
+
+
+def run_template_recognition_only(
+    job_path: Path,
+    *,
+    work_dir: Path = DEFAULT_WORK_DIR,
+    download: bool = True,
+) -> dict[str, Any]:
+    """Create reference artifacts for template judgment without Codex or Video Lab generation."""
+    job = read_job(job_path)
+    run_dir = _job_run_dir(job, work_dir=work_dir)
+    try:
+        source_path = materialize_source(job, run_dir=run_dir, download=download)
+    except TemplateCopyWorkerError as exc:
+        _mark_failed(job_path, job, exc)
+        raise
+
+    recognition = _recognition_from_job(job, source_path=source_path)
+    refs_dir = run_dir / "recognition_refs"
+    screenshot_path = _extract_reference_screenshot(
+        source_path,
+        refs_dir / "reference_frame_01.jpg",
+        is_video=recognition["mode"] == "video_template",
+    )
+    segment_path = _extract_reference_video_segment(
+        source_path,
+        refs_dir / "reference_segment_01.mp4",
+        is_video=recognition["mode"] == "video_template",
+    )
+    result_path = refs_dir / "recognition_result.json"
+    reference_screenshots = [str(screenshot_path)]
+    reference_video_segments = [str(segment_path)] if segment_path else []
+    result_payload = {
+        "status": "completed",
+        "state": "recognition_completed",
+        "bitable_status": "已完成",
+        "recognition": recognition,
+        "reference_screenshots": reference_screenshots,
+        "reference_video_segments": reference_video_segments,
+    }
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    runner = job.setdefault("runner", {})
+    artifacts = runner.setdefault("artifacts", {})
+    artifacts["recognition_result_path"] = str(result_path)
+    runner.update(
+        {
+            "state": "recognition_completed",
+            "run_dir": str(run_dir),
+            "source_path": str(source_path),
+            "recognition": recognition,
+            "reference_screenshots": reference_screenshots,
+            "reference_video_segments": reference_video_segments,
+        }
+    )
+    runner.pop("codex_exec", None)
+    runner.pop("skill_result", None)
+    runner.pop("error", None)
+    job["status"] = "completed"
+    write_job(job_path, job)
+    return {
+        **result_payload,
+        "job_path": str(job_path),
+        "run_dir": str(run_dir),
+        "recognition_result_path": str(result_path),
+    }
+
+
 def run_codex_prompt(
     prompt_path: Path,
     *,

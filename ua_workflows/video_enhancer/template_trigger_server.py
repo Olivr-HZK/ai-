@@ -18,6 +18,7 @@ from ua_workflows.video_enhancer.template_trigger import (
     ensure_template_trigger_link_from_bitable,
     trigger_template_copy_from_bitable,
     update_template_copy_status,
+    update_template_recognition_result,
 )
 from ua_workflows.video_enhancer.template_copy_worker import (
     DEFAULT_MODEL_REF_DIR,
@@ -25,6 +26,7 @@ from ua_workflows.video_enhancer.template_copy_worker import (
     TemplateCopyWorkerError,
     execute_prepared_template_copy_job,
     prepare_template_copy_job,
+    run_template_recognition_only,
 )
 
 
@@ -77,11 +79,18 @@ def run_optional_worker(
     auto_execute_codex: bool = False,
     codex_bin: str = "",
     codex_model: str = "",
+    recognition_only: bool = False,
     model_ref_dir: Path = DEFAULT_MODEL_REF_DIR,
     work_dir: Path = DEFAULT_WORK_DIR,
 ) -> dict[str, Any]:
     if not auto_prepare:
         return {"skipped": True}
+    if recognition_only:
+        return run_template_recognition_only(
+            job_path,
+            work_dir=work_dir,
+            download=True,
+        )
     prepared = prepare_template_copy_job(
         job_path,
         model_ref_dir=model_ref_dir,
@@ -127,6 +136,10 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
     @property
     def auto_execute_codex(self) -> bool:
         return bool(getattr(self.server, "auto_execute_codex", False))
+
+    @property
+    def recognition_only(self) -> bool:
+        return bool(getattr(self.server, "recognition_only", False))
 
     @property
     def codex_bin(self) -> str:
@@ -245,6 +258,7 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
                 auto_execute_codex=self.auto_execute_codex,
                 codex_bin=self.codex_bin,
                 codex_model=self.codex_model,
+                recognition_only=self.recognition_only,
                 model_ref_dir=self.model_ref_dir,
                 work_dir=self.work_dir,
             )
@@ -269,6 +283,12 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
         bitable_status = str(worker.get("bitable_status") or "已提交")
         job_status = str(worker.get("status") or "queued")
         bitable_update = self._update_status(record_id=str(job.get("record_id") or record_id), status=bitable_status, job_id=str(job.get("job_id") or ""))
+        recognition_update: dict[str, Any] = {"skipped": True}
+        if self.recognition_only and worker.get("state") == "recognition_completed":
+            recognition_update = self._update_recognition_result(
+                record_id=str(job.get("record_id") or record_id),
+                recognition=worker,
+            )
         return {
             "success": True,
             "message": "queued",
@@ -277,6 +297,7 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
             "job_path": str(path),
             "worker": worker,
             "bitable_update": bitable_update,
+            "recognition_update": recognition_update,
         }, 200
 
     def _ensure_link(self, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
@@ -334,6 +355,20 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
                 "fields": {"模板复刻状态": status, "模板复刻任务ID": job_id},
             }
 
+    def _update_recognition_result(self, *, record_id: str, recognition: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return update_template_recognition_result(
+                bitable_url=self.bitable_url,
+                record_id=record_id,
+                recognition=recognition,
+            )
+        except Exception as exc:
+            return {
+                "updated": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "record_id": record_id,
+            }
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="启动 VE 模板复刻点击触发服务")
@@ -346,6 +381,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--job-dir", default=os.getenv("VE_TEMPLATE_COPY_JOB_DIR", str(DEFAULT_JOB_DIR)))
     parser.add_argument("--auto-prepare", action="store_true", default=_bool_env("VE_TEMPLATE_COPY_AUTO_PREPARE"))
     parser.add_argument("--auto-execute-codex", action="store_true", default=_bool_env("VE_TEMPLATE_COPY_AUTO_EXECUTE_CODEX"))
+    parser.add_argument("--recognition-only", action="store_true", default=_bool_env("VE_TEMPLATE_RECOGNITION_ONLY"))
     parser.add_argument("--codex-bin", default=os.getenv("VE_TEMPLATE_COPY_CODEX_BIN", ""))
     parser.add_argument("--codex-model", default=os.getenv("VE_TEMPLATE_COPY_CODEX_MODEL", ""))
     parser.add_argument(
@@ -369,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     server.job_dir = Path(args.job_dir or DATA_DIR / "ve_template_copy_jobs")
     server.auto_prepare = bool(args.auto_prepare)
     server.auto_execute_codex = bool(args.auto_execute_codex)
+    server.recognition_only = bool(args.recognition_only)
     server.codex_bin = str(args.codex_bin or "").strip()
     server.codex_model = str(args.codex_model or "").strip()
     server.public_trigger_url = str(args.public_trigger_url or "").strip()
@@ -379,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "[ve-template-trigger] "
         f"auto_prepare={server.auto_prepare} auto_execute_codex={server.auto_execute_codex} "
+        f"recognition_only={server.recognition_only} "
         f"model_refs={server.model_ref_dir}"
     )
     try:

@@ -471,6 +471,71 @@ class VeTemplateTriggerTest(unittest.TestCase):
             job_id="job3",
         )
 
+    def test_server_recognition_only_updates_bitable_fields_and_attachments(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger_server
+
+        handler = object.__new__(template_trigger_server.TemplateTriggerHandler)
+        handler.server = SimpleNamespace(
+            trigger_token="",
+            bitable_url="https://example.feishu.cn/base/app_token?table=tbl123",
+            reviewer="haopeng",
+            include_legacy=False,
+            job_dir=Path("/tmp/jobs"),
+            auto_prepare=True,
+            auto_execute_codex=False,
+            recognition_only=True,
+            codex_bin="",
+            model_ref_dir=Path("/tmp/model_refs"),
+            work_dir=Path("/tmp/runs"),
+        )
+        handler.headers = {}
+
+        job = {"job_id": "job3", "record_id": "rec3"}
+        worker_result = {
+            "status": "completed",
+            "state": "recognition_completed",
+            "bitable_status": "已完成",
+            "recognition": {
+                "template_type": "视频模板",
+                "reason": "素材有动态动作。",
+            },
+            "reference_screenshots": ["/tmp/key.jpg"],
+            "reference_video_segments": ["/tmp/segment.mp4"],
+        }
+        with patch.object(
+            template_trigger_server,
+            "trigger_template_copy_from_bitable",
+            return_value=(job, Path("/tmp/jobs/job3.json")),
+        ), patch.object(
+            template_trigger_server,
+            "run_optional_worker",
+            return_value=worker_result,
+        ), patch.object(
+            template_trigger_server,
+            "update_template_copy_status",
+            return_value={"updated": True},
+        ) as update_status, patch.object(
+            template_trigger_server,
+            "update_template_recognition_result",
+            return_value={"updated": True, "attachments": {"screenshots": 1, "video_segments": 1}},
+        ) as update_result:
+            result, status = handler._trigger({"record_id": "rec3"})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["success"])
+        update_status.assert_called_once_with(
+            bitable_url="https://example.feishu.cn/base/app_token?table=tbl123",
+            record_id="rec3",
+            status="已完成",
+            job_id="job3",
+        )
+        update_result.assert_called_once_with(
+            bitable_url="https://example.feishu.cn/base/app_token?table=tbl123",
+            record_id="rec3",
+            recognition=worker_result,
+        )
+        self.assertEqual(result["recognition_update"], {"updated": True, "attachments": {"screenshots": 1, "video_segments": 1}})
+
     def test_server_ensure_link_updates_bitable_without_triggering_job(self) -> None:
         from ua_workflows.video_enhancer import template_trigger_server
 

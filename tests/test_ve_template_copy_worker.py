@@ -261,6 +261,47 @@ class VeTemplateCopyWorkerTest(unittest.TestCase):
         self.assertEqual(updated["runner"]["state"], "quality_failed")
         self.assertIn("below 90", updated["runner"]["error"])
 
+    def test_recognition_only_job_creates_reference_artifacts_without_codex(self) -> None:
+        from ua_workflows.video_enhancer.template_copy_worker import run_template_recognition_only
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"fake video")
+            job_path = self._write_job(root, source_url=str(source))
+
+            result = run_template_recognition_only(job_path, work_dir=root / "runs", download=False)
+            updated = json.loads(job_path.read_text(encoding="utf-8"))
+            self.assertTrue(Path(result["reference_screenshots"][0]).exists())
+            self.assertTrue(Path(result["reference_video_segments"][0]).exists())
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["state"], "recognition_completed")
+        self.assertEqual(result["bitable_status"], "已完成")
+        self.assertEqual(result["recognition"]["mode"], "video_template")
+        self.assertEqual(result["recognition"]["template_type"], "视频模板")
+        self.assertTrue(result["reference_screenshots"])
+        self.assertTrue(result["reference_video_segments"])
+        self.assertNotIn("codex_exec", updated["runner"])
+        self.assertEqual(updated["runner"]["state"], "recognition_completed")
+        self.assertEqual(updated["runner"]["recognition"]["template_type"], "视频模板")
+
+    def test_recognition_only_image_source_creates_screenshot_without_video_segment(self) -> None:
+        from ua_workflows.video_enhancer.template_copy_worker import run_template_recognition_only
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.png"
+            source.write_bytes(b"fake image")
+            job_path = self._write_job(root, source_url=str(source))
+
+            result = run_template_recognition_only(job_path, work_dir=root / "runs", download=False)
+
+        self.assertEqual(result["recognition"]["mode"], "image_template")
+        self.assertEqual(result["recognition"]["template_type"], "图片模板")
+        self.assertTrue(result["reference_screenshots"])
+        self.assertEqual(result["reference_video_segments"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

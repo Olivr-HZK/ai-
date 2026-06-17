@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import re
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,10 @@ DEFAULT_JOB_DIR = DATA_DIR / "ve_template_copy_jobs"
 TRIGGER_LINK_FIELD = "模板复刻触发链接"
 TRIGGER_STATUS_FIELD = "模板复刻状态"
 TRIGGER_JOB_ID_FIELD = "模板复刻任务ID"
+RECOGNITION_TYPE_FIELD = "模板识别类型"
+RECOGNITION_REASON_FIELD = "模板识别理由"
+RECOGNITION_SCREENSHOT_FIELD = "模板参考截图"
+RECOGNITION_VIDEO_SEGMENT_FIELD = "模板参考视频片段"
 
 
 class TemplateTriggerError(RuntimeError):
@@ -460,6 +465,112 @@ def update_template_copy_status(
     if data.get("code") != 0:
         raise RuntimeError(f"update template copy status failed: {data}")
     return {"updated": True, "record_id": record_id, "fields": fields}
+
+
+def _batch_update_record_fields(
+    *,
+    bitable_url: str,
+    record_id: str,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    ref = parse_bitable_ref(bitable_url)
+    access_token = _tenant_access_token()
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=utf-8"}
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{ref.app_token}/tables/{ref.table_id}/records/batch_update"
+    resp = requests.post(
+        url,
+        headers=headers,
+        json={"records": [{"record_id": record_id, "fields": fields}]},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"update bitable fields failed: {data}")
+    return {"updated": True, "record_id": record_id, "fields": fields}
+
+
+def _upload_attachments_with_lark_cli(
+    *,
+    bitable_url: str,
+    record_id: str,
+    field_name: str,
+    files: list[str],
+) -> dict[str, Any]:
+    paths = [str(Path(path)) for path in files if str(path or "").strip()]
+    if not paths:
+        return {"uploaded": 0, "field": field_name, "files": []}
+    ref = parse_bitable_ref(bitable_url)
+    cmd = [
+        "lark-cli",
+        "base",
+        "+record-upload-attachment",
+        "--base-token",
+        ref.app_token,
+        "--table-id",
+        ref.table_id,
+        "--record-id",
+        record_id,
+        "--field-id",
+        field_name,
+        "--as",
+        "user",
+        "--format",
+        "json",
+    ]
+    for path in paths:
+        cmd.extend(["--file", path])
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        detail = (proc.stdout or proc.stderr or "").strip()
+        raise RuntimeError(f"upload attachments failed for {field_name}: {detail}")
+    return {"uploaded": len(paths), "field": field_name, "files": paths}
+
+
+def update_template_recognition_result(
+    *,
+    bitable_url: str,
+    record_id: str,
+    recognition: dict[str, Any],
+) -> dict[str, Any]:
+    """Write recognition-only result fields and upload reference artifacts to Base."""
+    load_project_env()
+    record_id = str(record_id or "").strip()
+    if not record_id:
+        raise ValueError("record_id is required")
+    info = recognition.get("recognition") if isinstance(recognition.get("recognition"), dict) else {}
+    fields = {
+        RECOGNITION_TYPE_FIELD: str(info.get("template_type") or ""),
+        RECOGNITION_REASON_FIELD: str(info.get("reason") or ""),
+    }
+    field_update = _batch_update_record_fields(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        fields=fields,
+    )
+    screenshots = [str(path) for path in recognition.get("reference_screenshots") or []]
+    video_segments = [str(path) for path in recognition.get("reference_video_segments") or []]
+    screenshot_upload = _upload_attachments_with_lark_cli(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        field_name=RECOGNITION_SCREENSHOT_FIELD,
+        files=screenshots,
+    )
+    video_upload = _upload_attachments_with_lark_cli(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        field_name=RECOGNITION_VIDEO_SEGMENT_FIELD,
+        files=video_segments,
+    )
+    return {
+        "updated": True,
+        "record_id": record_id,
+        "fields": field_update["fields"],
+        "attachments": {
+            "screenshots": screenshot_upload.get("uploaded", 0),
+            "video_segments": video_upload.get("uploaded", 0),
+        },
+    }
 
 
 def build_button_workflow_payload(
