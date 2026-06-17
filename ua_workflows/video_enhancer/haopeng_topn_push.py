@@ -344,8 +344,10 @@ def resolve_webhook(explicit_webhook: str = "") -> str:
     if webhook:
         return webhook
     return (
-        os.getenv("VE_HAOPENG_TOPN_FEISHU_WEBHOOK", "")
-        or os.getenv("VE_FLOW_REPORT_FEISHU_WEBHOOK", "")
+        os.getenv("GUANGDADA_CHECK_FEISHU_WEBHOOK", "")
+        or os.getenv("FEISHU_GUANGDADA_CHECK_WEBHOOK", "")
+        or os.getenv("FEISHU_TEST_WEBHOOK", "")
+        or os.getenv("VE_HAOPENG_TOPN_FEISHU_WEBHOOK", "")
         or os.getenv("FEISHU_UA_WEBHOOK", "")
     ).strip()
 
@@ -363,7 +365,15 @@ def post_card(webhook: str, title: str, md_text: str, *, bitable_url: str = "") 
 
 def default_chat_id() -> str:
     values = dotenv_values(VIDEO_GEN_ENV) if VIDEO_GEN_ENV.exists() else {}
-    return str(os.getenv("FEISHU_DAILY_PUSH_CHAT_ID") or values.get("FEISHU_DAILY_PUSH_CHAT_ID") or "").strip()
+    return str(
+        os.getenv("GUANGDADA_CHECK_FEISHU_CHAT_ID")
+        or os.getenv("FEISHU_GUANGDADA_CHECK_CHAT_ID")
+        or os.getenv("FEISHU_DAILY_PUSH_CHAT_ID")
+        or values.get("GUANGDADA_CHECK_FEISHU_CHAT_ID")
+        or values.get("FEISHU_GUANGDADA_CHECK_CHAT_ID")
+        or values.get("FEISHU_DAILY_PUSH_CHAT_ID")
+        or ""
+    ).strip()
 
 
 def mask_id(value: str) -> str:
@@ -534,7 +544,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--top-n", type=int, default=10, help="推送条数，默认 10")
     parser.add_argument("--send-mode", choices=["im", "webhook"], default="im", help="发送方式，默认 im")
-    parser.add_argument("--chat-id", default="", help="飞书 IM chat_id，默认 FEISHU_DAILY_PUSH_CHAT_ID")
+    parser.add_argument(
+        "--chat-id",
+        default="",
+        help="飞书 IM chat_id；默认优先 GUANGDADA_CHECK_FEISHU_CHAT_ID，再回退 FEISHU_DAILY_PUSH_CHAT_ID",
+    )
     parser.add_argument("--receive-id-type", default="chat_id", help="飞书 IM receive_id_type，默认 chat_id")
     parser.add_argument("--feishu-webhook", default="", help="飞书群机器人 webhook")
     parser.add_argument("--bitable-url", default="", help="VE 主多维表 URL，用于补视频/封面链接")
@@ -602,15 +616,18 @@ def main() -> None:
         webhook = resolve_webhook(args.feishu_webhook)
         if not webhook:
             raise SystemExit(
-                "[haopeng-topn-card] 未配置 VE_HAOPENG_TOPN_FEISHU_WEBHOOK/"
-                "VE_FLOW_REPORT_FEISHU_WEBHOOK/FEISHU_UA_WEBHOOK，无法推送。"
+                "[haopeng-topn-card] 未配置 GUANGDADA_CHECK_FEISHU_WEBHOOK/"
+                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK/FEISHU_UA_WEBHOOK，无法推送。"
             )
         post_card(webhook, title, md_text, bitable_url=bitable_url)
         return
 
     chat_id = (args.chat_id or default_chat_id()).strip()
     if not chat_id:
-        raise SystemExit("[haopeng-topn-card] 未配置 FEISHU_DAILY_PUSH_CHAT_ID 或 --chat-id，无法 IM 推送。")
+        raise SystemExit(
+            "[haopeng-topn-card] 未配置 GUANGDADA_CHECK_FEISHU_CHAT_ID/"
+            "FEISHU_DAILY_PUSH_CHAT_ID 或 --chat-id，无法 IM 推送。"
+        )
     send_im_card(
         receive_id=chat_id,
         receive_id_type=args.receive_id_type,

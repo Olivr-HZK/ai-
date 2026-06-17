@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -165,6 +166,37 @@ class WeeklyCompetitorReviewTest(unittest.TestCase):
 
         self.assertEqual(report["week_start"], "2026-06-01")
         self.assertEqual(report["new_competitor_candidates"], [])
+
+    def test_resolve_webhook_prefers_guangdada_check_group(self) -> None:
+        from ua_workflows.video_enhancer.weekly_competitor_review import _resolve_webhook
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "https://guangdada.example.test",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "https://test.example.test",
+                "VE_WEEKLY_COMPETITOR_REVIEW_FEISHU_WEBHOOK": "https://weekly.example.test",
+                "FEISHU_BOT_WEBHOOK": "https://bot.example.test",
+                "FEISHU_UA_WEBHOOK": "https://ua.example.test",
+            },
+            clear=True,
+        ):
+            self.assertEqual(_resolve_webhook(), "https://guangdada.example.test")
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "https://test.example.test",
+                "VE_WEEKLY_COMPETITOR_REVIEW_FEISHU_WEBHOOK": "https://weekly.example.test",
+                "FEISHU_BOT_WEBHOOK": "https://bot.example.test",
+                "FEISHU_UA_WEBHOOK": "https://ua.example.test",
+            },
+            clear=True,
+        ):
+            self.assertEqual(_resolve_webhook(), "https://test.example.test")
 
 
 if __name__ == "__main__":

@@ -192,20 +192,58 @@ class MarketWeeklyChartsPushTest(unittest.TestCase):
         focus_table = panels[0]["elements"][0]["content"]
         self.assertLess(focus_table.index("[Multi]"), focus_table.index("[Top 1]"))
 
-    def test_resolve_webhook_prefers_bot_before_ua_fallback(self) -> None:
+    def test_resolve_webhook_prefers_guangdada_check_group(self) -> None:
         from ua_workflows.video_enhancer.market_weekly_charts_push import resolve_webhook
 
         with mock.patch.dict(
             "os.environ",
             {
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "https://guangdada.example.test",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "https://test.example.test",
                 "VE_MARKET_WEEKLY_CHARTS_FEISHU_WEBHOOK": "",
                 "VE_FLOW_REPORT_FEISHU_WEBHOOK": "",
                 "FEISHU_BOT_WEBHOOK": "https://bot.example.test",
                 "FEISHU_UA_WEBHOOK": "https://ua.example.test",
             },
-            clear=False,
+            clear=True,
         ):
-            self.assertEqual(resolve_webhook(), "https://bot.example.test")
+            self.assertEqual(resolve_webhook(), "https://guangdada.example.test")
+
+    def test_resolve_webhook_falls_back_to_market_specific_group(self) -> None:
+        from ua_workflows.video_enhancer.market_weekly_charts_push import resolve_webhook
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "",
+                "VE_MARKET_WEEKLY_CHARTS_FEISHU_WEBHOOK": "https://market.example.test",
+                "VE_FLOW_REPORT_FEISHU_WEBHOOK": "https://flow.example.test",
+                "FEISHU_BOT_WEBHOOK": "https://bot.example.test",
+                "FEISHU_UA_WEBHOOK": "https://ua.example.test",
+            },
+            clear=True,
+        ):
+            self.assertEqual(resolve_webhook(), "https://market.example.test")
+
+    def test_resolve_webhook_uses_test_group_before_market_fallback(self) -> None:
+        from ua_workflows.video_enhancer.market_weekly_charts_push import resolve_webhook
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "https://test.example.test",
+                "VE_MARKET_WEEKLY_CHARTS_FEISHU_WEBHOOK": "https://market.example.test",
+                "VE_FLOW_REPORT_FEISHU_WEBHOOK": "https://flow.example.test",
+                "FEISHU_UA_WEBHOOK": "https://ua.example.test",
+            },
+            clear=True,
+        ):
+            self.assertEqual(resolve_webhook(), "https://test.example.test")
 
 
 if __name__ == "__main__":

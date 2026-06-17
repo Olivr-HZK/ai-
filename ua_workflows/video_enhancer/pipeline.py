@@ -199,12 +199,12 @@ def parse_args() -> argparse.Namespace:
         "--topn-send-mode",
         choices=["im", "webhook"],
         default=None,
-        help="浩鹏 TopN 发送方式；不传则优先用 VE_HAOPENG_TOPN_SEND_MODE，其次按 FEISHU_DAILY_PUSH_CHAT_ID 自动选择",
+        help="浩鹏 TopN 发送方式；不传则优先用 VE_HAOPENG_TOPN_SEND_MODE，其次按广大大检测群/chat_id 自动选择",
     )
     p.add_argument(
         "--topn-chat-id",
         default="",
-        help="浩鹏 TopN 飞书 IM chat_id；不传则使用 FEISHU_DAILY_PUSH_CHAT_ID",
+        help="浩鹏 TopN 飞书 IM chat_id；不传则优先使用 GUANGDADA_CHECK_FEISHU_CHAT_ID",
     )
     p.add_argument(
         "--topn-top-n",
@@ -307,7 +307,13 @@ def _resolve_topn_send_mode(args: argparse.Namespace) -> str:
     explicit = (args.topn_send_mode or os.getenv("VE_HAOPENG_TOPN_SEND_MODE") or "").strip().lower()
     if explicit in {"im", "webhook"}:
         return explicit
-    if (args.topn_chat_id or os.getenv("FEISHU_DAILY_PUSH_CHAT_ID") or "").strip():
+    if (
+        args.topn_chat_id
+        or os.getenv("GUANGDADA_CHECK_FEISHU_CHAT_ID")
+        or os.getenv("FEISHU_GUANGDADA_CHECK_CHAT_ID")
+        or os.getenv("FEISHU_DAILY_PUSH_CHAT_ID")
+        or ""
+    ).strip():
         return "im"
     return "webhook"
 
