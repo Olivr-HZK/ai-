@@ -80,6 +80,7 @@ def run_optional_worker(
     codex_bin: str = "",
     codex_model: str = "",
     recognition_only: bool = False,
+    recognition_use_codex_skill: bool = False,
     model_ref_dir: Path = DEFAULT_MODEL_REF_DIR,
     work_dir: Path = DEFAULT_WORK_DIR,
 ) -> dict[str, Any]:
@@ -90,6 +91,9 @@ def run_optional_worker(
             job_path,
             work_dir=work_dir,
             download=True,
+            use_codex_skill=recognition_use_codex_skill,
+            codex_bin=codex_bin,
+            codex_model=codex_model,
         )
     prepared = prepare_template_copy_job(
         job_path,
@@ -140,6 +144,10 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
     @property
     def recognition_only(self) -> bool:
         return bool(getattr(self.server, "recognition_only", False))
+
+    @property
+    def recognition_use_codex_skill(self) -> bool:
+        return bool(getattr(self.server, "recognition_use_codex_skill", False))
 
     @property
     def codex_bin(self) -> str:
@@ -259,6 +267,7 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
                 codex_bin=self.codex_bin,
                 codex_model=self.codex_model,
                 recognition_only=self.recognition_only,
+                recognition_use_codex_skill=self.recognition_use_codex_skill,
                 model_ref_dir=self.model_ref_dir,
                 work_dir=self.work_dir,
             )
@@ -382,6 +391,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--auto-prepare", action="store_true", default=_bool_env("VE_TEMPLATE_COPY_AUTO_PREPARE"))
     parser.add_argument("--auto-execute-codex", action="store_true", default=_bool_env("VE_TEMPLATE_COPY_AUTO_EXECUTE_CODEX"))
     parser.add_argument("--recognition-only", action="store_true", default=_bool_env("VE_TEMPLATE_RECOGNITION_ONLY"))
+    parser.add_argument(
+        "--recognition-use-codex-skill",
+        action="store_true",
+        default=_bool_env("VE_TEMPLATE_RECOGNITION_USE_CODEX_SKILL"),
+        help="识别-only 模式下调用本地 Codex + $aigc-template-copy 做结构化片段判断；仍不调用 Video Lab",
+    )
     parser.add_argument("--codex-bin", default=os.getenv("VE_TEMPLATE_COPY_CODEX_BIN", ""))
     parser.add_argument("--codex-model", default=os.getenv("VE_TEMPLATE_COPY_CODEX_MODEL", ""))
     parser.add_argument(
@@ -406,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:
     server.auto_prepare = bool(args.auto_prepare)
     server.auto_execute_codex = bool(args.auto_execute_codex)
     server.recognition_only = bool(args.recognition_only)
+    server.recognition_use_codex_skill = bool(args.recognition_use_codex_skill)
     server.codex_bin = str(args.codex_bin or "").strip()
     server.codex_model = str(args.codex_model or "").strip()
     server.public_trigger_url = str(args.public_trigger_url or "").strip()
@@ -417,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         "[ve-template-trigger] "
         f"auto_prepare={server.auto_prepare} auto_execute_codex={server.auto_execute_codex} "
         f"recognition_only={server.recognition_only} "
+        f"recognition_use_codex_skill={server.recognition_use_codex_skill} "
         f"model_refs={server.model_ref_dir}"
     )
     try:

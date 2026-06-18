@@ -24,8 +24,10 @@ DEFAULT_WORK_DIR = DATA_DIR / "ve_template_copy_runs"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".tif", ".tiff"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv"}
 SKILL_RESULT_MARKER = "VE_TEMPLATE_COPY_RESULT_JSON"
+RECOGNITION_RESULT_MARKER = "VE_TEMPLATE_RECOGNITION_RESULT_JSON"
 PASS_VERDICTS = {"pass", "passed", "success", "succeeded", "completed", "usable"}
 FAIL_VERDICTS = {"fail", "failed", "quality_failed", "blocked", "unusable", "rejected"}
+MAX_RECOGNITION_GROUPS = int(os.getenv("VE_TEMPLATE_RECOGNITION_MAX_GROUPS", "12"))
 
 
 class TemplateCopyWorkerError(RuntimeError):
@@ -173,6 +175,68 @@ def build_codex_prompt(job: dict[str, Any], *, source_path: Path, model_path: Pa
     return "\n".join(lines).strip() + "\n"
 
 
+def build_recognition_codex_prompt(job: dict[str, Any], *, source_path: Path, evidence_dir: Path) -> str:
+    """Build a recognition-only prompt that reuses aigc-template-copy's inspection rules."""
+    task = job.get("task") if isinstance(job.get("task"), dict) else {}
+    handoff = task.get("aigc_template_copy_input") if isinstance(task.get("aigc_template_copy_input"), dict) else {}
+    context = {
+        "job_id": job.get("job_id") or "",
+        "record_id": job.get("record_id") or task.get("record_id") or "",
+        "ad_key": job.get("ad_key") or task.get("ad_key") or "",
+        "product": task.get("product") or "",
+        "suggested_template_kind": task.get("suggested_template_kind") or handoff.get("suggested_template_kind") or "",
+        "template_reason": task.get("template_reason") or "",
+        "core": task.get("core") or "",
+        "hook": task.get("hook") or "",
+        "script_or_voiceover": task.get("script_or_voiceover") or "",
+        "template_fingerprint": task.get("template_fingerprint") or "",
+    }
+    schema = {
+        "status": "completed",
+        "mode": "image_template or video_template",
+        "template_type": "图片模板 or 视频模板",
+        "reason": "Chinese segment judgment, including why screenshot/segment count was chosen",
+        "groups": [
+            {
+                "kind": "image or video",
+                "label": "图片复刻 1 or 视频模板 1",
+                "timestamp": 1.2,
+                "start_time": 1.2,
+                "end_time": 5.2,
+                "reason": "Chinese reason this finished result is reusable",
+            }
+        ],
+        "excluded": [
+            {
+                "time_range": "0.0-0.8s",
+                "reason": "UI/progress/ad/end-card/repeat/transition",
+            }
+        ],
+    }
+    lines = [
+        "Use $aigc-template-copy's inspection and template-mode rules for this VE source, but run recognition only.",
+        "",
+        "Hard boundaries:",
+        "- Do not run Video Lab, GPT Image 2, Vidu, image generation, image-to-video, Eagle import, or product generation.",
+        "- Do not create prompts for generation except short judgment reasons.",
+        "- Inspect the source timeline according to the skill: do not assume frame 0; identify finished result clips vs UI/progress/ad/end cards; for static montages keep every distinct reusable still variant; for dynamic result clips keep every distinct reusable video segment.",
+        "- Return the exact number of reusable groups needed by the source, not a fixed count.",
+        "- Prefer timestamps in seconds. For static image groups, set timestamp to the clean stable finished frame. For video groups, set timestamp to the first frame of the result segment and set start_time/end_time for the segment.",
+        f"- Cap only for operational safety at {MAX_RECOGNITION_GROUPS} groups; if the source has more, keep the most reusable distinct groups and mention the cap in reason.",
+        "- End your final answer with one line that starts with "
+        f"{RECOGNITION_RESULT_MARKER}: followed by one compact JSON object.",
+        "- Required JSON shape:",
+        json.dumps(schema, ensure_ascii=False),
+        "",
+        f"Source path: {source_path}",
+        f"Evidence/output directory for local extraction: {evidence_dir}",
+        "",
+        "Record context:",
+        json.dumps(context, ensure_ascii=False, indent=2),
+    ]
+    return "\n".join(lines).strip() + "\n"
+
+
 def _decode_json_at(text: str, start: int) -> dict[str, Any]:
     decoder = json.JSONDecoder()
     snippet = text[start:].lstrip()
@@ -206,6 +270,99 @@ def parse_skill_result(text: str) -> dict[str, Any]:
         except (json.JSONDecodeError, TemplateCopyWorkerError):
             pass
     raise TemplateCopyWorkerError("missing_skill_result", f"Codex 输出缺少 {SKILL_RESULT_MARKER} 结构化结果")
+
+
+def parse_recognition_skill_result(text: str) -> dict[str, Any]:
+    """Parse the recognition-only structured result emitted by a Codex skill run."""
+    text = str(text or "")
+    marker_index = text.rfind(RECOGNITION_RESULT_MARKER)
+    if marker_index >= 0:
+        return _decode_json_at(text, marker_index + len(RECOGNITION_RESULT_MARKER))
+    raise TemplateCopyWorkerError("missing_recognition_result", f"Codex 输出缺少 {RECOGNITION_RESULT_MARKER} 结构化结果")
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return 0.0
+    return number
+
+
+def _clamp_group_count(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    limit = max(1, MAX_RECOGNITION_GROUPS)
+    return groups[:limit]
+
+
+def normalize_recognition_skill_result(
+    result: dict[str, Any],
+    *,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize Codex recognition output to a stable local extraction plan."""
+    mode = str(result.get("mode") or fallback.get("mode") or "image_template").strip()
+    if mode not in {"image_template", "video_template"}:
+        mode = "video_template" if str(result.get("template_type") or "") == "视频模板" else str(fallback.get("mode") or "image_template")
+    template_type = str(result.get("template_type") or "").strip()
+    if template_type not in {"图片模板", "视频模板"}:
+        template_type = "视频模板" if mode == "video_template" else "图片模板"
+    reason = str(result.get("reason") or fallback.get("reason") or "").strip()
+
+    raw_groups = result.get("groups")
+    if not isinstance(raw_groups, list):
+        raw_groups = []
+    groups: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_groups, start=1):
+        if not isinstance(raw, dict):
+            continue
+        kind = str(raw.get("kind") or "").strip().lower()
+        if kind not in {"image", "video"}:
+            kind = "video" if mode == "video_template" else "image"
+        timestamp = _float_or_none(raw.get("timestamp"))
+        start_time = _float_or_none(raw.get("start_time"))
+        end_time = _float_or_none(raw.get("end_time"))
+        if timestamp is None:
+            timestamp = start_time if start_time is not None else 0.0
+        if start_time is None:
+            start_time = max(0.0, timestamp - (0.6 if kind == "image" else 0.0))
+        if end_time is None or end_time <= start_time:
+            end_time = start_time + (4.0 if kind == "video" else 2.0)
+        groups.append(
+            {
+                "index": index,
+                "kind": kind,
+                "label": str(raw.get("label") or f"{'视频模板' if kind == 'video' else '图片复刻'} {index}"),
+                "timestamp": float(timestamp),
+                "start_time": float(start_time),
+                "end_time": float(end_time),
+                "reason": str(raw.get("reason") or "").strip(),
+            }
+        )
+    if not groups:
+        groups = [
+            {
+                "index": 1,
+                "kind": "video" if mode == "video_template" else "image",
+                "label": "视频模板 1" if mode == "video_template" else "图片复刻 1",
+                "timestamp": 0.0,
+                "start_time": 0.0,
+                "end_time": 4.0,
+                "reason": "未返回分组，使用源素材开头作为保底参考。",
+            }
+        ]
+    groups = _clamp_group_count(groups)
+    return {
+        **fallback,
+        "mode": mode,
+        "template_type": template_type,
+        "reason": reason,
+        "skill_result": result,
+        "template_groups": groups,
+    }
 
 
 def _score_value(result: dict[str, Any]) -> float | None:
@@ -450,10 +607,17 @@ def _write_placeholder(path: Path, source_path: Path, *, label: str) -> None:
     path.write_bytes(f"{label}\nsource={source_path}\n".encode("utf-8"))
 
 
-def _extract_reference_screenshot(source_path: Path, target_path: Path, *, is_video: bool) -> Path:
+def _extract_reference_frame_at(
+    source_path: Path,
+    target_path: Path,
+    *,
+    is_video: bool,
+    timestamp: float = 0.0,
+) -> Path:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     if is_video:
         ffmpeg = shutil.which("ffmpeg")
+        seek = max(0.0, float(timestamp or 0.0))
         if ffmpeg and _run_subprocess(
             [
                 ffmpeg,
@@ -461,10 +625,10 @@ def _extract_reference_screenshot(source_path: Path, target_path: Path, *, is_vi
                 "-hide_banner",
                 "-loglevel",
                 "error",
+                "-ss",
+                f"{seek:.3f}",
                 "-i",
                 str(source_path),
-                "-vf",
-                "select=eq(n\\,0)",
                 "-frames:v",
                 "1",
                 str(target_path),
@@ -480,11 +644,25 @@ def _extract_reference_screenshot(source_path: Path, target_path: Path, *, is_vi
     return target_path
 
 
-def _extract_reference_video_segment(source_path: Path, target_path: Path, *, is_video: bool) -> Path | None:
+def _extract_reference_screenshot(source_path: Path, target_path: Path, *, is_video: bool) -> Path:
+    return _extract_reference_frame_at(source_path, target_path, is_video=is_video, timestamp=0.0)
+
+
+def _extract_reference_video_segment_range(
+    source_path: Path,
+    target_path: Path,
+    *,
+    is_video: bool,
+    start_time: float = 0.0,
+    end_time: float | None = None,
+) -> Path | None:
     if not is_video:
         return None
     target_path.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg = shutil.which("ffmpeg")
+    start = max(0.0, float(start_time or 0.0))
+    end = float(end_time) if end_time is not None else start + 4.0
+    duration = max(0.5, min(8.0, end - start))
     if ffmpeg and _run_subprocess(
         [
             ffmpeg,
@@ -492,10 +670,12 @@ def _extract_reference_video_segment(source_path: Path, target_path: Path, *, is
             "-hide_banner",
             "-loglevel",
             "error",
+            "-ss",
+            f"{start:.3f}",
             "-i",
             str(source_path),
             "-t",
-            "4",
+            f"{duration:.3f}",
             "-c",
             "copy",
             str(target_path),
@@ -507,13 +687,115 @@ def _extract_reference_video_segment(source_path: Path, target_path: Path, *, is
     return target_path
 
 
+def _extract_reference_video_segment(source_path: Path, target_path: Path, *, is_video: bool) -> Path | None:
+    return _extract_reference_video_segment_range(source_path, target_path, is_video=is_video, start_time=0.0, end_time=4.0)
+
+
+def _run_recognition_codex_skill(
+    *,
+    job: dict[str, Any],
+    source_path: Path,
+    refs_dir: Path,
+    codex_bin: str = "",
+    codex_model: str = "",
+    timeout_sec: int = 60 * 30,
+) -> dict[str, Any]:
+    prompt_path = refs_dir / "recognition_codex_prompt.txt"
+    output_path = refs_dir / "recognition_codex_last_message.md"
+    prompt = build_recognition_codex_prompt(job, source_path=source_path, evidence_dir=refs_dir)
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(prompt, encoding="utf-8")
+    codex_result = run_codex_prompt(
+        prompt_path,
+        output_path=output_path,
+        execute=True,
+        codex_bin=codex_bin,
+        codex_model=codex_model,
+        timeout_sec=timeout_sec,
+    )
+    if codex_result.get("returncode") != 0:
+        raise TemplateCopyWorkerError(
+            "recognition_codex_failed",
+            str(codex_result.get("stderr") or codex_result.get("stdout") or "Codex recognition failed").strip(),
+        )
+    text = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+    parsed = parse_recognition_skill_result(text)
+    return {
+        "codex_exec": codex_result,
+        "recognition_prompt_path": str(prompt_path),
+        "recognition_output_path": str(output_path),
+        "skill_result": parsed,
+    }
+
+
+def _extract_recognition_artifacts(
+    *,
+    source_path: Path,
+    refs_dir: Path,
+    source_is_video: bool,
+    recognition: dict[str, Any],
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    groups = recognition.get("template_groups")
+    if not isinstance(groups, list) or not groups:
+        groups = [
+            {
+                "index": 1,
+                "kind": "video" if recognition.get("mode") == "video_template" else "image",
+                "label": "默认参考",
+                "timestamp": 0.0,
+                "start_time": 0.0,
+                "end_time": 4.0,
+                "reason": "",
+            }
+        ]
+    screenshots: list[str] = []
+    segments: list[str] = []
+    materialized_groups: list[dict[str, Any]] = []
+    for fallback_index, group in enumerate(groups, start=1):
+        if not isinstance(group, dict):
+            continue
+        index = int(group.get("index") or fallback_index)
+        frame_path = refs_dir / f"reference_frame_{index:02d}.jpg"
+        segment_path = refs_dir / f"reference_segment_{index:02d}.mp4"
+        timestamp = float(group.get("timestamp") or 0.0)
+        start_time = float(group.get("start_time") or max(0.0, timestamp - 0.6))
+        end_time = float(group.get("end_time") or start_time + 4.0)
+        frame = _extract_reference_frame_at(
+            source_path,
+            frame_path,
+            is_video=source_is_video,
+            timestamp=timestamp,
+        )
+        screenshots.append(str(frame))
+        segment = _extract_reference_video_segment_range(
+            source_path,
+            segment_path,
+            is_video=source_is_video,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        if segment:
+            segments.append(str(segment))
+        materialized_groups.append(
+            {
+                **group,
+                "reference_screenshot": str(frame),
+                "reference_video_segment": str(segment) if segment else "",
+            }
+        )
+    return screenshots, segments, materialized_groups
+
+
 def run_template_recognition_only(
     job_path: Path,
     *,
     work_dir: Path = DEFAULT_WORK_DIR,
     download: bool = True,
+    use_codex_skill: bool = False,
+    codex_bin: str = "",
+    codex_model: str = "",
 ) -> dict[str, Any]:
-    """Create reference artifacts for template judgment without Codex or Video Lab generation."""
+    """Create reference artifacts for template judgment without Video Lab generation."""
     job = read_job(job_path)
     run_dir = _job_run_dir(job, work_dir=work_dir)
     try:
@@ -525,19 +807,32 @@ def run_template_recognition_only(
     recognition = _recognition_from_job(job, source_path=source_path)
     source_is_video = _source_is_video(source_path, job)
     refs_dir = run_dir / "recognition_refs"
-    screenshot_path = _extract_reference_screenshot(
-        source_path,
-        refs_dir / "reference_frame_01.jpg",
-        is_video=source_is_video,
+    codex_artifacts: dict[str, Any] = {"skipped": True}
+    if use_codex_skill:
+        try:
+            codex_artifacts = _run_recognition_codex_skill(
+                job=job,
+                source_path=source_path,
+                refs_dir=refs_dir,
+                codex_bin=codex_bin,
+                codex_model=codex_model,
+            )
+            recognition = normalize_recognition_skill_result(
+                codex_artifacts.get("skill_result") if isinstance(codex_artifacts.get("skill_result"), dict) else {},
+                fallback=recognition,
+            )
+        except TemplateCopyWorkerError as exc:
+            _mark_failed(job_path, job, exc)
+            raise
+
+    reference_screenshots, reference_video_segments, template_groups = _extract_recognition_artifacts(
+        source_path=source_path,
+        refs_dir=refs_dir,
+        source_is_video=source_is_video,
+        recognition=recognition,
     )
-    segment_path = _extract_reference_video_segment(
-        source_path,
-        refs_dir / "reference_segment_01.mp4",
-        is_video=source_is_video,
-    )
+    recognition["template_groups"] = template_groups
     result_path = refs_dir / "recognition_result.json"
-    reference_screenshots = [str(screenshot_path)]
-    reference_video_segments = [str(segment_path)] if segment_path else []
     result_payload = {
         "status": "completed",
         "state": "recognition_completed",
@@ -545,6 +840,7 @@ def run_template_recognition_only(
         "recognition": recognition,
         "reference_screenshots": reference_screenshots,
         "reference_video_segments": reference_video_segments,
+        "recognition_codex": codex_artifacts,
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -552,6 +848,10 @@ def run_template_recognition_only(
     runner = job.setdefault("runner", {})
     artifacts = runner.setdefault("artifacts", {})
     artifacts["recognition_result_path"] = str(result_path)
+    if codex_artifacts.get("recognition_prompt_path"):
+        artifacts["recognition_prompt_path"] = str(codex_artifacts["recognition_prompt_path"])
+    if codex_artifacts.get("recognition_output_path"):
+        artifacts["recognition_output_path"] = str(codex_artifacts["recognition_output_path"])
     runner.update(
         {
             "state": "recognition_completed",
@@ -560,6 +860,7 @@ def run_template_recognition_only(
             "recognition": recognition,
             "reference_screenshots": reference_screenshots,
             "reference_video_segments": reference_video_segments,
+            "recognition_codex": codex_artifacts,
         }
     )
     runner.pop("codex_exec", None)
