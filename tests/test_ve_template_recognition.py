@@ -29,7 +29,7 @@ class VeTemplateRecognitionTest(unittest.TestCase):
                 "fields": {
                     "广告ID": "ad2",
                     "抓取日期": "2026-06-15",
-                    "浩鹏评分": "4星",
+                    "浩鹏评分": "3星",
                     "封面图链接": "https://example.com/b.png",
                 },
             },
@@ -48,7 +48,7 @@ class VeTemplateRecognitionTest(unittest.TestCase):
 
         self.assertEqual([task["ad_key"] for task in tasks], ["ad3", "ad2"])
         self.assertEqual(tasks[0]["rating"], 3)
-        self.assertEqual(tasks[1]["rating"], 4)
+        self.assertEqual(tasks[1]["rating"], 3)
         self.assertEqual(tasks[0]["suggested_template_kind"], "video_template_candidate")
         self.assertEqual(tasks[0]["aigc_template_copy_input"]["source_url"], "https://example.com/a.mp4")
 
@@ -84,7 +84,7 @@ class VeTemplateRecognitionTest(unittest.TestCase):
                     {
                         "ad_key": "ad3",
                         "product": "Glam AI",
-                        "rating": 5,
+                        "rating": 3,
                         "suggested_template_kind": "image_template_candidate",
                         "aigc_template_copy_input": {"source_url": "https://example.com/cover.png"},
                     }

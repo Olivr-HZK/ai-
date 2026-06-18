@@ -15,14 +15,14 @@ REVIEWER_FIELDS = {
 }
 
 LEGACY_STATUS_FIELD = "接受情况"
-RATING_LABELS = {rating: f"{rating}星" for rating in range(1, 6)}
+RATING_LABELS = {rating: f"{rating}星" for rating in range(1, 4)}
 
 LEGACY_STATUS_TO_RATING = {
-    "采纳": 5,
-    "接受": 5,
-    "accept": 5,
-    "accepted": 5,
-    "yes": 5,
+    "采纳": 3,
+    "接受": 3,
+    "accept": 3,
+    "accepted": 3,
+    "yes": 3,
     "入素材库": 3,
     "不采纳": 1,
     "删除": 1,
@@ -84,11 +84,11 @@ def normalize_rating_value(value: Any) -> int | None:
     if not text:
         return None
     compact = re.sub(r"\s+", "", text).lower()
-    zh_digits = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}
+    zh_digits = {"一": 1, "二": 2, "两": 2, "三": 3}
     for zh, num in zh_digits.items():
         if compact.startswith(zh) and ("星" in compact or "颗" in compact):
             return num
-    match = re.fullmatch(r"([1-5])(?:\.0+)?(?:颗?星|star|stars)?", compact)
+    match = re.fullmatch(r"([1-3])(?:\.0+)?(?:颗?星|star|stars)?", compact)
     if match:
         return int(match.group(1))
     return None

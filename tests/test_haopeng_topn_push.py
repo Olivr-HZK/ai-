@@ -33,16 +33,16 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
             {"results": []},
             3,
             rows=[
-                {"rating": 5, "rating_label": "5星"},
+                {"rating": 3, "rating_label": "3星"},
                 {"rating": 3, "rating_label": "3星"},
                 {"rating": 1, "rating_label": "1星"},
             ],
             force_recalculate=True,
         )
 
-        self.assertIn("5星命中 1/3", text)
-        self.assertIn("平均评分 3.00", text)
-        self.assertIn("5星 1 / 3星 1 / 1星 1", text)
+        self.assertIn("3星命中 2/3", text)
+        self.assertIn("平均评分 2.33", text)
+        self.assertIn("3星 2 / 1星 1", text)
 
     def test_classify_play_kind_uses_matched_history_label(self) -> None:
         self.assertEqual(

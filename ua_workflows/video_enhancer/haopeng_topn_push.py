@@ -169,9 +169,9 @@ def actual_summary(
     if force_recalculate or not top_summary:
         summary_rows = (rows if rows is not None else pushable_result_rows(report))[:top_n]
         rating_values = [_rating_from_row(row) for row in summary_rows]
-        rated = [r for r in rating_values if r in {1, 2, 3, 4, 5}]
+        rated = [r for r in rating_values if r in {1, 2, 3}]
         if rated:
-            counts = {rating: rated.count(rating) for rating in (5, 4, 3, 2, 1)}
+            counts = {rating: rated.count(rating) for rating in (3, 2, 1)}
             dist = " / ".join(
                 f"{RATING_LABELS[rating]} {count}" for rating, count in counts.items() if count
             )
@@ -179,7 +179,7 @@ def actual_summary(
             if unrated:
                 dist = f"{dist} / 未评分 {unrated}" if dist else f"未评分 {unrated}"
             avg = sum(rated) / len(rated)
-            return f"5星命中 {counts.get(5, 0)}/{top_n}；平均评分 {avg:.2f}；评分分布：{dist}"
+            return f"3星命中 {counts.get(3, 0)}/{top_n}；平均评分 {avg:.2f}；评分分布：{dist}"
         accepted = sum(1 for r in summary_rows if str(r.get("actual_hp") or "").strip() == "采纳")
         library = sum(1 for r in summary_rows if str(r.get("actual_hp") or "").strip() == "入素材库")
         return f"采纳 {accepted}/{top_n}；采纳+入素材库：{accepted + library}/{top_n}"

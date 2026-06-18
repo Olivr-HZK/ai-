@@ -37,8 +37,8 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual(row["core"], "自拍生成复古棒球球员卡")
         self.assertEqual(row["play_label"], "球员卡")
         self.assertEqual(row["actual_hp"], "采纳")
-        self.assertEqual(row["rating"], 5)
-        self.assertEqual(row["rating_label"], "5星")
+        self.assertEqual(row["rating"], 3)
+        self.assertEqual(row["rating_label"], "3星")
         self.assertEqual(row["platform"], "tiktok")
         self.assertEqual(row["video_url"], "https://example.com/v.mp4")
 
@@ -54,14 +54,14 @@ class HaopengAiFilterTest(unittest.TestCase):
                     "抓取日期": "2026-05-28",
                     "核心卖点": "自拍生成复古棒球球员卡",
                     "玩法": "球员卡",
-                    "浩鹏评分": "5星",
+                    "浩鹏评分": "3星",
                     "浩鹏接受情况": "不采纳",
                 },
             },
             reviewer_field="浩鹏接受情况",
         )
 
-        self.assertEqual(row["rating"], 5)
+        self.assertEqual(row["rating"], 3)
         self.assertEqual(row["rating_source_field"], "浩鹏评分")
         self.assertEqual(row["actual_hp"], "不采纳")
 
@@ -75,8 +75,8 @@ class HaopengAiFilterTest(unittest.TestCase):
                 "date": "2026-05-27",
                 "core": "自拍生成手绘拼贴",
                 "play_label": "手绘拼贴",
-                "rating": 5,
-                "rating_label": "5星",
+                "rating": 3,
+                "rating_label": "3星",
                 "actual_hp": "采纳",
             },
             {
@@ -144,7 +144,7 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual(report["target_date"], "2026-05-28")
         self.assertEqual(report["name"], "label_prior")
         self.assertEqual(report["history_window"], "2026-05-25..2026-05-27")
-        self.assertEqual(report["history_rating_counts"], {"1星": 1, "5星": 1})
+        self.assertEqual(report["history_rating_counts"], {"1星": 1, "3星": 1})
         self.assertEqual([r["ad_key"] for r in report["results"]], ["c1", "c2"])
         self.assertEqual(report["results"][0]["accept_score"], 88)
         self.assertEqual(report["results"][0]["matched_play_label"], "球员卡")
@@ -229,8 +229,8 @@ class HaopengAiFilterTest(unittest.TestCase):
                     "ad_key": "h1",
                     "date": "2026-05-30",
                     "status": "采纳",
-                    "rating": 5,
-                    "rating_label": "5星",
+                    "rating": 3,
+                    "rating_label": "3星",
                     "core": "自拍生成复古棒球球员卡",
                     "play_label": "球员卡",
                     "hook": "普通自拍变成球员卡",
@@ -247,8 +247,8 @@ class HaopengAiFilterTest(unittest.TestCase):
         )
 
         self.assertIn("历史浩鹏评分偏好", prompt)
-        self.assertIn("5星=强烈值得复刻/制作", prompt)
-        self.assertIn("3星=中等参考价值", prompt)
+        self.assertIn("3星=强烈值得复刻/制作", prompt)
+        self.assertIn("历史 2 星只说明方向可观察", prompt)
         self.assertIn("历史没有同款具体玩法", prompt)
         self.assertNotIn("历史浩鹏有效反馈", prompt)
         self.assertNotIn("历史采纳/入素材库只说明大方向有效", prompt)

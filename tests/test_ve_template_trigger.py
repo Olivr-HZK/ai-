@@ -164,7 +164,7 @@ class VeTemplateTriggerTest(unittest.TestCase):
                 "fields": {
                     "广告ID": "ad2",
                     "抓取日期": "2026-06-15",
-                    "浩鹏评分": "4星",
+                    "浩鹏评分": "3星",
                     "封面图链接": "https://example.com/b.png",
                 },
             },
@@ -173,7 +173,7 @@ class VeTemplateTriggerTest(unittest.TestCase):
                 "fields": {
                     "广告ID": "ad_old",
                     "抓取日期": "2026-06-14",
-                    "浩鹏评分": "5星",
+                    "浩鹏评分": "3星",
                     "封面图链接": "https://example.com/c.png",
                 },
             },

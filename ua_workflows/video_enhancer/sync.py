@@ -136,8 +136,8 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "更新时间", "type": 5},
     {"field_name": "视频时长", "type": 2},
     {"field_name": "接受情况", "type": 3, "options": [{"name": "待定"}, {"name": "删除"}, {"name": "接受"}]},
-    {"field_name": "浩鹏评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 5}},
-    {"field_name": "尉蓝评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 5}},
+    {"field_name": "浩鹏评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 3}},
+    {"field_name": "尉蓝评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 3}},
     {
         "field_name": "模板复刻状态",
         "type": 3,

@@ -59,9 +59,9 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **定时入口**：`scripts/cron_ve_feedback_training_daily.sh`
 - **数据源**：默认读取审核多维表 `CivwbJ2HkazcKTsKnbGclA5RnWc / tblrZZvVuFcjL0kE / vewJtPixtM`，也可用 `VE_FEEDBACK_BITABLE_URL` 覆盖。
 - **数据库**：独立使用 `data/ve_feedback_training.db`，不读写正常 VE 主库。
-- **训练标签**：优先读取 `浩鹏评分`（`5星=高意向`、`1星=低意向`、`2~4星=中间分留存`）；评分为空时兼容旧 `浩鹏接受情况` / `接受情况`，其中 `采纳` / `接受=5星`、`入素材库=3星`、`不采纳` / `删除` / `拒绝` / `重复抓取=1星`，`待定` / 空值只留存不训练。
+- **训练标签**：优先读取 `浩鹏评分`（`3星=高意向`、`2星=中间参考`、`1星=低意向`）；评分为空时兼容旧 `浩鹏接受情况` / `接受情况`，其中 `采纳` / `接受` / `入素材库=3星`、`不采纳` / `删除` / `拒绝` / `重复抓取=1星`，`待定` / 空值只留存不训练。
 - **特征口径**：只使用素材字段，例如标题、正文、核心卖点、Hook、脚本/口播、玩法资产/变种、玩法指纹、差异点、AI 分析和素材标签；产品、广告主、日期、热度、展示估值、地区等只进审计字段。
-- **产物**：`data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl`、`data/models/ve_feedback_preference_nb_YYYY-MM-DD.json`、`reports/ve_feedback_training_YYYY-MM-DD.md`。JSONL 会包含 `rating`、`rating_label`、评分来源字段和值，现有 baseline 暂以 5 星/1 星继续训练二分类。
+- **产物**：`data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl`、`data/models/ve_feedback_preference_nb_YYYY-MM-DD.json`、`reports/ve_feedback_training_YYYY-MM-DD.md`。JSONL 会包含 `rating`、`rating_label`、评分来源字段和值，现有 baseline 暂以 3 星/1 星继续训练二分类。
 - **完整样本训练**：`--complete-profile core` 可只用核心素材字段齐全的样本训练；`core_play` 会额外要求玩法资产/玩法指纹等字段齐全，历史数据当前负样本过少，仅适合观察覆盖率。
 
 更多说明见 [ve-feedback-training.md](./ve-feedback-training.md)。
@@ -72,8 +72,8 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **生成并推送**：`scripts/run_ve_haopeng_topn_push.py --date YYYY-MM-DD --top-n 10`
 - **每日链路**：`scripts/cron_ai_video_enhancer_daily.sh` 只执行 `run_video_enhancer.py`，不在 cron 外层追加 TopN，避免重复推送。TopN 生成与推送保留在主流程内部，但默认关闭，只有 `VE_HAOPENG_TOPN_ENABLED=1` 时才会执行。
 - **数据源**：默认读取 `VIDEO_ENHANCER_BITABLE_URL` 指向的 VE 主表；目标日素材来自「抓取日期」，历史反馈默认从 `2026-05-25` 到目标日前一天。历史偏好优先读 `浩鹏评分`，缺失时兼容旧 `浩鹏接受情况` / `接受情况` 映射；`待定` / 空值不作为正负样本。目标日当天评分不会传给模型，只在报告落盘后用于人工回测。
-- **筛选口径**：模型按浩鹏 1~5 星评分偏好判断，优先推荐与历史 5 星相似但不重复、且具有新模板画面或新片段价值的素材；目标日候选在进入模型前排除 `admob` / `youtube` 渠道。飞书卡片从非排除渠道结果中展示 Top10，不因为模型标记 `hold` 就强制少推。
-- **回测口径**：默认推送隐藏当天实际反馈；显式 `--include-backtest` 时优先展示 `5星命中 / 平均评分 / 评分分布`，没有评分时才兼容旧采纳字段。
+- **筛选口径**：模型按浩鹏 1~3 星评分偏好判断，优先推荐与历史 3 星相似但不重复、且具有新模板画面或新片段价值的素材；目标日候选在进入模型前排除 `admob` / `youtube` 渠道。飞书卡片从非排除渠道结果中展示 Top10，不因为模型标记 `hold` 就强制少推。
+- **回测口径**：默认推送隐藏当天实际反馈；显式 `--include-backtest` 时优先展示 `3星命中 / 平均评分 / 评分分布`，没有评分时才兼容旧采纳字段。
 - **卡片入口**：飞书卡片默认隐藏回测字段；末尾会追加“查看多维表格”按钮，链接到 `VIDEO_ENHANCER_BITABLE_URL` 指向的主表，便于当天直接复核浩鹏反馈。
 - **模型**：默认 `qwen/qwen3.7-max`；可用 `VE_HAOPENG_FILTER_MODEL` 或 `--model` 覆盖。
 - **产物**：`data/haopeng_topn_experiments/{date}_label_prior.json`，字段兼容 TopN 飞书卡片渲染。该链路不写回多维表，也不改变 VE 主流程同步/拦截结果。

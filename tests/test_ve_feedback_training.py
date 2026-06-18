@@ -152,16 +152,16 @@ class VeFeedbackTrainingTest(unittest.TestCase):
                     "广告ID": "ad_rating",
                     "标题": "AI 模板素材",
                     "核心卖点": "自拍生成节日大片",
-                    "浩鹏评分": "5星",
+                    "浩鹏评分": "3星",
                     "浩鹏接受情况": "不采纳",
                 },
             }
         )
 
-        self.assertEqual(sample.rating, 5)
-        self.assertEqual(sample.rating_label, "5星")
+        self.assertEqual(sample.rating, 3)
+        self.assertEqual(sample.rating_label, "3星")
         self.assertEqual(sample.rating_source_field, "浩鹏评分")
-        self.assertEqual(sample.rating_source_value, "5星")
+        self.assertEqual(sample.rating_source_value, "3星")
         self.assertEqual(sample.accept_status, "不采纳")
         self.assertEqual(sample.label, 1)
 
@@ -195,7 +195,7 @@ class VeFeedbackTrainingTest(unittest.TestCase):
                     "广告ID": "ad_export",
                     "标题": "AI 模板素材",
                     "核心卖点": "自拍生成节日大片",
-                    "浩鹏评分": "5星",
+                    "浩鹏评分": "3星",
                 },
             }
         )
@@ -208,8 +208,8 @@ class VeFeedbackTrainingTest(unittest.TestCase):
             )
             text = dataset_path.read_text(encoding="utf-8")
 
-        self.assertIn('"rating": 5', text)
-        self.assertIn('"rating_label": "5星"', text)
+        self.assertIn('"rating": 3', text)
+        self.assertIn('"rating_label": "3星"', text)
         self.assertIn('"rating_source_field": "浩鹏评分"', text)
 
 
