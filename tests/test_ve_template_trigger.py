@@ -109,6 +109,43 @@ class VeTemplateTriggerTest(unittest.TestCase):
         self.assertIn({"value_type": "text", "value": '"source":"lark_base_rating_update"'}, http["data"]["raw_body"])
         self.assertIn({"value_type": "text", "value": "secret"}, http["data"]["raw_body"])
 
+    def test_build_rating_trigger_workflow_payload_posts_record_id_to_trigger(self) -> None:
+        from ua_workflows.video_enhancer.template_trigger import build_rating_trigger_workflow_payload
+
+        payload = build_rating_trigger_workflow_payload(
+            trigger_url="https://example.com/trigger",
+            table_name="ai工具video photo爬取表 副本",
+            rating_field_name="浩鹏评分",
+            token="secret",
+            client_token="client-rating-direct",
+        )
+        steps = {step["id"]: step for step in payload["steps"]}
+        trigger = steps["step_rating_trigger"]
+        http = steps["step_call_template_trigger"]
+
+        self.assertEqual(payload["client_token"], "client-rating-direct")
+        self.assertEqual(trigger["type"], "SetRecordTrigger")
+        self.assertEqual(trigger["data"]["table_name"], "ai工具video photo爬取表 副本")
+        self.assertEqual(
+            trigger["data"]["field_watch_info"],
+            [
+                {
+                    "field_name": "浩鹏评分",
+                    "operator": "isGreaterEqual",
+                    "value": [{"value_type": "number", "value": 3}],
+                }
+            ],
+        )
+        self.assertEqual(trigger["data"]["trigger_control_list"], ["openAPIBatchUpdate"])
+        self.assertEqual(http["type"], "HTTPClientAction")
+        self.assertEqual(http["data"]["url"], [{"value_type": "text", "value": "https://example.com/trigger"}])
+        self.assertIn({"value_type": "ref", "value": "$.step_rating_trigger.recordId"}, http["data"]["raw_body"])
+        self.assertIn(
+            {"value_type": "text", "value": '"source":"lark_base_rating_direct_trigger"'},
+            http["data"]["raw_body"],
+        )
+        self.assertIn({"value_type": "text", "value": "secret"}, http["data"]["raw_body"])
+
     def test_build_trigger_link_updates_filters_three_star_or_higher_target_date(self) -> None:
         from ua_workflows.video_enhancer.template_trigger import build_trigger_link_updates
 
@@ -535,6 +572,35 @@ class VeTemplateTriggerTest(unittest.TestCase):
             recognition=worker_result,
         )
         self.assertEqual(result["recognition_update"], {"updated": True, "attachments": {"screenshots": 1, "video_segments": 1}})
+
+    def test_upload_attachments_uses_relative_paths_from_file_directory(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "refs"
+            parent.mkdir()
+            image_path = parent / "reference.jpg"
+            image_path.write_bytes(b"fake image")
+
+            with patch.object(template_trigger, "parse_bitable_ref", return_value=SimpleNamespace(app_token="app", table_id="tbl")), patch.object(
+                template_trigger.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr=""),
+            ) as run:
+                result = template_trigger._upload_attachments_with_lark_cli(
+                    bitable_url="https://example.feishu.cn/base/app?table=tbl",
+                    record_id="rec1",
+                    field_name="模板参考截图",
+                    files=[str(image_path)],
+                )
+
+        _, kwargs = run.call_args
+        cmd = run.call_args.args[0]
+        self.assertEqual(kwargs["cwd"], parent.resolve())
+        self.assertIn("--file", cmd)
+        self.assertIn("reference.jpg", cmd)
+        self.assertNotIn(str(image_path), cmd)
+        self.assertEqual(result["uploaded"], 1)
 
     def test_server_ensure_link_updates_bitable_without_triggering_job(self) -> None:
         from ua_workflows.video_enhancer import template_trigger_server

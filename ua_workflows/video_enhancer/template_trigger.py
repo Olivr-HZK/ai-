@@ -497,9 +497,15 @@ def _upload_attachments_with_lark_cli(
     field_name: str,
     files: list[str],
 ) -> dict[str, Any]:
-    paths = [str(Path(path)) for path in files if str(path or "").strip()]
+    file_paths = [Path(path).expanduser().resolve() for path in files if str(path or "").strip()]
+    paths = [str(path) for path in file_paths]
     if not paths:
         return {"uploaded": 0, "field": field_name, "files": []}
+    for path in file_paths:
+        if not path.exists() or not path.is_file():
+            raise RuntimeError(f"upload attachments failed for {field_name}: file not found: {path}")
+    cwd = Path(os.path.commonpath([str(path.parent) for path in file_paths]))
+    relative_paths = [os.path.relpath(path, cwd) for path in file_paths]
     ref = parse_bitable_ref(bitable_url)
     cmd = [
         "lark-cli",
@@ -518,9 +524,9 @@ def _upload_attachments_with_lark_cli(
         "--format",
         "json",
     ]
-    for path in paths:
+    for path in relative_paths:
         cmd.extend(["--file", path])
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if proc.returncode != 0:
         detail = (proc.stdout or proc.stderr or "").strip()
         raise RuntimeError(f"upload attachments failed for {field_name}: {detail}")
@@ -722,6 +728,94 @@ def build_rating_link_workflow_payload(
                     "response_type": "json",
                     "response_value": json.dumps(
                         {"success": True, "message": "link_written", "record_id": "example"},
+                        ensure_ascii=False,
+                    ),
+                },
+            },
+        ],
+    }
+
+
+def build_rating_trigger_workflow_payload(
+    *,
+    trigger_url: str,
+    table_name: str,
+    rating_field_name: str = "浩鹏评分",
+    reviewer: str = "haopeng",
+    token: str = "",
+    title: str = "VE 模板识别评分直接触发",
+    client_token: str = "",
+    min_rating: int = 3,
+) -> dict[str, Any]:
+    """Build a Base Workflow body: rating SetRecordTrigger -> POST /trigger."""
+    if not trigger_url:
+        raise ValueError("trigger_url is required")
+    if not table_name:
+        raise ValueError("table_name is required")
+    if not rating_field_name:
+        raise ValueError("rating_field_name is required")
+    client_token = client_token or f"ve-template-rating-trigger-{uuid.uuid4().hex}"
+    raw_body: list[dict[str, Any]] = [
+        {"value_type": "text", "value": '{"record_id":"'},
+        {"value_type": "ref", "value": "$.step_rating_trigger.recordId"},
+        {"value_type": "text", "value": '",'},
+        {"value_type": "text", "value": '"source":"lark_base_rating_direct_trigger"'},
+        {"value_type": "text", "value": ',"reviewer":"'},
+        {"value_type": "text", "value": reviewer},
+        {"value_type": "text", "value": '"'},
+    ]
+    if token:
+        raw_body.extend(
+            [
+                {"value_type": "text", "value": ',"token":"'},
+                {"value_type": "text", "value": token},
+                {"value_type": "text", "value": '"'},
+            ]
+        )
+    raw_body.append({"value_type": "text", "value": "}"})
+    return {
+        "client_token": client_token,
+        "title": title,
+        "steps": [
+            {
+                "id": "step_rating_trigger",
+                "type": "SetRecordTrigger",
+                "title": f"{rating_field_name} 达到 {min_rating} 星时触发",
+                "next": "step_call_template_trigger",
+                "data": {
+                    "table_name": table_name,
+                    "record_watch_conjunction": "and",
+                    "record_watch_info": [],
+                    "field_watch_info": [
+                        {
+                            "field_name": rating_field_name,
+                            "operator": "isGreaterEqual",
+                            "value": [{"value_type": "number", "value": min_rating}],
+                        }
+                    ],
+                    "trigger_control_list": ["openAPIBatchUpdate"],
+                    "condition_list": None,
+                },
+            },
+            {
+                "id": "step_call_template_trigger",
+                "type": "HTTPClientAction",
+                "title": "提交 VE 模板识别任务",
+                "next": None,
+                "data": {
+                    "method": "POST",
+                    "url": [{"value_type": "text", "value": trigger_url}],
+                    "headers": [
+                        {
+                            "key": "Content-Type",
+                            "value": [{"value_type": "text", "value": "application/json"}],
+                        }
+                    ],
+                    "body_type": "raw",
+                    "raw_body": raw_body,
+                    "response_type": "json",
+                    "response_value": json.dumps(
+                        {"success": True, "message": "queued", "job_id": "example"},
                         ensure_ascii=False,
                     ),
                 },

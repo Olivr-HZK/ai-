@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class VeTemplateCopyWorkerTest(unittest.TestCase):
@@ -301,6 +302,41 @@ class VeTemplateCopyWorkerTest(unittest.TestCase):
         self.assertEqual(result["recognition"]["template_type"], "图片模板")
         self.assertTrue(result["reference_screenshots"])
         self.assertEqual(result["reference_video_segments"], [])
+
+    def test_recognition_only_video_source_still_outputs_segment_when_template_is_image(self) -> None:
+        from ua_workflows.video_enhancer import template_copy_worker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"fake video")
+            job_path = self._write_job(root, source_url=str(source))
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+            job["task"]["suggested_template_kind"] = "image_template_candidate"
+            job["task"]["template_reason"] = "静态卡片包装。"
+            job["task"]["script_or_voiceover"] = ""
+            job["task"]["template_fingerprint"] = ""
+            job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+            with patch.object(
+                template_copy_worker,
+                "_extract_reference_screenshot",
+                side_effect=lambda source_path, target_path, *, is_video: target_path,
+            ) as screenshot, patch.object(
+                template_copy_worker,
+                "_extract_reference_video_segment",
+                side_effect=lambda source_path, target_path, *, is_video: target_path if is_video else None,
+            ) as segment:
+                result = template_copy_worker.run_template_recognition_only(
+                    job_path,
+                    work_dir=root / "runs",
+                    download=False,
+                )
+
+        self.assertEqual(result["recognition"]["mode"], "image_template")
+        self.assertTrue(result["reference_video_segments"])
+        self.assertTrue(screenshot.call_args.kwargs["is_video"])
+        self.assertTrue(segment.call_args.kwargs["is_video"])
 
 
 if __name__ == "__main__":

@@ -523,16 +523,17 @@ def run_template_recognition_only(
         raise
 
     recognition = _recognition_from_job(job, source_path=source_path)
+    source_is_video = _source_is_video(source_path, job)
     refs_dir = run_dir / "recognition_refs"
     screenshot_path = _extract_reference_screenshot(
         source_path,
         refs_dir / "reference_frame_01.jpg",
-        is_video=recognition["mode"] == "video_template",
+        is_video=source_is_video,
     )
     segment_path = _extract_reference_video_segment(
         source_path,
         refs_dir / "reference_segment_01.mp4",
-        is_video=recognition["mode"] == "video_template",
+        is_video=source_is_video,
     )
     result_path = refs_dir / "recognition_result.json"
     reference_screenshots = [str(screenshot_path)]
