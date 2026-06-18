@@ -1,6 +1,8 @@
 # VE 模板复刻点击触发部署
 
-本文记录 `3星及以上素材 -> 多维表按钮/链接点击 -> 本地任务落盘 -> 本地 Codex 调用 aigc-template-copy skill -> 结构化结果回写` 的部署方式。
+本文记录 `3星及以上素材 -> 多维表评分触发 -> 本地/远端任务落盘 -> Codex 调用 aigc-template-copy skill 做识别-only -> 参考截图/片段回写` 的部署方式。
+
+当前默认推荐的是 recognition-only 链路：调用 Codex 和 `$aigc-template-copy` 做模板类型、可复用画面/片段、时间戳和分组判断，但不进入 GPT Image 2 / Vidu / Video Lab 生成。
 
 ## 当前临时部署
 
@@ -25,17 +27,18 @@ VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
   --host 127.0.0.1 \
   --port 8765 \
   --auto-prepare \
-  --auto-execute-codex \
+  --recognition-only \
+  --recognition-use-codex-skill \
   --codex-model gpt-5.5
 ```
 
-`--auto-execute-codex` 会在 job 准备好后继续调用 `codex exec`，由本地 Codex 使用 `$aigc-template-copy` 处理。测试或只想落盘时可以去掉这个参数；这样只会生成 prompt/参数文件，不会调用 Codex，也不会创建 Video Lab 任务。
+`--recognition-only --recognition-use-codex-skill` 会在 job 创建后继续调用 `codex exec`，由 Codex 使用 `$aigc-template-copy` 的前半段规则做结构化识别，并返回 `VE_TEMPLATE_RECOGNITION_RESULT_JSON`。本地 worker 只按返回的时间戳抽参考截图/片段并上传多维表；不会调用 Video Lab，也不会创建生成任务。
 
 如果需要临时常驻，使用 detached screen：
 
 ```bash
 cd /Users/oliver/guru/ua素材
-screen -dmS ve-template-trigger zsh -lc 'cd /Users/oliver/guru/ua素材 && env VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" VE_TEMPLATE_COPY_CODEX_MODEL="gpt-5.5" .venv/bin/python scripts/run_ve_template_trigger_server.py --host 127.0.0.1 --port 8765 --auto-prepare --auto-execute-codex --codex-model gpt-5.5 --model-ref-dir /Users/oliver/guru/ua素材/data/template_model_refs >> data/ve_template_trigger_server.log 2>&1'
+screen -dmS ve-template-trigger zsh -lc 'cd /Users/oliver/guru/ua素材 && env VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" VE_TEMPLATE_COPY_CODEX_MODEL="gpt-5.5" .venv/bin/python scripts/run_ve_template_trigger_server.py --host 127.0.0.1 --port 8765 --auto-prepare --recognition-only --recognition-use-codex-skill --codex-model gpt-5.5 >> data/ve_template_trigger_server.log 2>&1'
 ```
 
 查看/停止：
@@ -75,29 +78,32 @@ curl -sS "$(cat data/ve_template_trigger_public_url.txt)/healthz"
 
 如果 Quick Tunnel URL 变化，只需要重新保存新 URL，再跑一次 `upsert_ve_template_button_workflow.py`。脚本会查找标题为 `VE 模板复刻按钮触发` 的 Workflow；存在则更新，不存在则创建并启用。
 
-`--auto-prepare` 只会把 job 继续准备到本地 worker 目录：下载源素材、选择 `data/template_model_refs/` 下的默认模特图、生成 Codex prompt 和 Video Lab 参数 JSON；不会直接创建 Video Lab 生成任务，也不会消耗额度。
+`--auto-prepare` 配合 `--recognition-only` 会把 job 继续执行到识别产物：下载源素材、调用 Codex skill 做结构化识别、抽取参考截图/片段、写回多维表。不会创建 Video Lab 生成任务，也不会消耗 Video Lab 额度。
 
-`--auto-execute-codex` 会继续执行本地 Codex。Codex prompt 会要求 skill 最后一行输出：
+recognition-only prompt 会要求 skill 最后一行输出：
 
 当前临时服务固定使用 `--codex-model gpt-5.5`，避免默认模型容量满导致 `Selected model is at capacity`。`gpt5.5` 是人工口语写法，代码会归一为 `gpt-5.5`，但部署命令仍建议写正式模型名。
 
 ```text
-VE_TEMPLATE_COPY_RESULT_JSON: {"status":"completed|quality_failed|blocked","quality_verdict":"passed|failed","score":90,"mode":"video_template|image_copy","task_ids":[],"output_paths":[],"reason":"..."}
+VE_TEMPLATE_RECOGNITION_RESULT_JSON: {"status":"completed","mode":"image_template|video_template","template_type":"图片模板|视频模板","reason":"...","groups":[{"kind":"image|video","label":"...","timestamp":1.2,"start_time":1.2,"end_time":5.2,"reason":"..."}],"excluded":[]}
 ```
 
 触发服务会解析这个 JSON：
 
-- `status=completed` 且 `quality_verdict=passed`：多维表 `模板复刻状态=已完成`
-- `status=quality_failed` / `blocked` / `failed`：多维表 `模板复刻状态=失败`
+- `status=completed`：多维表 `模板复刻状态=已完成`，并写入 `模板识别类型` / `模板识别理由` / `模板参考截图` / `模板参考视频片段`
 - Codex 运行失败或缺少结构化结果：多维表 `模板复刻状态=失败`
 
 ## 多维表入口
 
-当前主表已具备这些字段：
+当前主表和备份表都应具备这些字段：
 
 - `模板复刻状态`
 - `模板复刻任务ID`
 - `模板复刻触发链接`
+- `模板识别类型`
+- `模板识别理由`
+- `模板参考截图`
+- `模板参考视频片段`
 
 Base Workflow 采用 `ButtonTrigger -> HTTPClientAction`：
 
@@ -105,25 +111,25 @@ Base Workflow 采用 `ButtonTrigger -> HTTPClientAction`：
 - HTTP action POST 到 `${PUBLIC_URL}/trigger`
 - 请求体带当前行 `record_id` 和本地 token
 
-评分后自动写链接采用 `SetRecordTrigger -> HTTPClientAction`：
+评分后自动触发识别采用 `SetRecordTrigger -> HTTPClientAction`：
 
 - 触发器监听 `浩鹏评分` 或 `尉蓝评分`
 - 条件为评分 `>= 3`
-- HTTP action POST 到 `${PUBLIC_URL}/ensure-link`
-- `/ensure-link` 只写当前记录的 `模板复刻触发链接`，不会创建 job、不会调用 Codex、不会消耗 Video Lab
+- HTTP action POST 到 `${PUBLIC_URL}/trigger`
+- `/trigger` 创建 job，并在 recognition-only 服务中调用 Codex skill 识别；不会调用 Video Lab
 
 安装或更新评分链接 Workflow：
 
 ```bash
 cd /Users/oliver/guru/ua素材
-.venv/bin/python scripts/upsert_ve_template_rating_link_workflow.py \
+.venv/bin/python scripts/upsert_ve_template_rating_trigger_workflow.py \
   --public-url "$(cat data/ve_template_trigger_public_url.txt)" \
   --table-name "ai工具video photo爬取表" \
   --rating-field-name "浩鹏评分" \
   --reviewer haopeng \
   --token "$(cat data/ve_template_trigger_token.local)"
 
-.venv/bin/python scripts/upsert_ve_template_rating_link_workflow.py \
+.venv/bin/python scripts/upsert_ve_template_rating_trigger_workflow.py \
   --public-url "$(cat data/ve_template_trigger_public_url.txt)" \
   --table-name "ai工具video photo爬取表" \
   --rating-field-name "尉蓝评分" \
@@ -203,7 +209,9 @@ VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
   --host 127.0.0.1 \
   --port 8765 \
   --auto-prepare \
-  --auto-execute-codex
+  --recognition-only \
+  --recognition-use-codex-skill \
+  --codex-model gpt-5.5
 ```
 
 ```bash
@@ -232,7 +240,7 @@ curl -fsS "$PUBLIC_URL/healthz"
 
 ```bash
 VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
-  .venv/bin/python scripts/upsert_ve_template_rating_link_workflow.py \
+  .venv/bin/python scripts/upsert_ve_template_rating_trigger_workflow.py \
   --bitable-url 'https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuFcjL0kE&view=vewGH7cmSs' \
   --public-url "$PUBLIC_URL" \
   --table-name 'ai工具video photo爬取表' \
@@ -240,7 +248,7 @@ VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
   --reviewer haopeng
 
 VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
-  .venv/bin/python scripts/upsert_ve_template_rating_link_workflow.py \
+  .venv/bin/python scripts/upsert_ve_template_rating_trigger_workflow.py \
   --bitable-url 'https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuFcjL0kE&view=vewGH7cmSs' \
   --public-url "$PUBLIC_URL" \
   --table-name 'ai工具video photo爬取表' \
