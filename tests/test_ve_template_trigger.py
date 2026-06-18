@@ -602,6 +602,40 @@ class VeTemplateTriggerTest(unittest.TestCase):
         self.assertNotIn(str(image_path), cmd)
         self.assertEqual(result["uploaded"], 1)
 
+    def test_clear_attachments_removes_existing_tokens_before_upload(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger
+
+        record = {
+            "record_id": "rec1",
+            "fields": {
+                "模板参考截图": [
+                    {"file_token": "tok1", "name": "old1.jpg"},
+                    {"file_token": "tok2", "name": "old2.jpg"},
+                ]
+            },
+        }
+        with patch.object(template_trigger, "fetch_bitable_record", return_value=record), patch.object(
+            template_trigger,
+            "parse_bitable_ref",
+            return_value=SimpleNamespace(app_token="app", table_id="tbl"),
+        ), patch.object(
+            template_trigger.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr=""),
+        ) as run:
+            result = template_trigger._clear_attachments_with_lark_cli(
+                bitable_url="https://example.feishu.cn/base/app?table=tbl",
+                record_id="rec1",
+                field_name="模板参考截图",
+            )
+
+        cmd = run.call_args.args[0]
+        self.assertEqual(result["removed"], 2)
+        self.assertIn("--yes", cmd)
+        self.assertEqual(cmd.count("--file-token"), 2)
+        self.assertIn("tok1", cmd)
+        self.assertIn("tok2", cmd)
+
     def test_server_ensure_link_updates_bitable_without_triggering_job(self) -> None:
         from ua_workflows.video_enhancer import template_trigger_server
 

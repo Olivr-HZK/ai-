@@ -533,6 +533,58 @@ def _upload_attachments_with_lark_cli(
     return {"uploaded": len(paths), "field": field_name, "files": paths}
 
 
+def _attachment_tokens(record: dict[str, Any], field_name: str) -> list[str]:
+    fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+    values = fields.get(field_name) if isinstance(fields, dict) else []
+    if not isinstance(values, list):
+        return []
+    tokens: list[str] = []
+    for item in values:
+        if isinstance(item, dict):
+            token = str(item.get("file_token") or "").strip()
+            if token:
+                tokens.append(token)
+    return tokens
+
+
+def _clear_attachments_with_lark_cli(
+    *,
+    bitable_url: str,
+    record_id: str,
+    field_name: str,
+) -> dict[str, Any]:
+    record = fetch_bitable_record(bitable_url, record_id=record_id)
+    tokens = _attachment_tokens(record, field_name)
+    if not tokens:
+        return {"removed": 0, "field": field_name, "file_tokens": []}
+    ref = parse_bitable_ref(bitable_url)
+    cmd = [
+        "lark-cli",
+        "base",
+        "+record-remove-attachment",
+        "--base-token",
+        ref.app_token,
+        "--table-id",
+        ref.table_id,
+        "--record-id",
+        record_id,
+        "--field-id",
+        field_name,
+        "--as",
+        "user",
+        "--format",
+        "json",
+        "--yes",
+    ]
+    for token in tokens:
+        cmd.extend(["--file-token", token])
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        detail = (proc.stdout or proc.stderr or "").strip()
+        raise RuntimeError(f"clear attachments failed for {field_name}: {detail}")
+    return {"removed": len(tokens), "field": field_name, "file_tokens": tokens}
+
+
 def update_template_recognition_result(
     *,
     bitable_url: str,
@@ -556,6 +608,16 @@ def update_template_recognition_result(
     )
     screenshots = [str(path) for path in recognition.get("reference_screenshots") or []]
     video_segments = [str(path) for path in recognition.get("reference_video_segments") or []]
+    screenshot_clear = _clear_attachments_with_lark_cli(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        field_name=RECOGNITION_SCREENSHOT_FIELD,
+    )
+    video_clear = _clear_attachments_with_lark_cli(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        field_name=RECOGNITION_VIDEO_SEGMENT_FIELD,
+    )
     screenshot_upload = _upload_attachments_with_lark_cli(
         bitable_url=bitable_url,
         record_id=record_id,
@@ -573,7 +635,9 @@ def update_template_recognition_result(
         "record_id": record_id,
         "fields": field_update["fields"],
         "attachments": {
+            "screenshots_removed": screenshot_clear.get("removed", 0),
             "screenshots": screenshot_upload.get("uploaded", 0),
+            "video_segments_removed": video_clear.get("removed", 0),
             "video_segments": video_upload.get("uploaded", 0),
         },
     }
