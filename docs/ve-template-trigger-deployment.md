@@ -199,11 +199,25 @@ import secrets
 print(secrets.token_urlsafe(24))
 PY
 chmod 600 data/ve_template_trigger_token.local
+test -x /opt/homebrew/bin/codex
+grep -q 'service_tier = "fast"\|service_tier = "flex"' ~/.codex/config.toml
+```
+
+如果远端 `codex exec` 报 `unknown variant "priority"`，说明 Mac mini 的 Codex CLI 版本只接受 `fast` / `flex`，需要把 `~/.codex/config.toml` 里的 `service_tier = "priority"` 改成 `service_tier = "fast"` 或 `flex`。如果报 `Missing environment variable: SUB2API_API_KEY`，把该变量放到远端本机私密文件，例如 `data/ve_template_recognition_remote/codex_env.local`，不要提交到 git：
+
+```bash
+mkdir -p data/ve_template_recognition_remote
+cat > data/ve_template_recognition_remote/codex_env.local <<'EOF'
+export SUB2API_API_KEY="..."
+EOF
+chmod 600 data/ve_template_recognition_remote/codex_env.local
 ```
 
 临时常驻可先用 `tmux` 或 `screen` 跑两条进程：
 
 ```bash
+export PATH="/opt/homebrew/bin:$PATH"
+test -s data/ve_template_recognition_remote/codex_env.local && source data/ve_template_recognition_remote/codex_env.local
 VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
   .venv/bin/python scripts/run_ve_template_trigger_server.py \
   --host 127.0.0.1 \
@@ -211,6 +225,7 @@ VE_TEMPLATE_TRIGGER_TOKEN="$(cat data/ve_template_trigger_token.local)" \
   --auto-prepare \
   --recognition-only \
   --recognition-use-codex-skill \
+  --codex-bin /opt/homebrew/bin/codex \
   --codex-model gpt-5.5
 ```
 
