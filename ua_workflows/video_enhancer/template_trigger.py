@@ -833,7 +833,7 @@ def build_rating_trigger_workflow_payload(
                             "value": [{"value_type": "number", "value": min_rating}],
                         }
                     ],
-                    "trigger_control_list": ["openAPIBatchUpdate"],
+                    "trigger_control_list": [],
                     "condition_list": None,
                 },
             },

@@ -136,7 +136,7 @@ class VeTemplateTriggerTest(unittest.TestCase):
                 }
             ],
         )
-        self.assertEqual(trigger["data"]["trigger_control_list"], ["openAPIBatchUpdate"])
+        self.assertEqual(trigger["data"]["trigger_control_list"], [])
         self.assertEqual(http["type"], "HTTPClientAction")
         self.assertEqual(http["data"]["url"], [{"value_type": "text", "value": "https://example.com/trigger"}])
         self.assertIn({"value_type": "ref", "value": "$.step_rating_trigger.recordId"}, http["data"]["raw_body"])
