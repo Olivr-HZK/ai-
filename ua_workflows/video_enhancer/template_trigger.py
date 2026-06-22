@@ -699,7 +699,7 @@ def build_rating_link_workflow_payload(
     client_token: str = "",
     min_rating: int = 3,
 ) -> dict[str, Any]:
-    """Build a Base Workflow body: rating SetRecordTrigger -> POST /ensure-link."""
+    """Build a Base Workflow body: rating ChangeRecordTrigger -> POST /ensure-link."""
     if not ensure_link_url:
         raise ValueError("ensure_link_url is required")
     if not table_name:
@@ -731,22 +731,24 @@ def build_rating_link_workflow_payload(
         "steps": [
             {
                 "id": "step_rating_trigger",
-                "type": "SetRecordTrigger",
+                "type": "ChangeRecordTrigger",
                 "title": f"{rating_field_name} 达到 {min_rating} 星时触发",
                 "next": "step_ensure_template_link",
                 "data": {
                     "table_name": table_name,
-                    "record_watch_conjunction": "and",
-                    "record_watch_info": [],
-                    "field_watch_info": [
+                    "trigger_control_list": [],
+                    "condition_list": [
                         {
-                            "field_name": rating_field_name,
-                            "operator": "isGreaterEqual",
-                            "value": [{"value_type": "number", "value": min_rating}],
+                            "conjunction": "and",
+                            "conditions": [
+                                {
+                                    "field_name": rating_field_name,
+                                    "operator": "isGreaterEqual",
+                                    "value": [{"value_type": "number", "value": min_rating}],
+                                }
+                            ],
                         }
                     ],
-                    "trigger_control_list": [],
-                    "condition_list": None,
                 },
             },
             {
@@ -787,7 +789,7 @@ def build_rating_trigger_workflow_payload(
     client_token: str = "",
     min_rating: int = 3,
 ) -> dict[str, Any]:
-    """Build a Base Workflow body: rating SetRecordTrigger -> POST /trigger."""
+    """Build a Base Workflow body: rating ChangeRecordTrigger -> POST /trigger."""
     if not trigger_url:
         raise ValueError("trigger_url is required")
     if not table_name:
@@ -819,22 +821,24 @@ def build_rating_trigger_workflow_payload(
         "steps": [
             {
                 "id": "step_rating_trigger",
-                "type": "SetRecordTrigger",
+                "type": "ChangeRecordTrigger",
                 "title": f"{rating_field_name} 达到 {min_rating} 星时触发",
                 "next": "step_call_template_trigger",
                 "data": {
                     "table_name": table_name,
-                    "record_watch_conjunction": "and",
-                    "record_watch_info": [],
-                    "field_watch_info": [
+                    "trigger_control_list": [],
+                    "condition_list": [
                         {
-                            "field_name": rating_field_name,
-                            "operator": "isGreaterEqual",
-                            "value": [{"value_type": "number", "value": min_rating}],
+                            "conjunction": "and",
+                            "conditions": [
+                                {
+                                    "field_name": rating_field_name,
+                                    "operator": "isGreaterEqual",
+                                    "value": [{"value_type": "number", "value": min_rating}],
+                                }
+                            ],
                         }
                     ],
-                    "trigger_control_list": [],
-                    "condition_list": None,
                 },
             },
             {

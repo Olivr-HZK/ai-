@@ -91,18 +91,24 @@ class VeTemplateTriggerTest(unittest.TestCase):
         http = steps["step_ensure_template_link"]
 
         self.assertEqual(payload["client_token"], "client-rating")
-        self.assertEqual(trigger["type"], "SetRecordTrigger")
+        self.assertEqual(trigger["type"], "ChangeRecordTrigger")
         self.assertEqual(trigger["data"]["table_name"], "ai工具video photo爬取表 副本")
         self.assertEqual(
-            trigger["data"]["field_watch_info"],
+            trigger["data"]["condition_list"],
             [
                 {
-                    "field_name": "浩鹏评分",
-                    "operator": "isGreaterEqual",
-                    "value": [{"value_type": "number", "value": 3}],
+                    "conjunction": "and",
+                    "conditions": [
+                        {
+                            "field_name": "浩鹏评分",
+                            "operator": "isGreaterEqual",
+                            "value": [{"value_type": "number", "value": 3}],
+                        }
+                    ],
                 }
             ],
         )
+        self.assertEqual(trigger["data"]["trigger_control_list"], [])
         self.assertEqual(http["type"], "HTTPClientAction")
         self.assertEqual(http["data"]["url"], [{"value_type": "text", "value": "https://example.com/ensure-link"}])
         self.assertIn({"value_type": "ref", "value": "$.step_rating_trigger.recordId"}, http["data"]["raw_body"])
@@ -124,15 +130,20 @@ class VeTemplateTriggerTest(unittest.TestCase):
         http = steps["step_call_template_trigger"]
 
         self.assertEqual(payload["client_token"], "client-rating-direct")
-        self.assertEqual(trigger["type"], "SetRecordTrigger")
+        self.assertEqual(trigger["type"], "ChangeRecordTrigger")
         self.assertEqual(trigger["data"]["table_name"], "ai工具video photo爬取表 副本")
         self.assertEqual(
-            trigger["data"]["field_watch_info"],
+            trigger["data"]["condition_list"],
             [
                 {
-                    "field_name": "浩鹏评分",
-                    "operator": "isGreaterEqual",
-                    "value": [{"value_type": "number", "value": 3}],
+                    "conjunction": "and",
+                    "conditions": [
+                        {
+                            "field_name": "浩鹏评分",
+                            "operator": "isGreaterEqual",
+                            "value": [{"value_type": "number", "value": 3}],
+                        }
+                    ],
                 }
             ],
         )
@@ -699,6 +710,31 @@ class VeTemplateTriggerTest(unittest.TestCase):
             include_legacy=False,
             token="",
         )
+
+    def test_server_appends_request_event_log(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            event_log = Path(tmp) / "trigger_events.jsonl"
+            handler = object.__new__(template_trigger_server.TemplateTriggerHandler)
+            handler.server = SimpleNamespace(event_log_path=event_log)
+            handler.headers = {"X-Forwarded-For": "1.2.3.4", "Host": "example.com"}
+            handler.command = "POST"
+            handler.path = "/trigger"
+            handler.client_address = ("127.0.0.1", 12345)
+
+            handler._append_event_log("request", payload={"record_id": "rec1", "token": "secret"})
+            handler._append_event_log("response", result={"success": True, "job_id": "job1"}, status=200)
+
+            lines = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(lines[0]["event"], "request")
+        self.assertEqual(lines[0]["path"], "/trigger")
+        self.assertEqual(lines[0]["payload"], {"record_id": "rec1", "token": "***"})
+        self.assertEqual(lines[0]["client_ip"], "1.2.3.4")
+        self.assertEqual(lines[1]["event"], "response")
+        self.assertEqual(lines[1]["status"], 200)
+        self.assertEqual(lines[1]["result"]["job_id"], "job1")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import html
 import json
 import os
@@ -70,6 +71,20 @@ def _html_response(handler: BaseHTTPRequestHandler, payload: dict[str, Any], sta
 
 def _first(values: dict[str, list[str]], name: str) -> str:
     return str((values.get(name) or [""])[0] or "").strip()
+
+
+def _mask_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        masked: dict[str, Any] = {}
+        for key, item in value.items():
+            if str(key).lower() in {"token", "authorization", "x-ve-template-token"}:
+                masked[str(key)] = "***" if item else ""
+            else:
+                masked[str(key)] = _mask_payload(item)
+        return masked
+    if isinstance(value, list):
+        return [_mask_payload(item) for item in value]
+    return value
 
 
 def run_optional_worker(
@@ -166,8 +181,53 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
         return Path(getattr(self.server, "work_dir", DEFAULT_WORK_DIR))
 
     @property
+    def event_log_path(self) -> Path:
+        configured = getattr(self.server, "event_log_path", None)
+        if configured:
+            return Path(configured)
+        return self.job_dir.parent / "trigger_events.jsonl"
+
+    @property
     def public_trigger_url(self) -> str:
         return str(getattr(self.server, "public_trigger_url", "") or "").strip()
+
+    def _append_event_log(
+        self,
+        event: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+        status: int | None = None,
+    ) -> None:
+        forwarded_for = str(self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        client_ip = forwarded_for or str((getattr(self, "client_address", ("", 0)) or ("", 0))[0] or "")
+        entry: dict[str, Any] = {
+            "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "event": event,
+            "method": str(getattr(self, "command", "") or ""),
+            "path": str(urlparse(getattr(self, "path", "") or "").path),
+            "client_ip": client_ip,
+            "host": str(self.headers.get("Host") or ""),
+        }
+        if payload is not None:
+            entry["payload"] = _mask_payload(payload)
+            record_id = str(payload.get("record_id") or "").strip()
+            if record_id:
+                entry["record_id"] = record_id
+        if result is not None:
+            entry["result"] = _mask_payload(result)
+            job_id = str(result.get("job_id") or "").strip()
+            if job_id:
+                entry["job_id"] = job_id
+        if status is not None:
+            entry["status"] = status
+        try:
+            path = self.event_log_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception as exc:
+            print(f"[ve-template-trigger] event log failed: {type(exc).__name__}: {exc}")
 
     def _resolved_public_trigger_url(self) -> str:
         configured = self.public_trigger_url
@@ -197,11 +257,14 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
             "token": _first(params, "token"),
             "source": _first(params, "source") or "local_link_click",
         }
+        self._append_event_log("request", payload=payload)
         if parsed.path == "/ensure-link":
             result, status = self._ensure_link(payload)
+            self._append_event_log("response", result=result, status=status)
             _json_response(self, result, status=status)
             return
         result, status = self._trigger(payload)
+        self._append_event_log("response", result=result, status=status)
         _html_response(self, result, status=status)
 
     def do_POST(self) -> None:
@@ -219,11 +282,14 @@ class TemplateTriggerHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             _json_response(self, {"success": False, "code": "invalid_json", "message": "请求体必须是 JSON 对象"}, 400)
             return
+        self._append_event_log("request", payload=payload)
         if parsed.path == "/ensure-link":
             result, status = self._ensure_link(payload)
+            self._append_event_log("response", result=result, status=status)
             _json_response(self, result, status=status)
             return
         result, status = self._trigger(payload)
+        self._append_event_log("response", result=result, status=status)
         _json_response(self, result, status=status)
 
     def _authorize_payload(self, payload: dict[str, Any]) -> tuple[dict[str, Any] | None, int]:
@@ -406,6 +472,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--model-ref-dir", default=os.getenv("VE_TEMPLATE_COPY_MODEL_REF_DIR", str(DEFAULT_MODEL_REF_DIR)))
     parser.add_argument("--work-dir", default=os.getenv("VE_TEMPLATE_COPY_WORK_DIR", str(DEFAULT_WORK_DIR)))
+    parser.add_argument(
+        "--event-log-path",
+        default=os.getenv("VE_TEMPLATE_TRIGGER_EVENT_LOG", ""),
+        help="JSONL request/response audit log path; defaults next to the job directory",
+    )
     return parser.parse_args(argv)
 
 
@@ -427,8 +498,10 @@ def main(argv: list[str] | None = None) -> int:
     server.public_trigger_url = str(args.public_trigger_url or "").strip()
     server.model_ref_dir = Path(args.model_ref_dir or DEFAULT_MODEL_REF_DIR)
     server.work_dir = Path(args.work_dir or DEFAULT_WORK_DIR)
+    server.event_log_path = Path(args.event_log_path) if args.event_log_path else Path(server.job_dir).parent / "trigger_events.jsonl"
     print(f"[ve-template-trigger] listening on http://{args.host}:{args.port}")
     print(f"[ve-template-trigger] jobs -> {server.job_dir}")
+    print(f"[ve-template-trigger] event_log -> {server.event_log_path}")
     print(
         "[ve-template-trigger] "
         f"auto_prepare={server.auto_prepare} auto_execute_codex={server.auto_execute_codex} "
