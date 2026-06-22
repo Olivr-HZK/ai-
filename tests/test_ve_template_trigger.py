@@ -573,7 +573,7 @@ class VeTemplateTriggerTest(unittest.TestCase):
         )
         self.assertEqual(result["recognition_update"], {"updated": True, "attachments": {"screenshots": 1, "video_segments": 1}})
 
-    def test_upload_attachments_uses_relative_paths_from_file_directory(self) -> None:
+    def test_upload_attachments_uses_app_openapi_without_lark_cli(self) -> None:
         from ua_workflows.video_enhancer import template_trigger
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -582,59 +582,88 @@ class VeTemplateTriggerTest(unittest.TestCase):
             image_path = parent / "reference.jpg"
             image_path.write_bytes(b"fake image")
 
+            class FakeUploadResponse:
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict[str, object]:
+                    return {"code": 0, "data": {"file_token": "filetok1"}}
+
+            class FakeBatchUpdateResponse:
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict[str, object]:
+                    return {"code": 0, "data": {}}
+
+            self.assertFalse(hasattr(template_trigger, "subprocess"))
             with patch.object(template_trigger, "parse_bitable_ref", return_value=SimpleNamespace(app_token="app", table_id="tbl")), patch.object(
-                template_trigger.subprocess,
-                "run",
-                return_value=SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr=""),
-            ) as run:
-                result = template_trigger._upload_attachments_with_lark_cli(
+                template_trigger,
+                "_tenant_access_token",
+                return_value="tenant-token",
+            ), patch.object(
+                template_trigger.requests,
+                "post",
+                side_effect=[FakeUploadResponse(), FakeBatchUpdateResponse()],
+            ) as post:
+                result = template_trigger._upload_attachments_to_bitable(
                     bitable_url="https://example.feishu.cn/base/app?table=tbl",
                     record_id="rec1",
                     field_name="模板参考截图",
                     files=[str(image_path)],
                 )
 
-        _, kwargs = run.call_args
-        cmd = run.call_args.args[0]
-        self.assertEqual(kwargs["cwd"], parent.resolve())
-        self.assertIn("--file", cmd)
-        self.assertIn("reference.jpg", cmd)
-        self.assertNotIn(str(image_path), cmd)
+        upload_call, update_call = post.call_args_list
+        self.assertEqual(upload_call.args[0], "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all")
+        self.assertEqual(upload_call.kwargs["headers"]["Authorization"], "Bearer tenant-token")
+        self.assertEqual(upload_call.kwargs["data"]["file_name"], "reference.jpg")
+        self.assertEqual(upload_call.kwargs["data"]["parent_node"], "app")
+        self.assertEqual(upload_call.kwargs["data"]["parent_type"], "bitable_file")
+        self.assertIn("file", upload_call.kwargs["files"])
+        self.assertEqual(
+            update_call.args[0],
+            "https://open.feishu.cn/open-apis/bitable/v1/apps/app/tables/tbl/records/batch_update",
+        )
+        self.assertEqual(
+            update_call.kwargs["json"],
+            {"records": [{"record_id": "rec1", "fields": {"模板参考截图": [{"file_token": "filetok1"}]}}]},
+        )
         self.assertEqual(result["uploaded"], 1)
 
-    def test_clear_attachments_removes_existing_tokens_before_upload(self) -> None:
+    def test_replace_attachments_overwrites_old_tokens_with_batch_update(self) -> None:
         from ua_workflows.video_enhancer import template_trigger
 
-        record = {
-            "record_id": "rec1",
-            "fields": {
-                "模板参考截图": [
-                    {"file_token": "tok1", "name": "old1.jpg"},
-                    {"file_token": "tok2", "name": "old2.jpg"},
-                ]
-            },
-        }
-        with patch.object(template_trigger, "fetch_bitable_record", return_value=record), patch.object(
+        self.assertFalse(hasattr(template_trigger, "subprocess"))
+        with patch.object(template_trigger, "parse_bitable_ref", return_value=SimpleNamespace(app_token="app", table_id="tbl")), patch.object(
             template_trigger,
-            "parse_bitable_ref",
-            return_value=SimpleNamespace(app_token="app", table_id="tbl"),
+            "_tenant_access_token",
+            return_value="tenant-token",
         ), patch.object(
-            template_trigger.subprocess,
-            "run",
-            return_value=SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr=""),
-        ) as run:
-            result = template_trigger._clear_attachments_with_lark_cli(
+            template_trigger,
+            "_upload_local_file_to_bitable_media",
+            return_value="newtok",
+        ), patch.object(
+            template_trigger.requests, "post", return_value=SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"code": 0})
+        ) as post, tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "new.jpg"
+            path.write_bytes(b"new")
+            result = template_trigger._upload_attachments_to_bitable(
                 bitable_url="https://example.feishu.cn/base/app?table=tbl",
                 record_id="rec1",
                 field_name="模板参考截图",
+                files=[str(path)],
             )
 
-        cmd = run.call_args.args[0]
-        self.assertEqual(result["removed"], 2)
-        self.assertIn("--yes", cmd)
-        self.assertEqual(cmd.count("--file-token"), 2)
-        self.assertIn("tok1", cmd)
-        self.assertIn("tok2", cmd)
+        self.assertEqual(result["uploaded"], 1)
+        self.assertEqual(
+            post.call_args.args[0],
+            "https://open.feishu.cn/open-apis/bitable/v1/apps/app/tables/tbl/records/batch_update",
+        )
+        self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer tenant-token")
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {"records": [{"record_id": "rec1", "fields": {"模板参考截图": [{"file_token": "newtok"}]}}]},
+        )
 
     def test_server_ensure_link_updates_bitable_without_triggering_job(self) -> None:
         from ua_workflows.video_enhancer import template_trigger_server

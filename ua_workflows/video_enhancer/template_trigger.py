@@ -6,7 +6,6 @@ import datetime as dt
 import json
 import os
 import re
-import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -490,7 +489,48 @@ def _batch_update_record_fields(
     return {"updated": True, "record_id": record_id, "fields": fields}
 
 
-def _upload_attachments_with_lark_cli(
+def _extract_file_token(data: dict[str, Any], *, field_name: str, path: Path) -> str:
+    candidates = [
+        data.get("file_token"),
+        (data.get("data") or {}).get("file_token") if isinstance(data.get("data"), dict) else None,
+    ]
+    for token in candidates:
+        token_text = str(token or "").strip()
+        if token_text:
+            return token_text
+    raise RuntimeError(f"upload attachments failed for {field_name}: missing file_token for {path}")
+
+
+def _upload_local_file_to_bitable_media(
+    *,
+    access_token: str,
+    app_token: str,
+    path: Path,
+    field_name: str,
+) -> str:
+    url = "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    with path.open("rb") as file_obj:
+        resp = requests.post(
+            url,
+            headers=headers,
+            data={
+                "file_name": path.name,
+                "parent_type": "bitable_file",
+                "parent_node": app_token,
+                "size": str(path.stat().st_size),
+            },
+            files={"file": (path.name, file_obj)},
+            timeout=120,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"upload attachments failed for {field_name}: {data}")
+    return _extract_file_token(data, field_name=field_name, path=path)
+
+
+def _upload_attachments_to_bitable(
     *,
     bitable_url: str,
     record_id: str,
@@ -504,85 +544,33 @@ def _upload_attachments_with_lark_cli(
     for path in file_paths:
         if not path.exists() or not path.is_file():
             raise RuntimeError(f"upload attachments failed for {field_name}: file not found: {path}")
-    cwd = Path(os.path.commonpath([str(path.parent) for path in file_paths]))
-    relative_paths = [os.path.relpath(path, cwd) for path in file_paths]
     ref = parse_bitable_ref(bitable_url)
-    cmd = [
-        "lark-cli",
-        "base",
-        "+record-upload-attachment",
-        "--base-token",
-        ref.app_token,
-        "--table-id",
-        ref.table_id,
-        "--record-id",
-        record_id,
-        "--field-id",
-        field_name,
-        "--as",
-        "user",
-        "--format",
-        "json",
+    access_token = _tenant_access_token()
+    uploaded_tokens = [
+        _upload_local_file_to_bitable_media(
+            access_token=access_token,
+            app_token=ref.app_token,
+            path=path,
+            field_name=field_name,
+        )
+        for path in file_paths
     ]
-    for path in relative_paths:
-        cmd.extend(["--file", path])
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        detail = (proc.stdout or proc.stderr or "").strip()
-        raise RuntimeError(f"upload attachments failed for {field_name}: {detail}")
-    return {"uploaded": len(paths), "field": field_name, "files": paths}
-
-
-def _attachment_tokens(record: dict[str, Any], field_name: str) -> list[str]:
-    fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
-    values = fields.get(field_name) if isinstance(fields, dict) else []
-    if not isinstance(values, list):
-        return []
-    tokens: list[str] = []
-    for item in values:
-        if isinstance(item, dict):
-            token = str(item.get("file_token") or "").strip()
-            if token:
-                tokens.append(token)
-    return tokens
-
-
-def _clear_attachments_with_lark_cli(
-    *,
-    bitable_url: str,
-    record_id: str,
-    field_name: str,
-) -> dict[str, Any]:
-    record = fetch_bitable_record(bitable_url, record_id=record_id)
-    tokens = _attachment_tokens(record, field_name)
-    if not tokens:
-        return {"removed": 0, "field": field_name, "file_tokens": []}
-    ref = parse_bitable_ref(bitable_url)
-    cmd = [
-        "lark-cli",
-        "base",
-        "+record-remove-attachment",
-        "--base-token",
-        ref.app_token,
-        "--table-id",
-        ref.table_id,
-        "--record-id",
-        record_id,
-        "--field-id",
-        field_name,
-        "--as",
-        "user",
-        "--format",
-        "json",
-        "--yes",
-    ]
-    for token in tokens:
-        cmd.extend(["--file-token", token])
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        detail = (proc.stdout or proc.stderr or "").strip()
-        raise RuntimeError(f"clear attachments failed for {field_name}: {detail}")
-    return {"removed": len(tokens), "field": field_name, "file_tokens": tokens}
+    update_url = (
+        f"https://open.feishu.cn/open-apis/bitable/v1/apps/{ref.app_token}"
+        f"/tables/{ref.table_id}/records/batch_update"
+    )
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=utf-8"}
+    resp = requests.post(
+        update_url,
+        headers=headers,
+        json={"records": [{"record_id": record_id, "fields": {field_name: [{"file_token": token} for token in uploaded_tokens]}}]},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"update attachments failed for {field_name}: {data}")
+    return {"uploaded": len(paths), "field": field_name, "files": paths, "file_tokens": uploaded_tokens}
 
 
 def update_template_recognition_result(
@@ -608,23 +596,13 @@ def update_template_recognition_result(
     )
     screenshots = [str(path) for path in recognition.get("reference_screenshots") or []]
     video_segments = [str(path) for path in recognition.get("reference_video_segments") or []]
-    screenshot_clear = _clear_attachments_with_lark_cli(
-        bitable_url=bitable_url,
-        record_id=record_id,
-        field_name=RECOGNITION_SCREENSHOT_FIELD,
-    )
-    video_clear = _clear_attachments_with_lark_cli(
-        bitable_url=bitable_url,
-        record_id=record_id,
-        field_name=RECOGNITION_VIDEO_SEGMENT_FIELD,
-    )
-    screenshot_upload = _upload_attachments_with_lark_cli(
+    screenshot_upload = _upload_attachments_to_bitable(
         bitable_url=bitable_url,
         record_id=record_id,
         field_name=RECOGNITION_SCREENSHOT_FIELD,
         files=screenshots,
     )
-    video_upload = _upload_attachments_with_lark_cli(
+    video_upload = _upload_attachments_to_bitable(
         bitable_url=bitable_url,
         record_id=record_id,
         field_name=RECOGNITION_VIDEO_SEGMENT_FIELD,
@@ -635,9 +613,7 @@ def update_template_recognition_result(
         "record_id": record_id,
         "fields": field_update["fields"],
         "attachments": {
-            "screenshots_removed": screenshot_clear.get("removed", 0),
             "screenshots": screenshot_upload.get("uploaded", 0),
-            "video_segments_removed": video_clear.get("removed", 0),
             "video_segments": video_upload.get("uploaded", 0),
         },
     }
