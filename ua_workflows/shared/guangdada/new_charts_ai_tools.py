@@ -22,7 +22,10 @@ from ua_workflows.shared.guangdada.search import (
     _guangdada_human_check_restart_limit,
     _login_or_handle_human_check,
 )
-from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
+from ua_workflows.shared.media.resolve import (
+    normalize_image_url_for_consumption,
+    normalize_video_url_for_consumption,
+)
 
 NEW_CHARTS_URL = "https://www.guangdada.net/modules/creative/charts/new-charts"
 VE_RAW_CATEGORY = "ai_tools_new_charts"
@@ -249,11 +252,11 @@ def pick_preview_img_url(creative: dict[str, Any]) -> str:
         ),
     )
     if direct:
-        return direct
+        return normalize_image_url_for_consumption(direct)
     for resource in _iter_resource_dicts(creative):
         url = _first_string(resource, ("image_url", "imageUrl", "cover_url", "coverUrl", "url"))
         if url and not (".mp4" in url or ".mov" in url):
-            return url
+            return normalize_image_url_for_consumption(url)
     return ""
 
 

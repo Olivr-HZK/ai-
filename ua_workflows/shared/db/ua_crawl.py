@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ua_workflows.shared.config import DATA_DIR
+from ua_workflows.shared.media.resolve import (
+    normalize_image_url_for_consumption,
+    normalize_video_url_for_consumption,
+)
 
 DB_PATH = DATA_DIR / "ai_products_ua.db"
 
@@ -270,9 +274,9 @@ def insert_competitor_creatives(
             video_url = None
             for r in creative.get("resource_urls") or []:
                 if r.get("video_url"):
-                    video_url = r["video_url"]
+                    video_url = normalize_video_url_for_consumption(str(r["video_url"]))
                     break
-            preview_img_url = creative.get("preview_img_url") or ""
+            preview_img_url = normalize_image_url_for_consumption(str(creative.get("preview_img_url") or ""))
             heat = creative.get("heat") if creative.get("heat") is not None else 0
             all_exp = creative.get("all_exposure_value") if creative.get("all_exposure_value") is not None else 0
             days = creative.get("days_count") if creative.get("days_count") is not None else 0
@@ -382,7 +386,7 @@ def upsert_creative(
     video_url = None
     for r in (selected.get("resource_urls") or []):
         if r.get("video_url"):
-            video_url = r["video_url"]
+            video_url = normalize_video_url_for_consumption(str(r["video_url"]))
             break
     conn = get_conn()
     try:
@@ -422,7 +426,7 @@ def upsert_creative(
                 selected.get("platform") or "",
                 video_url,
                 selected.get("video_duration") or 0,
-                selected.get("preview_img_url") or "",
+                normalize_image_url_for_consumption(str(selected.get("preview_img_url") or "")),
                 json.dumps(selected, ensure_ascii=False),
                 llm_analysis,
             ),

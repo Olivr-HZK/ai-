@@ -194,6 +194,32 @@ class VeTemplateNormalizationTest(unittest.TestCase):
         self.assertEqual(pick_video_url_direct(creative), "https://cdn.example.com/material.mp4")
         self.assertEqual(pick_video_url(creative), "https://cdn.example.com/material.mp4")
 
+    def test_image_suffix_urls_are_normalized_to_png_for_consumers(self) -> None:
+        from ua_workflows.shared.db.video_enhancer import _pick_image_url_from_raw
+        from ua_workflows.shared.media.resolve import (
+            normalize_image_url_for_consumption,
+            pick_image_url_direct,
+        )
+        from ua_workflows.video_enhancer.analyze import _pick_image_url
+        from ua_workflows.video_enhancer.cover_dedupe import pick_cover_url
+        from ua_workflows.video_enhancer.review_dashboard import _image_url
+        from ua_workflows.video_enhancer.sync import normalize_cover_image_url_for_bitable
+
+        raw = "https://sp2cdn-idea-global.zingfront.com/sp_opera/cover.image?token=1#frag"
+        expected = "https://sp2cdn-idea-global.zingfront.com/sp_opera/cover.png?token=1#frag"
+        creative = {
+            "preview_img_url": raw,
+            "resource_urls": [{"image_url": raw}],
+        }
+
+        self.assertEqual(normalize_image_url_for_consumption(raw), expected)
+        self.assertEqual(normalize_cover_image_url_for_bitable(raw), expected)
+        self.assertEqual(pick_image_url_direct(creative), expected)
+        self.assertEqual(_pick_image_url(creative), expected)
+        self.assertEqual(_pick_image_url_from_raw(creative), expected)
+        self.assertEqual(pick_cover_url(creative), expected)
+        self.assertEqual(_image_url({"preview_img_url": raw}), expected)
+
     def test_cover_history_lookback_defaults_to_sixty_days(self) -> None:
         from ua_workflows.video_enhancer.cover_dedupe import _cover_history_lookback_days
 

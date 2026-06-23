@@ -33,7 +33,7 @@ from difflib import SequenceMatcher
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List
-from urllib.parse import parse_qs, urlparse, urlunparse
+from urllib.parse import parse_qs, urlparse
 
 import lark_oapi as lark
 import requests
@@ -54,7 +54,10 @@ from ua_workflows.shared.db.video_enhancer import (
     normalize_effect_one_liner,
     update_push_status,
 )
-from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
+from ua_workflows.shared.media.resolve import (
+    normalize_image_url_for_consumption,
+    normalize_video_url_for_consumption,
+)
 from ua_workflows.shared.llm.client import bytes_to_embedding, cosine_similarity
 from ua_workflows.video_enhancer.content_filters import (
     apply_adult_content_filter,
@@ -78,18 +81,7 @@ def normalize_cover_image_url_for_bitable(url: str) -> str:
     广大大等来源的封面 URL 路径若以 .image 结尾，飞书多维表「链接」字段常无法预览；
     将路径后缀改为 .png（多数 CDN 同资源可访问）。
     """
-    u = (url or "").strip()
-    if not u:
-        return u
-    try:
-        p = urlparse(u)
-        path = p.path
-        if not re.search(r"\.image$", path, re.IGNORECASE):
-            return u
-        new_path = re.sub(r"\.image$", ".png", path, flags=re.IGNORECASE)
-        return urlunparse((p.scheme, p.netloc, new_path, p.params, p.query, p.fragment))
-    except Exception:
-        return u
+    return normalize_image_url_for_consumption(url)
 
 
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
@@ -316,6 +308,7 @@ def _upload_all_media_safely(
 
 
 def upload_image_as_attachment(image_url: str, app_token: str) -> str | None:
+    image_url = normalize_image_url_for_consumption(image_url)
     if not image_url:
         return None
     if image_url in _IMAGE_CACHE:

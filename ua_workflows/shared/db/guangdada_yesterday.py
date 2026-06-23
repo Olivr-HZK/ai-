@@ -10,7 +10,10 @@ import sqlite3
 from typing import Any
 
 from ua_workflows.shared.config import DATA_DIR
-from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
+from ua_workflows.shared.media.resolve import (
+    normalize_image_url_for_consumption,
+    normalize_video_url_for_consumption,
+)
 
 DB_PATH = DATA_DIR / "guangdada_yesterday_creatives.db"
 
@@ -169,7 +172,7 @@ def upsert_many(
             days_count = creative.get("days_count") if creative.get("days_count") is not None else 0
             heat = creative.get("heat") if creative.get("heat") is not None else 0
             all_exp = creative.get("all_exposure_value") if creative.get("all_exposure_value") is not None else 0
-            preview_img_url = creative.get("preview_img_url") or ""
+            preview_img_url = normalize_image_url_for_consumption(str(creative.get("preview_img_url") or ""))
             video_url = _video_url(creative)
             raw_json = json.dumps(creative, ensure_ascii=False)
 
@@ -260,7 +263,7 @@ def upsert_many_7d_all(
             days_count = creative.get("days_count") if creative.get("days_count") is not None else 0
             heat = creative.get("heat") if creative.get("heat") is not None else 0
             all_exp = creative.get("all_exposure_value") if creative.get("all_exposure_value") is not None else 0
-            preview_img_url = creative.get("preview_img_url") or ""
+            preview_img_url = normalize_image_url_for_consumption(str(creative.get("preview_img_url") or ""))
             video_url = _video_url(creative)
             raw_json = json.dumps(creative, ensure_ascii=False)
 

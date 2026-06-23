@@ -120,6 +120,26 @@ def normalize_video_url_for_consumption(url: str) -> str:
         return u
 
 
+def normalize_image_url_for_consumption(url: str) -> str:
+    """
+    Normalize Guangdada image CDN URLs for downstream consumers.
+
+    Some image rows use a `.image` path; the CDN exposes the same object as
+    `.png`, which Feishu previews and image-aware consumers handle reliably.
+    """
+    u = (url or "").strip()
+    if not u:
+        return u
+    try:
+        parsed = urlparse(u)
+        if not re.search(r"\.image$", parsed.path, re.IGNORECASE):
+            return u
+        path = re.sub(r"\.image$", ".png", parsed.path, flags=re.IGNORECASE)
+        return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, parsed.query, parsed.fragment))
+    except Exception:
+        return u
+
+
 def is_direct_video_file_url(url: str) -> bool:
     """
     可直喂多模态的「文件型」视频 URL（非 TikTok / YouTube 网页落地页）。
@@ -158,9 +178,9 @@ def pick_image_url_direct(creative: Dict[str, Any]) -> str:
         return ""
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("image_url") and not r.get("video_url"):
-            return str(r["image_url"]).strip()
+            return normalize_image_url_for_consumption(str(r["image_url"]).strip())
     if creative.get("preview_img_url"):
-        return str(creative["preview_img_url"]).strip()
+        return normalize_image_url_for_consumption(str(creative["preview_img_url"]).strip())
     return ""
 
 

@@ -17,6 +17,7 @@ from typing import Any, Callable
 from ua_workflows.shared.config import DATA_DIR, REPORTS_DIR, load_project_env
 from ua_workflows.shared.db import video_enhancer as ve_db
 from ua_workflows.shared.llm.client import call_embedding, call_vision, cosine_similarity
+from ua_workflows.shared.media.resolve import normalize_image_url_for_consumption
 
 
 DEFAULT_KEYS_JSON = DATA_DIR / "ve_bitable_ai_video_synced_keys_2026-06-08_2026-06-10.json"
@@ -152,7 +153,7 @@ def _image_url_from_creative(creative: dict[str, Any]) -> str:
     try:
         return ve_db._pick_image_url_from_raw(creative)  # noqa: SLF001 - reuse local parser
     except Exception:
-        return str(creative.get("preview_img_url") or "").strip()
+        return normalize_image_url_for_consumption(str(creative.get("preview_img_url") or "").strip())
 
 
 def _record_from_item(target_date: str, ad_key: str, item: dict[str, Any] | None) -> dict[str, Any]:
@@ -171,7 +172,9 @@ def _record_from_item(target_date: str, ad_key: str, item: dict[str, Any] | None
     video_content, content_source = material_video_content_from_creative(creative)
     video_url = _video_url_from_creative(creative)
     image_url = _image_url_from_creative(creative)
-    preview_img_url = str(creative.get("preview_img_url") or image_url or "").strip()
+    preview_img_url = normalize_image_url_for_consumption(
+        str(creative.get("preview_img_url") or image_url or "").strip()
+    )
     return {
         "target_date": target_date,
         "ad_key": ad_key,

@@ -30,6 +30,7 @@ from ua_workflows.shared.config import load_project_env
 load_project_env()
 
 from ua_workflows.video_enhancer.analyze import _pick_image_url  # noqa: E402
+from ua_workflows.shared.media.resolve import normalize_image_url_for_consumption  # noqa: E402
 from ua_workflows.shared.media.cover_embedding import compute_cover_embedding_vector_from_url  # noqa: E402
 from ua_workflows.shared.llm.client import bytes_to_embedding, cosine_similarity, embedding_to_bytes  # noqa: E402
 from ua_workflows.shared.db.video_enhancer import (  # noqa: E402
@@ -71,10 +72,10 @@ def _clip_style_json(threshold: float) -> Dict[str, Any]:
 
 
 def pick_cover_url(creative: Dict[str, Any]) -> str:
-    pu = str(creative.get("preview_img_url") or "").strip()
+    pu = normalize_image_url_for_consumption(str(creative.get("preview_img_url") or "").strip())
     if pu:
         return pu
-    return str(_pick_image_url(creative) or "").strip()
+    return normalize_image_url_for_consumption(str(_pick_image_url(creative) or "").strip())
 
 
 def _exposure_value(creative: Dict[str, Any]) -> int:

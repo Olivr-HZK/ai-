@@ -57,6 +57,7 @@ from ua_workflows.shared.media.resolve import (
     display_video_link_for_prompt,
     is_creative_analyzable_with_resolve,
     is_playable_ads_creative,
+    normalize_image_url_for_consumption,
     normalize_video_url_for_consumption,
     pick_playable_html_url,
     preprocess_video_for_vision,
@@ -781,9 +782,9 @@ def _pick_image_url(creative: Dict[str, Any]) -> str:
     """提取图片 URL：优先 resource_urls 中的 image_url，其次 preview_img_url。"""
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("image_url") and not r.get("video_url"):
-            return str(r["image_url"])
+            return normalize_image_url_for_consumption(str(r["image_url"]))
     if creative.get("preview_img_url"):
-        return str(creative["preview_img_url"])
+        return normalize_image_url_for_consumption(str(creative["preview_img_url"]))
     return ""
 
 
