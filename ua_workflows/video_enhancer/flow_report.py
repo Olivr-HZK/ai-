@@ -26,6 +26,14 @@ import requests
 from dotenv import load_dotenv
 
 from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT, REPORTS_DIR
+from ua_workflows.video_enhancer.daily_nodes import (
+    build_core_stage_advertiser_report,
+    build_daily_node_report,
+    compact_node_summary,
+    failed_node_lines,
+    render_core_stage_markdown,
+    render_node_markdown,
+)
 
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
@@ -595,15 +603,21 @@ def build_flow_report(target_date: str, *, partial: bool = False) -> Dict[str, A
         min_history_days=_env_int("VE_FLOW_REPORT_MIN_HISTORY_DAYS", "2"),
         target_date=target_date,
     )
+    workflow_nodes = build_daily_node_report(target_date, partial=partial)
+    core_stage_report = build_core_stage_advertiser_report(target_date)
+    node_failed = int((workflow_nodes.get("summary") or {}).get("failed") or 0) > 0
+    core_stage_alerts = len(core_stage_report.get("alerts") or []) > 0
 
     return {
         "target_date": target_date,
         "partial": bool(partial),
         "lookback_days": lookback_days,
-        "status": "alert" if alerts else ("partial" if partial else "ok"),
+        "status": "alert" if alerts or node_failed or core_stage_alerts else ("partial" if partial else "ok"),
         "alerts": alerts,
         "totals": totals,
         "per_product": per_product,
+        "core_stage_advertiser_report": core_stage_report,
+        "workflow_nodes": workflow_nodes,
         "source_files": {
             "raw": str(DATA_DIR / f"{pre}_raw.json"),
             "crawl_product_retention": str(DATA_DIR / f"{pre}_crawl_product_retention.json"),
@@ -625,8 +639,13 @@ def render_markdown(report: Dict[str, Any]) -> str:
     alerts = report.get("alerts") or []
     lines: List[str] = []
     lines.append(f"# VE 全流程报告（{target_date}）\n")
+    core_stage_alert_count = len(((report.get("core_stage_advertiser_report") or {}).get("alerts") or []))
     if alerts:
         lines.append(f"**告警：{len(alerts)} 个产品/指标显著低于近 {report.get('lookback_days')} 天。**\n\n")
+    elif core_stage_alert_count:
+        lines.append(f"**告警：三阶段广告主留存出现 {core_stage_alert_count} 条历史均值偏离。**\n\n")
+    elif int(((report.get("workflow_nodes") or {}).get("summary") or {}).get("failed") or 0) > 0:
+        lines.append("**告警：存在失败流程节点，请先处理失败节点再采信当日报告。**\n\n")
     elif report.get("partial"):
         lines.append("**流程提前结束：本报告按已产生的节点产物汇总。**\n\n")
     else:
@@ -637,7 +656,17 @@ def render_markdown(report: Dict[str, Any]) -> str:
     for key in REPORT_COLUMNS:
         lines.append(f"| {COLUMN_LABELS.get(key, key)} | {_safe_int(totals.get(key))} |\n")
     lines.append(f"| 累计筛掉/跳过原因计数 | {_safe_int(totals.get('removed_total'))} |\n")
+    lines.append(f"| 三阶段广告主留存告警 | {core_stage_alert_count} |\n")
+    lines.append(f"| 流程节点状态 | {compact_node_summary(report.get('workflow_nodes'))} |\n")
     lines.append("\n")
+
+    core_stage_md = render_core_stage_markdown(report.get("core_stage_advertiser_report"))
+    if core_stage_md:
+        lines.append(core_stage_md)
+
+    node_md = render_node_markdown(report.get("workflow_nodes"))
+    if node_md:
+        lines.append(node_md)
 
     if alerts:
         lines.append("## 异常警报与重试建议\n\n")
@@ -714,11 +743,13 @@ def _build_feishu_card(report: Dict[str, Any]) -> Dict[str, Any]:
     status = str(report.get("status") or "ok")
     totals = report.get("totals") or {}
     alerts = report.get("alerts") or []
+    core_stage_report = report.get("core_stage_advertiser_report") or {}
+    core_stage_alerts = [row for row in (core_stage_report.get("alerts") or []) if isinstance(row, dict)]
     per_product = [row for row in (report.get("per_product") or []) if isinstance(row, dict)]
 
     template = "red" if status == "alert" else ("orange" if status == "partial" else "blue")
     status_text = "有告警" if status == "alert" else ("提前结束" if status == "partial" else "正常")
-    title = f"VE 全流程报告｜{target_date}｜{status_text}"
+    title = f"VE 每日验收｜{target_date}｜{status_text}"
 
     elements: List[Dict[str, Any]] = []
     summary_lines = [
@@ -739,8 +770,56 @@ def _build_feishu_card(report: Dict[str, Any]) -> Dict[str, Any]:
             f"已入多维表 **{_safe_int(totals.get('synced_records'))}**"
         ),
         f"筛掉/跳过原因记录 **{_safe_int(totals.get('removed_total'))}** 条；告警 **{len(alerts)}** 个",
+        f"三阶段广告主留存告警 **{len(core_stage_alerts)}** 个",
+        f"流程节点：{compact_node_summary(report.get('workflow_nodes'))}",
     ]
     elements.append(_card_section("今日概览", "\n".join(summary_lines)))
+
+    stage_lines: List[str] = []
+    for stage in core_stage_report.get("stages") or []:
+        if not isinstance(stage, dict):
+            continue
+        stage_lines.append(
+            f"**{stage.get('name')}**：今日 **{_safe_int(stage.get('total_today'))}**，"
+            f"近 {core_stage_report.get('history_days', 7)} 天广告主均值合计 **{stage.get('total_history_avg', 0)}**，"
+            f"告警 **{len(stage.get('alerts') or [])}**"
+        )
+        rows = [row for row in (stage.get("advertisers") or []) if isinstance(row, dict)]
+        rows.sort(key=lambda row: (0 if row.get("status") in {"偏低", "偏高"} else 1, -_safe_int(row.get("today")), str(row.get("advertiser") or "")))
+        for row in rows[:4]:
+            ratio = row.get("ratio")
+            ratio_text = "-" if ratio is None else str(ratio)
+            stage_lines.append(
+                f"- {row.get('advertiser')}：今日 **{_safe_int(row.get('today'))}** / "
+                f"历史均值 **{row.get('history_avg', 0)}** / 比例 **{ratio_text}** / {row.get('status')}"
+            )
+    if stage_lines:
+        elements.append(
+            _card_section(
+                f"三阶段广告主留存｜近{core_stage_report.get('history_days', 7)}天对比",
+                "\n".join(stage_lines[:18]),
+            )
+        )
+
+    if core_stage_alerts:
+        alert_lines: List[str] = []
+        for alert in core_stage_alerts[:8]:
+            dashboard = str(alert.get("dashboard") or "").strip()
+            alert_lines.append(
+                f"- **{alert.get('stage_name')}**｜{alert.get('advertiser')}："
+                f"今日 **{alert.get('today')}**，历史均值 **{alert.get('history_avg')}**，"
+                f"比例 **{alert.get('ratio')}**，{alert.get('status')}"
+            )
+            if dashboard:
+                alert_lines.append(f"  看板/证据：`{dashboard}`")
+        if len(core_stage_alerts) > 8:
+            alert_lines.append(f"- 还有 {len(core_stage_alerts) - 8} 条三阶段告警，见本地完整报告。")
+        elements.append(_card_section("三阶段告警｜附看板", "\n".join(alert_lines)))
+
+    failed_lines = failed_node_lines(report.get("workflow_nodes"), limit=4)
+    if failed_lines:
+        elements.append(_card_section("失败节点｜需要处理", "\n".join(failed_lines)))
+
     elements.append(
         _card_section(
             "怎么看这张卡",
