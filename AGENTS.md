@@ -1252,3 +1252,49 @@ daily_ua_job.sh（可选）
 - `ad_one_liner`: 一句话说明（已从 VE 输出移除，Arrow2 路径保留）
 
 主流程合并后的 `analysis` JSON 还可能含：`pipeline_items`、`exclude_from_cluster`（2.8）、`launched_effect_match`（2.9）、`semantic_dedup`_* 等，以当日产物为准。
+
+## 2026-10-15
+
+### [广大大] 浏览器逐卡采集 skill 与证据状态机
+
+- 新增 `skills/guangdada-browser-crawl/`，仅通过环境浏览器工具进行全名广告主选择、分平台筛选、逐卡翻页和可见详情采集，不调用原爬虫 CLI/私有接口；包含完整性、假空结果、验证码人工处理、条件指纹与断点恢复约定。
+- `scripts/state.py` 是纯 Python 标准库本地证据校验器，提供 init/check/hold/resume；核对分页覆盖、末页、广告主/平台、筛选内容、下载文件哈希和交付文件，不代替 UI/视觉判断；状态有 COMPLETED_WITH_REVIEW，不能把待复核混进保留项。
+- 已安装到 `~/.codex/skills/guangdada-browser-crawl/`，分享包 `data/skill_exports/guangdada-browser-crawl.zip` 不含登录态或项目数据。
+- `tests/test_guangdada_browser_skill_state.py` 17项离线测试、skill quick_validate 与分享包解压独立 init/check 冒烟通过；本次未执行新的真实广大大采集。
+
+### [广大大浏览器 skill] 扩展筛选边界与强制脚本证据
+
+- 支持展示广告 游戏/工具、渠道、国家、广告/素材，日期 7天/30天/90天/1年 及自定义范围；scope 改为 date 对象，card_count/count_basis 按当前模式核对。
+- 新增 `scripts/browser_check.js`：在获准浏览器工具 REPL 执行真实点击，读回当前状态，保存点击前后 PNG/哈希及日志；App、每项筛选、逐卡与翻页均要求对应检查。恢复时拒绝复用暂停前日志。
+- 新增 `scripts/frames.py`：使用本地 FFmpeg/ffprobe 真实抽取六处视频帧，生成源视频/截图哈希清单；新增 FRAMES_PENDING/FRAMES_VERIFIED，筛选必须实际查看并引用对应六帧，交付视频与抽帧源哈希一致。
+- 28项 Python 测试（含真实 FFmpeg 抽帧）和4项 JS 点击助手模拟测试、skill quick_validate、分享包解压独立运行均通过；未执行新版完整真实站点验收。已同步本机安装副本及分享 ZIP。
+
+### [广大大浏览器 skill] 固定逐 App 顺序和完成清单
+
+- 将设置拆为 CATEGORY_VERIFIED -> BASE_FILTERS_VERIFIED -> APP_VERIFIED -> SORT_VERIFIED：先登录、游戏/工具、除排序外筛选，再选 App，之后才点击展示估值/热度；按点击时间检查顺序。
+- 新增 `seal` 命令、`collection_complete.json`、总清单 `app_checklist.json` 和 next_collection_task；前一 App 未采集登记完成时，后续任务停在 PREVIOUS_APP_PENDING。采集完成与后续抽帧/审核/交付完成分开报告。
+- 34项 Python 测试、4项点击助手模拟测试及分享包解压串行流程检查通过，已更新本机安装与 ZIP；未做新版完整真实站点验收。
+
+### [广大大浏览器 skill] 2026-10-15 真实 UI 筛选验收
+
+- 登录态被其他设备挤出后，使用现有配置重新登录；通过获准浏览器工具完成真实点击，不使用站点私有接口或独立爬虫。
+- 已验证 游戏/工具、Facebook系/TikTok/AppLovin 单/多选及不限、日韩单/多选及清空、广告/素材、7/30/90天/1年与自定义日期、AppStore/GooglePlay、视频/9:16、双端 Tipsy 全名/真实商店ID、展示估值/热度及翻页。列表 iOS105 / Android200，第2页45张且下一页禁用；只做单卡和分页验收，未全量采集。
+- 验收目录 `data/gdd_browser_ui_acceptance_20261015/1792052920763/`，report.html/summary.json 保留53次点击记录（39成功、14失败/不匹配），106张前后截图经哈希和实际格式/尺寸检查；另对真实 Android 单卡生成并查看六帧。
+- 修复多选顺序等价比较、原生JPEG截图格式识别；明确 placeholder 消失、radio内层不可点击、国家“全部”非清空、App输入值脱敏、旧App关闭与加载暂态的实际处理。原失败证据不改写。
+- 回归：36项Python测试、6项JS助手测试、skill校验及分享包独立初始化通过。更新安装副本和分享ZIP。
+
+
+### [广大大浏览器 Skill] SeaHaze / Sea Soul 实际采集与渠道别名修正（2026-10-15）
+
+- 使用完整 Android App 名、日韩、近30天、视频9:16、Facebook系/TikTok/AppLovin、文案语言不限，实际浏览器逐卡复点并保存前后截图；SeaHaze `ai.seaart.app.hot` 共100条2页，Sea Soul `ai.seaart.seasoul` 共36条1页，两项均由 state.py seal 完成原始采集登记。iOS 名称未确认，本轮未采集，不记零结果。
+- 136条视频全部落盘，按 skill 抽取并查看每条六帧；SeaHaze 保留79/待复核17/排除4，Sea Soul 保留14/待复核9/排除13。属于画面初筛，未完整观看或审听；原始证据和可恢复状态在 `data/seahaze_seasoul_browser_20261015/run/`，交付预览在同级 `delivery/index.html`，保留与待复核分目录。
+- `skills/guangdada-browser-crawl/scripts/state.py` 与已安装副本：真实 UI 的 `Facebook系` 现在与旧 `Facebook` 一样映射到精确 `FB News Feed`，仍拒绝 Instagram 等附带渠道；新增回归测试，37项通过，并更新分享ZIP。
+
+
+## 2026-10-16
+
+### [广大大浏览器 skill] v1.0.0 上线提交
+
+- `skills/guangdada-browser-crawl/SKILL.md` 标记 `metadata.version=1.0.0`，发布范围为浏览器展示广告采集、逐项点击读回和截图证据、逐 App 完成清单、断点恢复及六帧视频初筛。
+- 本版验证：37项 Python 状态机/真实 FFmpeg 抽帧测试、6项 JS 点击助手测试及 skill quick_validate；真实页面覆盖代表筛选值与双端 Tipsy 单卡/分页，Android SeaHaze100条和Sea Soul36条全量采集已验收。未穷举所有筛选组合、未完成新版 iOS 全量验收，内容仍为未完整审听的抽帧初筛。
+- 本次提交仅包含该浏览器 skill、对应测试和相关日志；采集视频、登录态、运行证据和分享 ZIP 留在本地。

@@ -1,0 +1,4 @@
+interface:
+  display_name: "广大大浏览器采集"
+  short_description: "通过浏览器逐卡翻页采集广告素材，以证据驱动状态机核对完整性并恢复断点"
+  default_prompt: "使用 $guangdada-browser-crawl 按完整 App 名称和平台采集广大大素材，逐卡翻页并按状态机验证每一步。"

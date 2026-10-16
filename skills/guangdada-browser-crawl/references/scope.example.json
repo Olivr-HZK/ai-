@@ -1,0 +1,47 @@
+{
+  "filters": {
+    "category": "工具",
+    "dedupe": "素材",
+    "sort": "展示估值",
+    "media_type": "视频",
+    "channels": [
+      "Facebook",
+      "TikTok",
+      "AppLovin"
+    ],
+    "regions": [
+      "日本",
+      "韩国"
+    ],
+    "languages": [],
+    "aspect_ratio": "9:16",
+    "date": {
+      "mode": "preset",
+      "preset": "30天"
+    }
+  },
+  "content_checks": {
+    "male_character": true,
+    "female_audience_relevant": true,
+    "real_person_talking_head": false
+  },
+  "tasks": [
+    {
+      "id": "tipsy-ios",
+      "app_name": "Tipsy Chat: Live Your Story",
+      "platform": "iOS",
+      "app_id": "6572296119"
+    },
+    {
+      "id": "tipsy-android",
+      "app_name": "Tipsy Chat: Live Your Story",
+      "platform": "Android",
+      "app_id": "com.tipsyturbo.app"
+    }
+  ],
+  "date_anchor": {
+    "as_of_date": "2026-10-15",
+    "timezone": "Asia/Shanghai"
+  },
+  "date_semantics": "active_in_window"
+}
