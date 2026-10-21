@@ -33,7 +33,10 @@ import requests
 
 from ua_workflows.shared.config import DATA_DIR, REPORTS_DIR, load_project_env
 from ua_workflows.shared.db.video_enhancer import _coarse_play_cluster_key
-from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
+from ua_workflows.shared.media.resolve import (
+    normalize_image_url_for_consumption,
+    normalize_video_url_for_consumption,
+)
 from ua_workflows.shared.llm.client import bytes_to_embedding
 from ua_workflows.video_enhancer.cover_dedupe import (
     _cluster_clip_dedupe,
@@ -144,11 +147,16 @@ def _row_value(row: dict[str, Any], key: str) -> Any:
 
 def _media_url(row: dict[str, Any]) -> str:
     video_url = normalize_video_url_for_consumption(str(row.get("video_url") or "").strip())
-    return str(video_url or row.get("preview_img_url") or row.get("image_url") or "").strip()
+    image_url = normalize_image_url_for_consumption(
+        str(row.get("preview_img_url") or row.get("image_url") or "").strip()
+    )
+    return str(video_url or image_url).strip()
 
 
 def _image_url(row: dict[str, Any]) -> str:
-    return str(row.get("preview_img_url") or row.get("image_url") or row.get("cover_url") or "").strip()
+    return normalize_image_url_for_consumption(
+        str(row.get("preview_img_url") or row.get("image_url") or row.get("cover_url") or "").strip()
+    )
 
 
 def _ext_from_bytes(data: bytes) -> str:

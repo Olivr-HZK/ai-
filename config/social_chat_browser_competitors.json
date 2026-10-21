@@ -1,0 +1,38 @@
+{
+  "source": "user_provided",
+  "recorded_on": "2026-10-16",
+  "purpose": "浏览器采集竞品总名单，搜索使用完整App名，平台分任务。",
+  "rules": [
+    "按本名单保留完整App名和标点，不用产品简称替代搜索名称。",
+    "iOS和Android独立选择广告主、检查App身份并分别采集。",
+    "未列出的产品平台对应关系尚未由用户提供，不推断为不存在或零素材。",
+    "具体采集产品、日期、渠道、地区和内容条件由每次任务另行指定；本名单不触发自动采集。"
+  ],
+  "apps": {
+    "iOS": [
+      "dotdotdot Fantasy AI Boyfriend",
+      "Whispy AI: Cozy Chat",
+      "Heyyyy: Stories that text back",
+      "TizzChat: Craft Your World",
+      "zeta: AI Chat, Story, Play",
+      "LoveyDovey - Dream AI Chats",
+      "PolyBuzz: Chat with Characters",
+      "EMOCHI World: AI Story Chat",
+      "Talkie Lab - AI Playground",
+      "Tipsy Chat: Live Your Story"
+    ],
+    "Android": [
+      "dotdotdot: AI Romance, Stories",
+      "Whispy AI: Cozy Chat",
+      "TizzChat: Craft Your World",
+      "zeta: AI Chat, Story, Play",
+      "LoveyDovey - Dream Chats",
+      "PolyBuzz: Chat with AI Friends",
+      "Emochi: Chat With Character",
+      "SeaHaze - AI Chat & Friends",
+      "Tipsy Chat: Live Your Story",
+      "Talkie: Creative AI Community",
+      "Sea Soul: AI Chat"
+    ]
+  }
+}

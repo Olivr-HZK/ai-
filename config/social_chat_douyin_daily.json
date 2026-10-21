@@ -1,0 +1,61 @@
+{
+  "platform": "抖音",
+  "source": "抖音",
+  "discovery_mode": "keyword_search",
+  "status": "daily_pipeline_configured",
+  "enabled": true,
+  "timezone": "Asia/Shanghai",
+  "keywords": [
+    "乙女向",
+    "女性向",
+    "虚拟男友",
+    "猫箱",
+    "星野",
+    "破次元恋人",
+    "梦女向"
+  ],
+  "media_types": [
+    "视频",
+    "图片"
+  ],
+  "api": {
+    "provider": "EveryInfra",
+    "documentation_url": "https://everyinfra.com/douyin-api/search",
+    "endpoint": "https://api.everyinfra.com/api/v1/social",
+    "credential_env": "EVERYINFRA_API_KEY",
+    "pagination": null,
+    "search_limit": 50
+  },
+  "date_semantics": "rolling_last_24_hours_at_request_time",
+  "ranking": {
+    "scope": "all_keywords_deduped_by_post_id",
+    "metric": "like_count",
+    "fraction": "0.10",
+    "rounding": "ceil",
+    "ties": "posted_at_desc_note_id_asc",
+    "missing_likes": "block",
+    "missing_media": "report_without_backfill",
+    "old_posts": "exclude_before_ranking"
+  },
+  "execution": "scheduled",
+  "schedule": {
+    "timezone": "Asia/Shanghai",
+    "time": "00:00",
+    "first_run": "2026-10-20T00:00:00+08:00",
+    "kind": "thread_heartbeat",
+    "automation_id": "24-2"
+  },
+  "feishu": {
+    "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
+    "table_id": "tblwhAqPfQoBXK3Q",
+    "base_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c",
+    "expected_app_id": "cli_a906892c9c8c1cb3"
+  },
+  "crawl_completion_report": {
+    "enabled": true,
+    "chat_name": "霍振堃",
+    "chat_id": "oc_fad698ee80dd1314b531f65cfa6599fc",
+    "mention_all": false,
+    "event": "after_verified_bitable_sync"
+  }
+}

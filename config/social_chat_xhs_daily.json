@@ -1,0 +1,97 @@
+{
+  "platform": "小红书",
+  "source": "小红书",
+  "discovery_mode": "keyword_search",
+  "status": "daily_pipeline_configured",
+  "enabled": true,
+  "timezone": "Asia/Shanghai",
+  "keywords": [
+    "乙女向",
+    "女性向",
+    "虚拟男友",
+    "猫箱",
+    "星野",
+    "破次元恋人",
+    "梦女向"
+  ],
+  "media_types": [
+    "视频",
+    "图片"
+  ],
+  "api": {
+    "provider": "EveryInfra",
+    "documentation_url": "https://everyinfra.com/xiaohongshu-api/search",
+    "endpoint": "https://api.everyinfra.com/api/v1/social",
+    "credential_env": "EVERYINFRA_API_KEY",
+    "pagination": {
+      "request_field": "params.page_token",
+      "response_field": "next_page_token",
+      "page_size": 20
+    }
+  },
+  "date_semantics": "rolling_last_24_hours_at_request_time",
+  "ranking": {
+    "scope": "all_keywords_deduped_after_person_and_male_subject_review",
+    "metric": "like_count",
+    "fraction": "0.10",
+    "rounding": "ceil",
+    "ties": "posted_at_desc_note_id_asc",
+    "missing_likes": "block",
+    "missing_media": "report_without_backfill"
+  },
+  "execution": "scheduled",
+  "schedule": {
+    "timezone": "Asia/Shanghai",
+    "time": "00:00",
+    "first_run": "2026-10-20T00:00:00+08:00",
+    "automation_id": "24",
+    "kind": "thread_heartbeat"
+  },
+  "feishu": {
+    "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
+    "table_id": "tblwhAqPfQoBXK3Q",
+    "base_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c",
+    "expected_app_id": "cli_a906892c9c8c1cb3"
+  },
+  "crawl_completion_report": {
+    "enabled": true,
+    "chat_name": "霍振堃",
+    "chat_id": "oc_fad698ee80dd1314b531f65cfa6599fc",
+    "mention_all": false,
+    "event": "after_verified_bitable_sync"
+  },
+  "image_content_filter": {
+    "enabled": true,
+    "rule": "person_or_digital_human_v1",
+    "stage": "before_global_top_decile",
+    "method": "actual_visual_review_per_image_hash_bound",
+    "keep": "substantive_real_anime_or_digital_human",
+    "exclude": [
+      "text_only",
+      "novel_pages",
+      "chat_screenshots",
+      "tiny_avatars_only",
+      "animals_only"
+    ],
+    "mixed_note": "upload_only_passed_images; exclude_note_if_none",
+    "missing_or_uncertain": "block_pending_review"
+  },
+  "audience_content_filter": {
+    "enabled": true,
+    "rule": "male_subject_v1",
+    "stage": "before_global_top_decile",
+    "applies_to": [
+      "图片",
+      "视频"
+    ],
+    "keep": "male_subject_real_anime_or_digital_human",
+    "exclude": [
+      "female_subject",
+      "mixed",
+      "no_person"
+    ],
+    "uncertain": "exclude_after_actual_visual_review; missing_review_blocks",
+    "mixed_note": "only_male_subject_images_uploaded; exclude_note_if_none",
+    "identity_scope": "visible_character_presentation_only_not_real_gender_identity"
+  }
+}

@@ -53,6 +53,8 @@ def record(root, name, fingerprint, evidence=True):
 
 
 def validate_scope(scope):
+    if 'collection_limit_per_app' in scope:
+        require(type(scope['collection_limit_per_app']) is int and scope['collection_limit_per_app'] > 0, '每 App 采集上限必须是正整数')
     require(isinstance(scope.get('filters'), dict) and scope['filters'], '缺少 filters')
     filters = scope['filters']
     require(filters.get('category') in ['游戏', '工具'], 'category 必须是 游戏 或 工具')
@@ -71,7 +73,7 @@ def validate_scope(scope):
         require(dates[0] <= dates[1], '自定义开始日期不能晚于结束日期')
     else:
         raise GateError('date.mode 必须为 preset 或 custom')
-    require(filters.get('sort') in ['展示估值', '热度'], 'sort 必须选择 展示估值 或 热度')
+    require(filters.get('sort') in ['最新创意', '展示估值', '热度'], 'sort 必须选择 最新创意、展示估值 或 热度')
     require('time_window' not in filters, '请迁移为 date 对象，避免快捷/自定义日期混用')
     require(all(type(v) is bool for v in scope.get('content_checks', {}).values()), 'content_checks 必须使用布尔判据')
     tasks = scope.get('tasks', [])
@@ -136,11 +138,21 @@ def ui_equal(left, right, set_like=False):
 
 def click_check(root, filename, fingerprint, task_id, key, expected):
     event = record(root, filename, fingerprint, evidence=False)
-    require(event.get('producer') == 'gdd-checked-click/v1' and event.get('kind') == 'click', '缺少浏览器脚本点击记录')
+    readonly = event.get('producer') == 'gdd-readonly-check/v1'
+    card_identity = event.get('producer') == 'gdd-checked-card/v1'
+    if readonly:
+        require(key.startswith('filter.') and key != 'filter.sort', '只读证据仅用于基础筛选；App和排序仍须真实点击')
+        require(event.get('kind') == 'read' and ui_equal(event.get('before'), expected, key in ['filter.channels', 'filter.regions', 'filter.languages']), '只读检查前值必须已符合要求；有残留或变化须真实修改')
+    elif card_identity:
+        require(key == 'card.open' and event.get('kind') == 'click', '身份式点击证据仅用于真实点卡')
+        require(isinstance(expected, dict) and re.fullmatch(r'[a-f0-9]{32}', expected.get('ad_id', '')), '点卡须读回真实32位广告 ID')
+    else:
+        require(event.get('producer') == 'gdd-checked-click/v1' and event.get('kind') == 'click', '缺少浏览器脚本点击记录')
     require(event.get('task_id') == task_id and event.get('key') == key, '点击记录任务或检查对象不匹配')
     require(event.get('status') == 'passed' and event.get('error') is None, '脚本点击未成功或读回状态不符')
     set_like = key in ['filter.channels', 'filter.regions', 'filter.languages']
-    require(ui_equal(event.get('expected'), expected, set_like) and ui_equal(event.get('after'), expected, set_like), '点击后实际读回值与要求不符')
+    expected_before_click = {k: expected[k] for k in ['app_id', 'platform']} if card_identity else expected
+    require(ui_equal(event.get('expected'), expected_before_click, set_like) and ui_equal(event.get('after'), expected, set_like), '点击后实际读回值与要求不符')
     require(event.get('event_id') and event.get('performed_at'), '点击记录缺少事件 ID 或执行时间')
     images = event.get('images', {})
     require(images.get('before') and images.get('after'), '点击必须保存前后截图')
@@ -190,7 +202,15 @@ def frame_check(root, ref, fingerprint, ad_id):
 
 
 def identity(value, task):
-    require(value.get('app_name') == task['app_name'], 'App 全名不匹配')
+    name_matches = value.get('app_name') == task['app_name']
+    # Preserve the site's observed full name for renamed/localized products.
+    # An alias only works for an explicitly scoped, exactly matching App ID;
+    # the App click check still compares the actual observed name verbatim.
+    verified_alias = (bool(task.get('app_id')) and
+                      value.get('app_id') == task['app_id'] and
+                      bool(str(value.get('app_name') or '').strip()) and
+                      value.get('canonical_app_name') == task['app_name'])
+    require(name_matches or verified_alias, 'App 全名不匹配')
     require(value.get('platform') == task['platform'], '平台不匹配')
     require(bool(value.get('app_id')), '缺少已选广告主 app_id')
     if task.get('app_id'):
@@ -236,32 +256,41 @@ def check_task(run, scope, task, fingerprint, not_before=None):
         browser = record(run, 'browser.json', fingerprint)
         require(browser.get('authenticated') is True and browser.get('browser_session'), '浏览器未登录或无会话标识')
         passed.append('BROWSER_READY')
-        state, action = 'CATEGORY_PENDING', '先选择游戏/工具并执行脚本截图检查'
+        state, action = 'CATEGORY_PENDING', '检查游戏/工具分类，已正确则只读验证，变化才点击修改'
         filters = record(root, 'filters.json', fingerprint)
         category_ref = filters.get('ui_checks', {}).get('category')
         category = click_check(root, category_ref, fingerprint, task['id'], 'filter.category', scope['filters']['category'])
         if not_before:
-            require(event_time(category) >= not_before, '必须在上一个 App 采集完成清单写入后，再开始本 App')
+            require(event_time(category) >= not_before, '本 App 分类检查必须晚于上一个 App 封账，不能复用旧检查证据')
         passed.append('CATEGORY_VERIFIED')
-        state, action = 'FILTERS_PENDING', '设置并检查除展示估值/热度排序以外的全部筛选'
+        state, action = 'FILTERS_PENDING', '设置并检查除排序栏以外的全部筛选'
         filter_checks(root, filters, scope, task['id'], fingerprint, include_sort=False)
         base_times = [event_time(record(root, ref, fingerprint, evidence=False)) for ref in filters['ui_checks'].values()]
-        require(all(t >= event_time(category) for t in base_times), '必须先选择游戏/工具，再设置其余筛选')
+        require(all(t >= event_time(category) for t in base_times), '必须先核对游戏/工具，再核对其余筛选（可只读，变化才修改）')
         passed.append('BASE_FILTERS_VERIFIED')
         state, action = 'APP_PENDING', '输入完整 App 名，选择正确平台候选，清除旧广告主和残留关键词'
         app = record(root, 'app.json', fingerprint)
         identity(app, task)
-        require(app.get('query_full_name') == task['app_name'], '未使用完整 App 名称查询')
+        if app.get('query_type', 'full_name') == 'app_id':
+            require(app.get('query_app_id') == app['app_id'], 'App ID 查询值与已选广告主不符')
+        else:
+            require(app.get('query_type', 'full_name') == 'full_name', '未知 App 查询方式')
+            require(app.get('query_full_name') == task['app_name'], '未使用完整 App 名称查询')
         require(app.get('selected_app_ids') == [app['app_id']], '存在旧广告主或未真正选中候选')
         require(app.get('residual_keywords') == [], '存在额外关键词，可能制造假空结果')
         app_click_check(root, app, fingerprint, task['id'])
         expected = app.get('card_count')
         require(type(expected) is int and expected >= 0, '必须记录当前广告/素材列表的 UI 卡片数 card_count')
         require(app.get('count_basis') == scope['filters']['dedupe'], 'UI 卡片数口径与广告/素材模式不一致')
+        site_expected = expected
+        limit = scope.get('collection_limit_per_app')
+        capped = limit is not None and site_expected > limit
+        if limit is not None:
+            expected = min(site_expected, limit)
         app_event = record(root, app['ui_check'], fingerprint, evidence=False)
         require(event_time(app_event) >= max(base_times), '必须先完成基础筛选，再输入并选中 App')
         passed.append('APP_VERIFIED')
-        state, action = 'SORT_PENDING', 'App 确认后，再点击展示估值/热度排序并检查'
+        state, action = 'SORT_PENDING', 'App 确认后，再点击本次指定排序并检查'
         sort = record(root, 'sort.json', fingerprint)
         require(sort.get('selected') == scope['filters']['sort'], '排序值不符')
         sort_event = click_check(root, sort.get('ui_check'), fingerprint, task['id'], 'filter.sort', scope['filters']['sort'])
@@ -296,10 +325,16 @@ def check_task(run, scope, task, fingerprint, not_before=None):
                 page_event = click_check(root, page.get('ui_check'), fingerprint, task['id'], 'page.open', {'page': page['page']})
                 require(event_time(page_event) >= event_time(sort_event), '翻页记录早于本 App 的排序确认')
             refs = page.get('cards', [])
-            require(type(page.get('visible_count')) is int and page['visible_count'] == len(refs), '当前页卡片未全部获取')
+            capped_last = capped and n == len(pages)-1
+            require(type(page.get('visible_count')) is int and (page['visible_count'] >= len(refs) if capped_last else page['visible_count'] == len(refs)), '当前页卡片未全部获取')
             require(page['visible_count'] > 0 or expected == 0, '非零结果不能用空白加载页结束')
-            require(page.get('has_next') is (n < len(pages)-1), '尚有下一页，或页面链不一致')
-            if n == len(pages)-1:
+            if capped_last:
+                require(type(page.get('has_next')) is bool, '达到上限时仍须记录实际下一页状态')
+                require(page.get('terminal_reason') == 'limit_reached' and page.get('collection_limit') == limit, '达到用户上限须单独封账，不冒充末页')
+                require(page['visible_count'] > len(refs) or page['has_next'], '达到上限的边界缺少未采卡片/下一页证据')
+            else:
+                require(page.get('has_next') is (n < len(pages)-1), '尚有下一页，或页面链不一致')
+            if n == len(pages)-1 and not capped_last:
                 require(page.get('terminal_reason') in ['next_disabled', 'explicit_no_results'], '末页缺少明确终止证据')
                 require((page['terminal_reason'] == 'explicit_no_results') == (expected == 0), '空结果终止条件与 UI 数量矛盾')
             for position, ref in enumerate(refs, 1):
@@ -322,6 +357,8 @@ def check_task(run, scope, task, fingerprint, not_before=None):
             require(probe['card_file'] in [ref for page in pages for ref in page['cards']], '测试卡未纳入完整盘点')
         passed.append('CRAWL_COMPLETE')
         collection = {'app_name': task['app_name'], 'platform': task['platform'], 'app_id': app['app_id'], 'card_count': len(cards), 'page_count': len(pages), 'ad_ids': sorted(cards), 'count_basis': scope['filters']['dedupe'], 'sort': scope['filters']['sort']}
+        if limit is not None:
+            collection.update(site_card_count=site_expected, collection_limit=limit, termination_reason=pages[-1]['terminal_reason'])
         result['collection'] = collection
         state, action = 'COLLECTION_SUMMARY_PENDING', '写入本 App 采集完成清单，核对后才进入下一个 App'
         summary = record(root, 'collection_complete.json', fingerprint)

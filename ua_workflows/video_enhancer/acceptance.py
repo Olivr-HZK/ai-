@@ -47,6 +47,12 @@ from ua_workflows.shared.db.video_enhancer import (
     load_daily_material_report,
     should_persist_suggestion_to_push_table,
 )
+from ua_workflows.video_enhancer.daily_nodes import (
+    build_core_stage_advertiser_report,
+    build_daily_node_report,
+    render_core_stage_markdown,
+    render_node_markdown,
+)
 
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
@@ -321,6 +327,8 @@ def _build_stages(target_date: str, partial: bool) -> Dict[str, Any]:
             "summary": material_summary,
             "error": material_error or None,
         },
+        "core_stage_advertiser_report": build_core_stage_advertiser_report(target_date),
+        "workflow_nodes": build_daily_node_report(target_date, partial=partial),
     }
     if partial:
         stages["_partial"] = True
@@ -466,6 +474,30 @@ def _collect_issues(
             f"raw.filter_post_total={int(r_exist)} 与库 filter_log __TOTAL__ after={int(flt)} 不一致。",
         )
 
+    workflow_nodes = stages.get("workflow_nodes") or {}
+    for node in workflow_nodes.get("nodes") or []:
+        if not isinstance(node, dict) or node.get("status") != "failed":
+            continue
+        node_id = str(node.get("id") or "unknown")
+        if node_id in {"crawl", "analysis"}:
+            continue
+        _issue(
+            issues,
+            str(node.get("severity") or "soft"),
+            f"node_failed_{node_id}",
+            f"{node.get('name') or node_id}失败：{node.get('message') or '请查看节点证据'}",
+        )
+
+    core_stage_report = stages.get("core_stage_advertiser_report") or {}
+    core_alerts = [alert for alert in (core_stage_report.get("alerts") or []) if isinstance(alert, dict)]
+    if core_alerts:
+        _issue(
+            issues,
+            "warn",
+            "core_stage_advertiser_alerts",
+            f"三阶段广告主留存出现 {len(core_alerts)} 条异常，对比近 {core_stage_report.get('history_days', 7)} 天历史均值。",
+        )
+
     return issues
 
 
@@ -528,6 +560,14 @@ def _render_markdown(
             lines.append(
                 f"- [{it.get('severity')}] {it.get('code')}: {it.get('message')}\n"
             )
+    core_stage_md = render_core_stage_markdown((stages or {}).get("core_stage_advertiser_report"))
+    if core_stage_md:
+        lines.append("\n")
+        lines.append(core_stage_md)
+    node_md = render_node_markdown((stages or {}).get("workflow_nodes"))
+    if node_md:
+        lines.append("\n")
+        lines.append(node_md)
     lines.append("\n## 阶段摘要（机器可读见 JSON）\n\n")
     lines.append("```json\n")
     lines.append(json.dumps(stages, ensure_ascii=False, indent=2)[:20000])

@@ -54,6 +54,7 @@ from lark_oapi.api.drive.v1.model import (
 from ua_workflows.shared.guangdada.detail_url import try_build_url_spa
 from ua_workflows.shared.media.resolve import (
     is_playable_ads_creative,
+    normalize_image_url_for_consumption,
     normalize_video_url_for_consumption,
     pick_playable_html_url,
 )
@@ -646,8 +647,8 @@ def _pick_arrow2_image_url_for_link(c: Dict[str, Any]) -> str:
             continue
         iu = str(r.get("image_url") or "").strip()
         if iu and not str(r.get("video_url") or "").strip():
-            return iu
-    return str(c.get("preview_img_url") or "").strip()
+            return normalize_image_url_for_consumption(iu)
+    return normalize_image_url_for_consumption(str(c.get("preview_img_url") or "").strip())
 
 
 def _arrow2_row_fields_dict(

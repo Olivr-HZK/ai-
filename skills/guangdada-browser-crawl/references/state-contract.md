@@ -43,7 +43,7 @@ python3 scripts/state.py check --run-dir run
 
 - category：游戏 / 工具。
 - dedupe：广告 / 素材。
-- channels、regions：列表；[] 表示不限。即使不限也需真实操作控件并检查当前“全部”状态。
+- channels、regions：列表；[] 表示不限。不限时只读检查当前空选/全部状态；仅有残留时清除。
 - date：以下二选一，不能混用。
 
 ```json
@@ -145,7 +145,7 @@ python3 scripts/state.py seal --run-dir run --task tipsy-ios
 
 seal 再次检查盘点，生成 collection_complete.json，包含 producer、scope 指纹、完成时间、完整 App 名、平台、App ID、广告/素材口径、排序、页数、卡片数、广告 ID 清单及末页证据。未通过卡片/分页检查或仍在 WAITING_HUMAN 时拒绝 seal。
 
-每次 check 自动写 app_checklist.json，列出所有 App 的 collection_status、采集统计和当前状态；state.json 的 next_collection_task 指明下一 App。按 scope.tasks 的顺序串行采集：前一 App 未 seal，后续 App 为 PREVIOUS_APP_PENDING；下一 App 的分类点击记录必须晚于前一 App 清单完成时间。
+每次 check 自动写 app_checklist.json，列出所有 App 的 collection_status、采集统计和当前状态；state.json 的 next_collection_task 指明下一 App。按 scope.tasks 的顺序串行采集：前一 App 未 seal，后续 App 为 PREVIOUS_APP_PENDING；下一 App 的分类检查记录（只读或实际修改）必须晚于前一 App 清单完成时间；其余基础筛选逐项重新只读核对，已正确不重复操作。App选择和排序仍须真实点击。
 
 采集登记后即可进入下一 App，不必等本 App 的后续内容审核。collection_complete=true 仅表示所有 App 原始采集已完成并登记；最终 state=COMPLETED 仍要求抽帧、审核、媒体、交付均通过。不得把 App 采集完成清单当作视频审核完成声明。
 

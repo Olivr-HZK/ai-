@@ -22,11 +22,24 @@ _ADULT_PATTERNS = [
     r"露点",
     r"性行为",
     r"性爱",
+    r"ai\s*脱衣",
+    r"脱衣\s*(滤镜|特效|效果|功能)",
+    r"(一键脱衣|去衣|去除衣服|移除衣服|脱掉衣服|换裸)",
+    r"(双人|两人|二人|男女|情侣).{0,16}(亲吻|接吻|拥吻)",
+    r"(亲吻|接吻|拥吻).{0,16}(双人|两人|二人|男女|情侣)",
+    r"(男方|女方|男生|女生|男性|女性).{0,20}(亲吻|接吻|拥吻)",
+    r"(亲吻|接吻|拥吻).{0,20}(男方|女方|男生|女生|男性|女性)",
+    r"拥抱亲吻",
     r"\bporn\w*\b",
     r"\bxxx\b",
     r"\bnsfw\b",
     r"\bnude\w*\b",
     r"\bnaked\b",
+    r"\bundress(?:ing)?\b",
+    r"\bclothes?\s*remov(?:er|al|e)\b",
+    r"\bremove\s+clothes?\b",
+    r"\b(couple|two\s+people|man\s+and\s+woman|boyfriend|girlfriend|romantic).{0,24}\bkiss(?:ing)?\b",
+    r"\bkiss(?:ing)?\b.{0,24}\b(couple|two\s+people|man\s+and\s+woman|boyfriend|girlfriend|romantic)\b",
     r"\bsexual\s+content\b",
     r"\bvideo\s*chat\b",
     r"\bvideochat\b",
@@ -51,8 +64,11 @@ _INTENSIFIER_RE = re.compile(r"(明显|严重|高风险|强|大量|大尺度|色
 def _iter_text_parts(row: Dict[str, Any]) -> Iterable[str]:
     for key in (
         "analysis",
+        "insight_analysis",
         "title",
         "body",
+        "guangdada_video_content",
+        "video_content",
         "effect_one_liner",
         "play_fingerprint",
         "differentiator",
@@ -260,45 +276,19 @@ def human_photo_effect_mismatch(row: Dict[str, Any]) -> Dict[str, Any] | None:
     human = _first_pattern_match(text, _HUMAN_PHOTO_PATTERNS)
     if non_human and not human:
         return {"reason": "non_human_photo_effect", **non_human}
-    if not human:
-        return {
-            "reason": "missing_human_photo_input",
-            "pattern": "",
-            "snippet": text[:80].replace("\n", " ").strip(),
-        }
+    generic_non_human_tool = _first_pattern_match(text, _GENERIC_NON_HUMAN_TOOL_PATTERNS)
+    if generic_non_human_tool and not human:
+        return {"reason": "missing_human_photo_input", **generic_non_human_tool}
     return None
 
 
 def apply_human_photo_effect_filter(rows: List[Dict[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
     """
-    Keep only effects that start from a user-uploaded human photo.
+    Deprecated compatibility hook.
 
-    VE no longer wants ecommerce/product, pet, room, scenery, text/logo, or other
-    non-person effects in Bitable or daily push output.
+    Business hard-blocks such as ecommerce/non-human/missing human-photo input
+    are judged by the LLM video-content filter prompt, not by regex here. Keep
+    this function as a no-op so older pipeline/sync call sites do not reintroduce
+    keyword-based exclusions.
     """
-    details: List[Dict[str, Any]] = []
-    newly_marked = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        match = human_photo_effect_mismatch(row)
-        if not match:
-            continue
-        was_excluded = bool(row.get("exclude_from_bitable"))
-        row["exclude_from_bitable"] = True
-        row["exclude_from_cluster"] = True
-        row["human_photo_effect_filter_match"] = match
-        _append_tag(row, HUMAN_PHOTO_EFFECT_FILTER_TAG)
-        if not was_excluded:
-            newly_marked += 1
-        details.append(
-            {
-                "ad_key": str(row.get("ad_key") or ""),
-                "product": str(row.get("product") or ""),
-                "reason": match.get("reason"),
-                "pattern": match.get("pattern"),
-                "snippet": match.get("snippet"),
-                "newly_marked": not was_excluded,
-            }
-        )
-    return newly_marked, details
+    return 0, []

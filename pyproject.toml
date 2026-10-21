@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guangdada-crawl"
+version = "0.1.0"
+description = "Lightweight Guangdada crawler CLI for Codex-driven local crawling."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "playwright>=1.40.0",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+mcp = [
+  "mcp>=1.0.0",
+]
+
+[project.scripts]
+guangdada = "guangdada_crawl.cli:main"
+guangdada-mcp = "guangdada_crawl.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "guangdada_crawl*",
+  "ua_workflows",
+  "ua_workflows.shared",
+  "ua_workflows.shared.db",
+  "ua_workflows.shared.guangdada",
+  "ua_workflows.shared.media",
+]

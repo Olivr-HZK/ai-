@@ -1,0 +1,19 @@
+apiVersion: sso.upupup.today/v1alpha1
+kind: OIDCClient
+metadata:
+  name: "guru-creative-platform-local"
+  team: "personal"
+spec:
+  displayName: "Guru Creative Platform Local"
+  environment: "development"
+  profile: "native-loopback"
+  redirectUris:
+    - "http://127.0.0.1:8877/auth/callback"
+  postLogoutRedirectUris:
+    - "http://127.0.0.1:8877/auth/logged-out"
+  scopes:
+    required:
+      - "openid"
+      - "profile"
+      - "email"
+  consent: "required"

@@ -1,6 +1,6 @@
 # VE 反馈训练链路
 
-这条链路用于把审核多维表里的「接受情况」沉淀成训练数据，和正常 Video Enhancer 抓取/分析/推送主流程分开运行。
+这条链路用于把审核多维表里的评分/接受情况沉淀成训练数据，和正常 Video Enhancer 抓取/分析/推送主流程分开运行。
 
 默认数据源：
 
@@ -9,7 +9,8 @@ https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuF
 ## 做什么
 
 - 直接从多维表拉取字段，不依赖 `data/video_enhancer_pipeline.db`。
-- 记录 `接受情况`：`接受` / `采纳` / `入素材库` 作为正样本，`删除` / `不采纳` 作为负样本，`待定` / `重复抓取` / 空值只记录不进入训练。
+- 优先记录飞书星级评分控件 `浩鹏评分`：`5星` 作为高意向样本，`1星` 作为低意向样本，`2~4星` 作为中间分留存但暂不进入现有二分类 baseline。
+- 评分为空时兼容旧字段：`接受` / `采纳` 映射为 `5星`，`入素材库` 映射为 `3星`，`删除` / `不采纳` / `拒绝` / `重复抓取` 映射为 `1星`，`待定` / 空值只记录不进入训练。
 - 只把素材本身作为模型特征：标题、正文、核心卖点、Hook、脚本/口播、玩法资产/变种、玩法指纹、差异点、AI 分析、素材标签等。
 - 产品、广告主、投放日期、展示估值、人气、热度、地区等运营字段只做审计留存，不进入训练特征。
 - 产出独立 SQLite、JSONL 训练集、baseline 模型 JSON 和日报。
@@ -19,7 +20,7 @@ https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuF
 | 路径 | 说明 |
 |------|------|
 | `data/ve_feedback_training.db` | 独立反馈库 |
-| `data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl` | 可训练样本 |
+| `data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl` | 可训练样本，包含 `rating`、`rating_label`、评分来源字段和值 |
 | `data/models/ve_feedback_preference_nb_YYYY-MM-DD.json` | 无额外依赖的朴素贝叶斯 baseline |
 | `reports/ve_feedback_training_YYYY-MM-DD.md` | 每日拉取与训练摘要 |
 
@@ -47,6 +48,8 @@ https://scnmrtumk0zm.feishu.cn/base/CivwbJ2HkazcKTsKnbGclA5RnWc?table=tblrZZvVuF
 ```bash
 .venv/bin/python scripts/run_ve_feedback_training.py train --date 2026-05-15
 ```
+
+输出 JSONL 里会保留评分元数据；当前 baseline 仍用 5 星/1 星训练二分类模型，2~4 星样本先留存在 SQLite 和拉取统计中，等待后续排序/回归模型使用。
 
 只用核心素材字段齐全的样本训练：
 

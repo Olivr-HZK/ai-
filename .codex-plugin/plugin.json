@@ -1,0 +1,36 @@
+{
+  "name": "guangdada-crawl",
+  "version": "0.1.0+codex.20260623030517",
+  "description": "Lightweight Guangdada crawling for Codex: charts, advertisers, single ads, job artifacts, and an optional MCP wrapper.",
+  "author": {
+    "name": "Guru UA Team"
+  },
+  "license": "Proprietary",
+  "keywords": [
+    "guangdada",
+    "crawl",
+    "advertising",
+    "playwright",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Guangdada Crawl",
+    "shortDescription": "\u8f7b\u91cf\u5e7f\u5927\u5927\u722c\u53d6\u5165\u53e3\uff0c\u53ea\u4ea7 raw/job artifact\u3002",
+    "longDescription": "A lightweight Codex plugin for raw Guangdada crawling. It exposes a safe CLI and optional MCP tools for chart crawls, advertiser/app crawls, single ad detail seeds, auth diagnostics, job listing, and artifact inspection. It deliberately does not write VE, Arrow2, Feishu Bitable, LLM analysis, dashboards, or push notifications by default.",
+    "developerName": "Guru UA Team",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Local automation"
+    ],
+    "defaultPrompt": [
+      "Run a Guangdada chart crawl dry run.",
+      "Crawl Guangdada creatives for this advertiser.",
+      "Inspect the latest Guangdada crawl job artifacts."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

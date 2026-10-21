@@ -1,0 +1,8 @@
+{
+  "issuer": "https://auth.upupup.today/realms/guru",
+  "client_id": "REPLACE_FROM_GURU_SSO_CLI_EXPORT",
+  "base_url": "http://127.0.0.1:8877",
+  "token_endpoint_auth_method": "none",
+  "allowed_subjects": ["REPLACE_WITH_VERIFIED_GURU_SUBJECT"],
+  "admin_subjects": ["REPLACE_WITH_VERIFIED_GURU_SUBJECT"]
+}

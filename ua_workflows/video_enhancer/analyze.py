@@ -47,6 +47,7 @@ from ua_workflows.video_enhancer.play_assets import (
     format_play_asset_catalog_for_prompt,
     legacy_play_library_enabled,
 )
+from ua_workflows.video_enhancer.content_filters import adult_content_match
 
 try:
     from ua_workflows.shared.db.arrow2 import upsert_arrow2_daily_insight_full
@@ -57,6 +58,7 @@ from ua_workflows.shared.media.resolve import (
     display_video_link_for_prompt,
     is_creative_analyzable_with_resolve,
     is_playable_ads_creative,
+    normalize_image_url_for_consumption,
     normalize_video_url_for_consumption,
     pick_playable_html_url,
     preprocess_video_for_vision,
@@ -377,6 +379,8 @@ def _ve_fixed_footer() -> str:
         "【风险标签】只从以下标签中选择，多个用顿号连接；若无则写「无明显风险」："
         "成人色情风险、擦边露肤风险、版权名人风险、产品不适配风险、低质素材风险、无明显风险。"
         "只有画面/文案实际存在色情、裸体、露点、明显性行为或成人视频导向时，才写「成人色情风险」；"
+        "生产硬拦规则：只要出现 AI脱衣、脱衣滤镜、去衣、换裸，或双人亲吻、男女/情侣接吻、拥抱亲吻，"
+        "也必须写「成人色情风险」，风险等级必须写「高风险」；"
         "普通泳装、健身、正常露肤或仅平台可能限流，不要写成人色情风险，可写「擦边露肤风险」或「无明显风险」。\n"
         "【风险等级】只选一项：低风险、中风险、高风险。低风险=未观察到明显审核/版权/适配问题；"
         "中风险=有露肤擦边、名人版权、产品适配或低质疑虑但不属于成人色情；"
@@ -754,6 +758,37 @@ def _merge_material_tags_ve(creative: Dict[str, Any], llm_tags: list[str]) -> li
     return out
 
 
+def _apply_ve_production_adult_risk_tags(
+    *,
+    material_tags: list[str],
+    risk_level: str,
+    analysis: str,
+    title: str,
+    body: str,
+    effect_one_liner: str,
+    play_fingerprint: str,
+    differentiator: str,
+    template_fingerprint: str,
+) -> tuple[list[str], str]:
+    """Upgrade VE analysis output when production adult-risk rules are visible."""
+    row = {
+        "analysis": analysis,
+        "title": title,
+        "body": body,
+        "effect_one_liner": effect_one_liner,
+        "play_fingerprint": play_fingerprint,
+        "differentiator": differentiator,
+        "template_fingerprint": template_fingerprint,
+        "material_tags": material_tags,
+    }
+    if not adult_content_match(row):
+        return material_tags, risk_level
+    out = [tag for tag in material_tags if tag and tag != "无明显风险"]
+    if "成人色情风险" not in out:
+        out.append("成人色情风险")
+    return out, "高风险"
+
+
 def _should_incremental_db(args: argparse.Namespace, target_date: str) -> bool:
     if not (target_date or "").strip():
         return False
@@ -781,9 +816,9 @@ def _pick_image_url(creative: Dict[str, Any]) -> str:
     """提取图片 URL：优先 resource_urls 中的 image_url，其次 preview_img_url。"""
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("image_url") and not r.get("video_url"):
-            return str(r["image_url"])
+            return normalize_image_url_for_consumption(str(r["image_url"]))
     if creative.get("preview_img_url"):
-        return str(creative["preview_img_url"])
+        return normalize_image_url_for_consumption(str(creative["preview_img_url"]))
     return ""
 
 
@@ -1650,6 +1685,19 @@ def _analyze_one_item(
                 )
     else:
         analysis = work
+
+    if not arrow2:
+        material_tags, risk_level = _apply_ve_production_adult_risk_tags(
+            material_tags=material_tags,
+            risk_level=risk_level,
+            analysis=analysis,
+            title=str(creative.get("title") or ""),
+            body=str(creative.get("body") or ""),
+            effect_one_liner=effect_one_liner,
+            play_fingerprint=play_fingerprint,
+            differentiator=differentiator,
+            template_fingerprint=template_fingerprint,
+        )
 
     if not arrow2 and not str(analysis or "").strip():
         analysis = _build_ve_structured_analysis_summary(

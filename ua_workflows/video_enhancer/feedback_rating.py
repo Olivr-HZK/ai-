@@ -79,6 +79,26 @@ def reviewer_status_field(reviewer: str = "haopeng") -> str:
     return REVIEWER_FIELDS.get(str(reviewer or "").strip().lower(), REVIEWER_FIELDS["haopeng"])[1]
 
 
+def feedback_fields_from_primary(primary_field: str = "", *, reviewer: str = "haopeng") -> tuple[str, str]:
+    """Return (rating_field, legacy_status_field) for a rating-first feedback field."""
+    default_rating, default_status = REVIEWER_FIELDS.get(
+        str(reviewer or "").strip().lower(),
+        REVIEWER_FIELDS["haopeng"],
+    )
+    text = str(primary_field or "").strip()
+    if not text:
+        return default_rating, default_status
+    if text.endswith("评分"):
+        prefix = text[: -len("评分")]
+        return text, f"{prefix}接受情况" if prefix else default_status
+    if text.endswith("接受情况"):
+        if text == LEGACY_STATUS_FIELD:
+            return default_rating, text
+        prefix = text[: -len("接受情况")]
+        return f"{prefix}评分" if prefix else default_rating, text
+    return text, default_status
+
+
 def normalize_rating_value(value: Any) -> int | None:
     text = cell_to_text(value)
     if not text:

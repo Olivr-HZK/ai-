@@ -57,3 +57,51 @@ async function gddCheckedClick({tab, scopeSha256, taskId, eventId, key, expected
 
 // Allows offline testing only. Browser REPLs may paste the function above directly.
 if (typeof module !== 'undefined') module.exports = {gddCheckedClick};
+
+// Already-correct base filters are observations, never fabricated clicks.
+// A card's ad ID is only known after its actual detail opens; the intended
+// App/platform is fixed before clicking and the observed ID is checked too.
+async function gddCheckedObservation({tab, scopeSha256, taskId, eventId, key,
+                                      expected, click, read, persist, sha256, card=false}) {
+  if (!/^[a-z0-9-]+$/.test(eventId)) throw new Error('Use a unique lowercase eventId');
+  if (card) {
+    if (key !== 'card.open' || typeof click !== 'function' || !expected.app_id ||
+        !['iOS','Android'].includes(expected.platform) ||
+        Object.keys(expected).sort().join(',') !== 'app_id,platform') throw new Error('Missing intended card identity');
+  } else if (!key.startsWith('filter.') || key === 'filter.sort' || click !== undefined) {
+    throw new Error('Read-only checks only apply to base filters; App and sort require clicks');
+  }
+  for (const fn of [read,persist,sha256]) if (typeof fn !== 'function') throw new Error('Missing adapter');
+  const base='evidence/clicks/'+eventId;
+  const snap=async suffix=>{
+    const bytes=await tab.getScreenshot({emit:false});
+    const png=[137,80,78,71,13,10,26,10].every((b,i)=>bytes[i]===b);
+    const jpeg=bytes[0]===255&&bytes[1]===216&&bytes[2]===255;
+    if (!png&&!jpeg) throw new Error('Unsupported screenshot format');
+    const format=png?'png':'jpg',path=base+'.'+suffix+'.'+format;
+    await persist(path,bytes);return {path,format,sha256:await sha256(bytes)};
+  };
+  const setLike=['filter.channels','filter.regions','filter.languages'].includes(key);
+  const normalize=v=>Array.isArray(v)?(setLike?v.map(normalize).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))):v.map(normalize)):(v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,normalize(v[k])])):v);
+  const equal=(a,b)=>JSON.stringify(normalize(a))===JSON.stringify(normalize(b));
+  const before=await read(),beforeImage=await snap('before'),performed_at=new Date().toISOString();
+  let after=null,error=null,status='failed';
+  try {
+    if (card) await click();
+    await tab.playwright.domSnapshot();after=await read();
+    const valid=card ? after && Object.keys(after).sort().join(',')==='ad_id,app_id,platform' &&
+      /^[a-f0-9]{32}$/.test(after.ad_id) && after.app_id===expected.app_id && after.platform===expected.platform :
+      equal(before,expected)&&equal(after,expected);
+    status=valid?'passed':'mismatch';
+  } catch (exc) {error=String(exc.message||exc);}
+  const afterImage=await snap('after');
+  const event={producer:card?'gdd-checked-card/v1':'gdd-readonly-check/v1',scope_sha256:scopeSha256,
+    task_id:taskId,event_id:eventId,key,kind:card?'click':'read',performed_at,status,expected,before,after,
+    images:{before:beforeImage,after:afterImage},error};
+  await persist(base+'.json',JSON.stringify(event,null,2));
+  if(status!=='passed')throw new Error('Evidence check failed; inspect '+base+'.json');
+  return {event_file:base+'.json',event};
+}
+async function gddReadOnlyCheck(args){return gddCheckedObservation({...args,card:false});}
+async function gddCheckedCard(args){return gddCheckedObservation({...args,card:true});}
+if (typeof module !== 'undefined') Object.assign(module.exports,{gddReadOnlyCheck,gddCheckedCard});

@@ -65,6 +65,29 @@ class HaopengAiFilterTest(unittest.TestCase):
         self.assertEqual(row["rating_source_field"], "浩鹏评分")
         self.assertEqual(row["actual_hp"], "不采纳")
 
+    def test_normalize_bitable_record_accepts_rating_field_as_primary_feedback_field(self) -> None:
+        from ua_workflows.video_enhancer.haopeng_ai_filter import normalize_bitable_record
+
+        row = normalize_bitable_record(
+            {
+                "record_id": "rec1",
+                "fields": {
+                    "广告ID": "ad_1",
+                    "产品": "Glam AI",
+                    "抓取日期": "2026-05-28",
+                    "核心卖点": "自拍生成复古棒球球员卡",
+                    "浩鹏评分": "4星",
+                    "浩鹏接受情况": "不采纳",
+                },
+            },
+            reviewer_field="浩鹏评分",
+        )
+
+        self.assertEqual(row["rating"], 4)
+        self.assertEqual(row["rating_label"], "4星")
+        self.assertEqual(row["rating_source_field"], "浩鹏评分")
+        self.assertEqual(row["actual_hp"], "不采纳")
+
     def test_build_report_scores_candidates_with_ai_and_sorts_topn_shape(self) -> None:
         from ua_workflows.video_enhancer.haopeng_ai_filter import build_report_from_rows
 
@@ -110,6 +133,9 @@ class HaopengAiFilterTest(unittest.TestCase):
             self.assertEqual(product, "Glam AI")
             self.assertEqual(target_date, "2026-05-28")
             self.assertEqual(len(history), 2)
+            self.assertEqual(history[0]["rating_label"], "5星")
+            self.assertEqual(history[1]["rating_label"], "1星")
+            self.assertNotIn("status", history[0])
             self.assertEqual(len(candidates), 2)
             self.assertEqual(model, "qwen/qwen3.7-max")
             return [

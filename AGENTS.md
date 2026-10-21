@@ -1,6 +1,173 @@
 # Agent 工作日志
 
+## 2026-10-21 当前更新提交检查点
+
+- 按用户要求提交当前累计源码、配置、测试和文档更新，涵盖三平台每日采集、链接补全、Chrome插件、skill/CLI分发、素材港及已有VE/Arrow2改动，并保留已有API示例文档删除。此次未开始架构重构、迁移目录或调整定时任务。
+- 不纳入本地采集数据、媒体、报告产物、安装ZIP、数据库、凭据、浏览器临时文件和本地托管状态；这些文件仍留在本机。提交候选已做常见凭据模式及本地环境敏感值匹配检查，未发现匹配。
+- 修正requirements.txt中yt-dlp版本与下一条说明注释粘连的格式，依赖语法验证通过。101个Python文件语法、候选JSON及git diff --check通过。
+- 选定Python回归初次583通过、1失败（跨目录CLI检查因当前环境未安装包而找不到模块）；在临时目录离线构建安装后，CLI包44项全部通过，不修改正在使用的虚拟环境。插件/浏览器检查16项Node测试、skill安装器8项通过；未执行真实付费采集、写表或发消息，也未重新做浏览器实站验收。
+
+## 2026-10-21
+
+### [广大大] 插件说明顶部版本下载表
+
+- 按用户最终要求，在原飞书说明最上方加入「版本号 / 更新描述 / 安装包」三列表格，倒序列出v1.0.0～v1.8.0共9版；原安装步骤、用户截图、常见问题、Playable详细说明及原附件保留，简介改为指向顶部版本表。未改插件功能、分享权限或发送通知。
+- 核验6个真实历史安装包的manifest版本、ZIP CRC和SHA256：1.0.0、1.1.0、1.3.0、1.4.0、1.7.0、1.8.0；逐个上传至对应版本行。1.3.0从未覆盖的原1.3目录补打ZIP（15800字节）。1.2.0、1.5.0、1.6.0原目录已被新版覆盖，未找到历史原包，表格明确标为「历史原包未留存（原目录已更新）」，不把新版伪标为旧版。
+- 本地核验索引 `data/guangdada-extension-release-index.json`；上传暂存 `data/guangdada-extension-release-upload/` 仅6个已核验ZIP。飞书显示保存后刷新，顶部表格9行、6个对应版本附件文件名及3处缺包说明均可见，原正文简介和安装截图仍在。
+
+### [广大大] Chrome 插件 Playable 原HTML获取 v1.8.0
+
+- 新增Playable类型与默认勾选项；按实际 `ads_type=7` 卡片读取 `resource_urls[].html_url`，兼容该卡片顶层 `html_url` 和明确HTML的 `cdn_url`。当前页、跨页点选、指定页数/采到末页均支持；去重/页码编号/单ZIP/512MB/120秒边界保留。文件保存为 `媒体/第XXXX页/playable/原编号_名称.html|htm`，不使用封面/视频/ZIP冒充试玩HTML。
+- 新增 `playable.js`，仅静态检查原字节，不执行脚本、不访问依赖。拒绝JSON、非HTML/静态错误页、登录或授权页；MD报告逐项记录Playable类型、缺址、HTTP/登录/内容错误及成功项的外部引用提示。原HTML字节保留，外部JS/图像/音频/动态资源不打包，不保证离线或本地直接运行；未宣称完整离线归档，不支持原ZIP试玩包。
+- 15项Node测试及4份隔离Chromium集成通过，覆盖图片/视频原回归、Playable实际弹窗、单页/跨页/自动末页、原始字节/CRC、html_url/cdn回退、登录/非HTML/403/404/缺址/类型筛选/跨页去重及不执行脚本/不抓外部依赖。真实CDN样本5500字节返回200，通过本地测试服务器原样供给扩展并核验ZIP字节；证据 `data/guangdada-playable-acceptance/acceptance.json` 和弹窗截图。不是用户登录实站验收；用户Chrome当前提示“其他设备登录，强制退出”，未重新登录或改其筛选/清单。
+- 交付 `data/guangdada-media-extension-1.8.0/` 与安装ZIP `data/guangdada-media-extension-1.8.0.zip`（41444字节、19文件、CRC/manifest核验）；1.2.0/1.4.0/1.5.0/1.6.0/1.7.0旧目录19文件同步为1.8.0并逐字节核对。用户需安装/重新加载新版，未声称已重载其当前插件。
+- 原飞书说明 `https://scnmrtumk0zm.feishu.cn/wiki/PZ3Uweg2kiJTHJkj3BHcjVBKnpb` 已发现用户自行精简并添加截图和1.7附件，故只追加第四节Playable说明与1.8安装包，更新标题/适用版本/简介为1.8；原三节、截图和旧附件保留，明确旧1.7附件不含新功能。重新加载后读回标题/版本/新章节和40.47KB新版附件，无分享权限变更或发送消息。
+
+### [广大大] Chrome 插件 Markdown 下载报告 v1.7.0
+
+- 已按用户要求通过当前已登录的Chrome飞书账号，在「我的文档库」新建《广大大媒体下载插件｜使用说明（v1.7.0）》：`https://scnmrtumk0zm.feishu.cn/wiki/PZ3Uweg2kiJTHJkj3BHcjVBKnpb`。涵盖安装更新、三种模式、跨页点选示例、指定页数/末页、授权进度、ZIP路径、MD报告和失败处理。云端保存后重新加载并读回章节/跨页步骤/报告说明，检查排版；未改变分享权限或发送通知。
+- 按用户要求，ZIP 内只附一份 `下载报告.md`，替换原JSON报告。新增 `report.js`，在去重/类型过滤前保留所有选择，报告包含原页码/从左到右卡片编号、广告ID、类型、文件、结果、原因和建议；「失败及未完成内容」「全部选择」两表逐项对账，重复项说明合并目标及对应文件结果，类型未选不计为下载失败。
+- 下载失败区分HTTP 401/403/404/410/429/5xx、网络未得到响应、响应后传输中断、120秒超时、512MB限制、HTML/JSON响应、空内容。403等仅陈述服务器证据及可能原因；试玩、HLS/DASH/流片段、blob等非HTTP地址明确不支持，缺失/无效原地址、未读取到卡片数据分别说明且不发请求，不把所有失败统称不支持。
+- 后台持久保存逐项状态/错误代码/响应状态/字节数；弹窗「查看下载报告.md」打开最近一批纯文本Markdown报告，可按需单独保存。全失败或无可下载原址仍保存报告，不生成空ZIP；停止/翻页异常报告未执行和范围不完整，下一批会替换最近报告。原三并发、单ZIP、跨页选择及翻页功能保留，报告不含签名URL/凭据，Markdown单元格转义。
+- 12项Node测试、三份隔离Chromium集成通过；13卡混合批次=成功1文件+请求失败6+重复1+缺址2+不支持3，实际覆盖403/404/429、HTML/空/网络失败与HLS/blob/无效URL，ZIP仅媒体+一份MD、CRC通过；全失败报告查看、全不支持弹窗按钮打开并实际保存MD验证通过，原视频完整解码/图片字节/60卡/自动翻页/跨页点选回归通过。
+- 交付 `data/guangdada-media-extension-1.7.0/`，1.2.0/1.4.0/1.5.0/1.6.0旧安装目录18个文件同步并逐字节核对。用户Chrome管理页仍显示1.6.0；用户正在切换其他页面，本次未完成手动重载，需在扩展页点「重新加载」使1.7.0生效。未改动用户当前清单或筛选，未声称本次新报告已做实站下载验收；旧批次报告明确提示无法还原所有合并前选择。
+
+### [广大大] Chrome 插件跨页点选与采到末页 v1.6.0
+
+- 新增 `selection.js` / `selection-ui.js`：隔离世界点选界面通过扩展消息通知后台，后台独立读取当前卡片并校验页码/卡片身份，不接受页面提供的媒体URL。清单按标签页持久化、以广告ID关联；手动翻页自动显示勾选，回页和刷新恢复，重复素材同步选中，已选原地址按可见页更新但保留首次选择页码/编号。不同标签页隔离，关闭该标签页清理清单。
+- 弹窗新增「跨页已选清单」及逐页编号/总数，支持继续点选后合并为一个ZIP；页面提供全选本页、清空本页、清空全部、收起点选。清空本页保留其他页，收起保留清单；保存中拦截翻页、过期清单版本/空选拒绝提交，避免默默下载整页。
+- 自动翻页支持手动输入1～1000页（含当前页）或「一直采到末页」；后者无填写页数上限，仍以网站下一页明确禁用为结束证据。原512MB媒体/120秒单资源边界保留，未知分页/超时/跳页仍明确失败，不拆多ZIP。
+- 修正首次站点授权可能关闭弹窗导致未启动的问题：先交后台持久化任务，再请求当前实际CDN权限；`permissions.onAdded` 和状态对账在授权后后台继续。点选器重载失效时自动退出，加载提示在页面恢复后清除，避免展示旧错误。
+- 8项Node测试和三份隔离Chromium集成（单页原逻辑、直到末页/指定页数、跨页点选）通过。实际点击第1页1+2、第2页1后单ZIP仅2视频+1图，原字节/CRC/完整解码通过；覆盖异步加载、回页/刷新恢复、重复同步、标签页隔离、清空本页/全部/收起、保存中翻页、空清单和旧版本拦截。
+- 已在用户Chrome实际重载1.6.0（扩展ID `edakfmeobpckdecabcindhomamhjgoan`），在独立验证标签页选第1页1、4和第2页1，插件重载后清单仍为两页3条；实际单ZIP 1763689字节、1视频+2图片成功3/3、失败0，视频完整解码/图片/CRC通过。证据 `data/guangdada-extension-cross-page-selection-real-acceptance.json`；ZIP `/Users/oliver/Downloads/广大大/广大大媒体_2026-10-21T05-47-52-259Z.zip`。自动采到末页已做隔离3页验收，未在用户默认100页结果上执行全量采集。
+- 交付 `data/guangdada-media-extension-1.6.0/`；1.2.0、1.4.0、1.5.0旧交付/安装目录内容同步为1.6.0。未修改用户原来的Heyyyy试玩筛选标签页。
+
+### [广大大] Chrome 插件自动翻页采集 v1.5.0
+
+- 新增「采集范围：自动翻页（每页全部）」和 1～20 页上限（含当前页，默认3页）。通过当前列表 Ant 分页按钮逐页前进，核对页码递增、卡片身份、加载和媒体地址稳定性；对缺原址卡片滚动触发加载并合并页面快照。当前页点击挑选保留，翻页模式明确获取每页全部所选类型；末页提前停止，不回到第一页、不调用私有接口。
+- `pagination.js` 与后台持久化采集状态新增页数进度、关闭弹窗后继续、停止、30秒下一页/60秒本页就绪超时、页码跳跃/整页重复/离开列表拦截。跨页按原URL及广告ID去重，ZIP按实际页码和原卡片编号归档；只调用一次Chrome下载，报告逐页对账。新CDN仅在实际出现时暂停等待点击授权，翻页未完成不交付不完整ZIP或允许重新打包伪装完整结果。
+- 6项Node测试、单页浏览器回归及新增 `tests/pagination_smoke.py` 通过。真实扩展弹窗启动第4～6页异步采集、滚动后才提供的原地址、单ZIP原字节/CRC/视频解码、跨页去重、缺失报告、末页/页数上限、新来源授权暂停、取消、超时/跳页/未知分页和非法页数均覆盖。未声称自动化验证Service Worker真实休眠恢复。
+- 用户Chrome当前插件已原位更新并实际重新加载至1.5.0。实站旧登录失效时采集正确停止、未出包；使用Chrome已保存登录恢复后，实际完成第1～2页120卡：45试玩等不支持、2视频无原址、14跨卡/页重复，最终47视频+12图片，成功59/59、失败0，单ZIP 156828920字节。全部47视频ffprobe及ffmpeg完整解码、12图片Pillow和ZIP CRC通过；证据 `data/guangdada-extension-pagination-real-acceptance.json`，产物 `/Users/oliver/Downloads/广大大/广大大媒体_2026-10-21T04-48-18-450Z.zip`。
+- 交付 `data/guangdada-media-extension-1.5.0/`；当前安装目录 `data/guangdada-media-extension-1.4.0/` 和更早原安装目录 `data/guangdada-media-extension-1.2.0/` 同步为1.5.0。512MB批次上限、单资源120秒及浏览器退出后媒体不可续传边界保留。
+
+### [小红书日采集] 媒体传输恢复
+
+- `ua_workflows/xhs_daily.py`：针对代理连接异常、直连超时和响应中断，媒体 CDN GET 增加代理/直连各一次的有限重试；整图核对 Content-Length，分段长度不足触发传输重试，完整后才原子落盘。保留 `.part` 和已有媒体 SHA256 缓存；不重调搜索或付费详情。受信 CDN 按精确域名/子域检查。
+- 实测个别视频 CDN 返回正确206头但响应体在约10KB后停滞，curl HTTP/1.1 与 HTTP/2 同样复现；连续8KB精确范围可用。大分段两条路径失败后回退8KB逐段校验，恢复全部视频；未改原URL。诊断证据保存在批次 `download-diagnosis.json`。
+- `tests/test_xhs_daily.py`：20 项通过，新增代理失败回退、完整长度不足拒绝入库、分段不足后恢复且不拼入错误字节、大分段停滞后小分段拼接回归。小红书日流程、链接机器人、抖音及分享格式相关合计272项通过。
+- 从 `data/xhs_daily/20261021`（报告归属 2026-10-20）已有28页、7词搜索断点恢复，原搜索请求/响应SHA256保持不变，恢复期间付费视频API调用0。全部535篇媒体补齐：272篇图文1516张图片、263条视频均通过图像工具实际查看并保存人物/男性主体证据；图片内容排除170篇，主体排除176篇，合格189篇，统一点赞前10%向上取整19篇。
+- 19篇（17视频、2图文）已附媒体写入指定飞书表并读回核验，平台小红书/来源每日最新；广告之神向霍振堃测试群发送一次日报，回执 `om_x100b62b62ebccca8cfd908240a8184d`。本批 `daily-result.json` 与 `delivery-validation.json` 记录最终结果，旧阻塞状态已归档。
+
 本文档记录所有 agent 对项目做出的代码变更与功能更新，供后续 agent 接手时快速了解项目现状。
+
+## 2026-10-21
+
+### [小红书/广大大] 每日采集防睡眠及异常日志
+
+- 小红书日流程、独立逐页搜索、显式授权恢复及媒体审核准备接入 collection_phase；搜索每页每次请求、视频详情沿用单次HTTP诊断，超时不自动重试，已有明确未收费429有限重试不变。下载/审核准备/入表捕获的失败补充脱敏异常链文件路径，保护正常或异常退出自动释放。
+- 广大大 Python 准备/校验/入表/通知阶段自动保护和记录异常；新增 `browser_collection_runtime` 本地 start/renew/status/stop/error 入口，独立浏览器步骤用15分钟可续期保护，重复start复用同一进程，过期自动释放、禁止直接renew失效保护。浏览器真实工具错误由执行者提交原始消息/阶段/App/页/卡/证据路径，缺堆栈不得编造。不会调用爬虫或私有API。
+- 已更新项目与安装目录的 social-chat-browser-daily skill，以及新生成的 browser-task 提示；每页前和至少每5分钟续期，暂停/人工等待/结束时停止。仅修改仍运行自动任务的原项目，未迁移worktree或改变任务时间/抓取范围。未重新抓取、下载、写表或发群。
+- 禁止外网连接的本地回归89项通过，覆盖小红书超时单次调用/详情意图防重调、广大大准备入口/失败留痕、真实macOS保护启动/复用/续期/到期/停止释放，以及原抖音和飞书模拟业务；项目与已安装skill校验通过。临时保护进程全部停止，未声称真实浏览器采集验收。
+
+### [抖音] 采集防睡眠与请求异常诊断
+
+- 新增 `ua_workflows/collection_runtime.py`：macOS `caffeinate -is -w PID`，请求前核验自身防空闲睡眠断言，正常/异常退出释放，保护失败禁止开始付费请求；不更改系统配置，不阻止锁屏/息屏。
+- `douyin_daily run`、独立七词搜索与单次搜索/视频详情请求接入；保留原120秒读取超时、断点和禁止自动重试逻辑。请求诊断记录时间/耗时、代理候选、HTTP状态、请求ID及脱敏异常链堆栈，600权限；失败关键词保留原始目录。仅修改当前仍执行自动任务的原项目，未切换新worktree或改定时任务。
+- `tests/test_collection_runtime.py` 与抖音/小红书日流程回归共38项通过，含本机真实断言创建/异常释放、保护失败阻止请求、模拟超时单次请求、异常链脱敏、非JSON响应和失败目录保留。本次不调用付费搜索/详情，不下载媒体、不写表或发群。
+
+## 2026-10-20
+
+### [广大大] Chrome 页面媒体下载插件
+
+- v1.4.0：按用户要求新增页面点击选择。插件「在页面点选素材」为当前卡片按视觉从左至右、从上至下显示编号勾选按钮；阻止勾选事件触发详情跳转，提供全选/清空/退出，重新打开插件展示所选编号并只打包选中项。空选拒绝提交，提交核对当前卡片身份/排列，ZIP文件名前缀保留原页编号、报告记录选择范围；先筛选后去重，缺失统计限定选中范围。隔离Chromium实际点击1和3并验证ZIP仅两条素材、无卡片导航，覆盖全选/清空/退出、空选/页面变化拦截；原单ZIP/60卡范围/失败/取消回归及4项Node测试通过。已更新原安装文件夹 `data/guangdada-media-extension-1.2.0/` 内容为1.4.0，另交付 `data/guangdada-media-extension-1.4.0/`。用户当前Chrome已切换至登录窗口，未重载其插件或声称本次点选已做实站验收，需要用户在扩展页点重新加载。
+- v1.3.0：用户反馈单页60素材却下载100+图片、没有视频；通过其 Chrome 实际已登录页面导出卡片结构确认当前站点为 React，根因是旧版全 DOM 图片扫描及误用 Vue 提取。改为当前 `.shadow-common-light.bg-white` 卡片各自 React `memoizedProps.value` 的 `ad_key/ads_type/resource_urls`，只取每卡一个主要原素材，不读取父列表、不扫图标/背景/视频封面、不用封面补缺失视频。首次授权缩为实际素材 CDN，不再一次请求所有 HTTP/HTTPS 网站。用户原安装目录 `data/guangdada-media-extension-1.2.0/` 已原位更新并通过 Chrome 重载为1.3.0；另提供 `data/guangdada-media-extension-1.3.0/`。真实页面60卡=52视频卡+6图片卡+2试玩；50视频URL经7重复合并为43视频，2视频无原址另记缺失；实际Chrome单ZIP下载成功49/49、161937724字节，包内43视频+6图片+报告，CRC通过。真实产物位于用户下载目录 `广大大/广大大媒体_2026-10-20T08-44-55-080Z.zip`。43个视频经ffprobe识别及ffmpeg完整解码全部通过、6张图片Pillow校验通过，证据 `data/guangdada-extension-real-acceptance.json`。隔离Chromium新增60卡/180 DOM图片只返回60原素材回归，并覆盖React绑定、父列表排除、缺失/试玩报告、单ZIP/重打包/全失败/取消；Node3项与语法检查通过。
+- v1.2.0：按用户澄清，插件运行时只交付一个媒体 ZIP，插件安装仍用文件夹。新增 `offscreen.html/js` 和无第三方依赖 ZIP STORE/UTF-8/CRC32 打包器；三并发 fetch 后只调用一次 Chrome download，包内按图片/视频分目录并附不含签名链接的下载报告。首次按钮点击申请可选 HTTP/HTTPS 来源读取权限用于 CDN 内容获取；512MB 批次上限、120 秒单文件超时、部分失败报告、全失败不出包、停止及完整重新打包。状态区分媒体已获取和 ZIP 已保存，关闭弹窗继续，浏览器退出不支持续传。隔离 Chromium 实测单 ZIP 解包/CRC/中文路径/4 PNG 与3 MP4原字节及解码、404报告、重新打包、全失败/停止不产生额外ZIP通过；3项 Node测试通过。真实广大大页面、真实权限弹窗仍未验收。安装文件夹 `data/guangdada-media-extension-1.2.0/`。
+- v1.1.0：针对用户反馈无视频，补充 MAIN world 只读读取 DOM 绑定 Vue 2 响应式 props/data、Vue 3 props/setupState 的视频字段，以及当前文档已请求的视频地址；不调用私有 API，不把普通封面 WebP 直接推测成视频。弹窗分列视频/图片数量，零视频明确提示。隔离 Chromium 模拟未播放卡片实测 3 个 MP4 下载及 ffmpeg 完整解码、4 个 PNG、404 错误统计通过；真实站点尚未验收。交付 `data/guangdada-media-extension-1.1.0.zip`。
+- 新增 `apps/guangdada-media-extension/`，Manifest V3、activeTab 按点击授权；当前 guangdada.net 页面图片/视频/封面/背景/懒加载属性/开放 Shadow DOM 收集、URL 去重、可选 45 秒本页滚动与位置恢复，不翻页、不调用私有 API、不读取账号凭据。
+- Chrome downloads 后台三并发队列，storage 持久化、下载事件和 alarm 对账，弹窗统计真实完成/失败，支持停止及失败重试。尚未加载地址的视频需要先播放/打开详情；blob/HLS/DASH 不支持，明确提示边界。
+- `node --test apps/guangdada-media-extension/tests/*.test.js` 3 项通过；`.venv/bin/python apps/guangdada-media-extension/tests/browser_smoke.py` 隔离 Chromium 加载通过，验证 DOM/背景/Shadow/懒加载/视频地址、去重、4 个真实 PNG 下载字节及 404 失败统计。测试临时副本仅对模拟站点加 host permission 代替无头工具栏授权，正式包不带。真实广大大登录页面、工具栏 activeTab 授权及 worker 休眠恢复尚未实测。
+
+### [素材港] AI 解析切换 Codex CLI / GPT-6 Luna medium
+
+- 按用户明确要求，`codex_intake.py` 固定调用 `codex exec -m gpt-6-luna -c model_reasoning_effort="medium"`，替换无效的 OpenRouter 通道；不读取项目模型 API key，不更换用户指定模型。
+- 使用独立临时目录、独立解析指令、stdin 输入、结构化输出、只读 sandbox、关闭 shell/插件/浏览器/hooks/多 agent 等工具、忽略用户配置、ephemeral 和进程组超时清理。结果要求完整回合且无意外工具调用，继续通过原 JSON Schema 与业务闸口。
+- 本机 CLI 已登录 ChatGPT，真实解析 Tipsy 双端成功，完整名称、注册表 App ID、Facebook/TikTok、英/韩语、30天、9:16 及三项内容条件均正确。解析引擎随草稿/提交留痕；README 更新为 CLI 配置与账号额度边界。
+- 浏览器已实际完成 CLI 调用、字段回填、人工改标题后提交、后台来源/模型读回及取消验收任务；队列为 0，未启动抓取。36 项隔离测试通过，截图 `data/creative_platform/ai-intake-codex-success.png`，当前本机服务仍运行。
+
+### [素材港] 自然语言采集任务与 AI 字段映射
+
+- 新增 `apps/creative-platform/task_intake.py` 和已登录接口 `/api/task-intake`，通过 OpenRouter JSON Schema 解析需求并回填原表单；App ID 仅取注册表，双端分别对应完整名称，歧义、冲突及当前不支持的条件提示补充。
+- 原需求、AI 草稿和最终字段分别留痕；草稿限当前用户、24 小时有效，最终条件重新校验后入队。原文本不下发为 Agent 执行指令；解析不启动抓取。新增频率/并发/超时和鉴权失败处理，手动表单保留。
+- 增加 AI 解析、草稿权限、HTTP 提交及业务回归测试；当前 30 项隔离测试通过。真实浏览器调用现有 OpenRouter key 返回 401 User not found，已请求管理员更新项目 `.env`，未声称真实模型回填成功；没有新增抓取任务。README 记录模型配置、数据流及验收阻塞。
+
+### [素材港] Guru SSO 认证重构
+
+- `apps/creative-platform/sso.py` / `server.py`：统一接入固定 Guru issuer 的授权码 + PKCE、state/浏览器绑定/nonce、RS256 JWKS 与 claims 校验；HTTP 本地密码、注册、邀请码入口关闭。仅按显式 `(issuer, subject)` 准入和映射管理员，保留原任务归属和全部素材。
+- 本机客户端 `guru-creative-platform-local` 已通过 Guru SSO CLI 0.6.0 创建并回读，使用精确 127.0.0.1 回调；运行配置、加密会话密钥及迁移前 SQLite 备份仅保留在忽略的 `data/creative_platform/`。公网仍未接入；未来需独立 HTTPS web-confidential 客户端。
+- `manage_access.py`、`sso.example.json`、`oidc-client.local.yaml`、`requirements.txt`、README 与 SSO_ACCEPTANCE：补齐准入维护、依赖、标准登出、恢复和部署边界。浏览器真实验证登录、视频解码、登出、再次登录、任务提交及取消；106 条素材维持 83/4/19。
+- 21 项隔离自动化测试通过，覆盖完整 HTTP OIDC 流程、伪造/重放/过期/权限及业务回归。未测试公网或另一真实账号；未接入 Back-Channel Logout，其他应用退出不会实时撤销本站最多 8 小时的会话。未启动新的广大大抓取。
+
+## 2026-10-19
+
+### 2026-10-20 [广大大浏览器] 已核实 App ID 的网站显示名映射
+
+- `skills/guangdada-browser-crawl/scripts/state.py` 允许在显式 scope App ID 完全一致、平台一致时，以 `canonical_app_name` 关联商店名与实际网站显示名；`app.json.app_name` 和点击日志仍保留实际观察名称，未放宽 ID/平台/截图检查。
+- 新增身份映射测试覆盖匹配、错误 ID/平台/商店名、空显示名及无 scoped App ID 拒绝；用于 `io.whif` 的商店名与广大大显示名差异，不更改本批 scope 指纹。
+
+### [社交聊天竞品] 小红书关键词接入登记
+
+- 新增 `config/social_chat_xhs_daily.json`，独立登记乙女向、女性向、虚拟男友、猫箱、星野、破次元恋人、梦女向 7 个关键词及图片/视频范围；不使用广大大 App/双端竞品列表。
+- 新增 `docs/social-chat-xhs-daily.md`，记录 API 合同、日期与排名口径待确认，跨关键词按笔记 ID 合并去重。当前 `enabled=false` / `pending_api_contract`，未调用供应商、未修改定时任务或远端表。
+- 已验证配置 JSON 可解析及 7 个关键词唯一；供应商调用示例尚待用户提供，不猜测接口及展示估值映射。
+
+## 2026-08-06
+
+### [社交聊天竞品] 每广告主每日差异度优先 Top10
+
+- `ua_workflows/video_enhancer/diversity_selection.py`（新增）：在封面日内/历史去重后，按同广告主执行每日 Top10 精选。封面 CLIP 差异度权重 90%，展示估值权重 10%；首条按对同组素材的平均距离选择，后续按与已选集合的最小距离贪心补齐，缺失向量的素材只作为曝光排序兜底。
+- `ua_workflows/video_enhancer/pipeline.py`：新增 `--per-advertiser-daily-limit`，精选前的完整候选保留在 `creative_library` 供历史去重，日快照、分析和飞书只处理入选项；社交聊天工作流固定传 10，其他 VE 工作流默认 0、不受影响。
+- 2026-08-04 / 2026-08-05 已从封面去重后的 225 / 302 条分别精选为 56 / 54 条；所有产品均不超过 10 条，Tipsy 两日均为 10 条。独立库 `data/afizzy_competitor_pipeline.db` 的 `daily_creative_insights` 已裁为 110 条，完整 527 条仍保留在 `creative_library`；操作前备份为 `data/local_db_backups/afizzy_competitor_pipeline.before_daily_top10_20260806.db`。
+- 飞书写入包已生成到 `data/feishu_social_chat_daily_top10_pending/`，使用项目 `.env` 对应的 `ua-materials-env` bot 身份；目标应用当前缺 `base:field:create` / `base:record:read`（并需 `base:record:create`）权限，授权前未写入远端表。
+- `tests/test_social_chat_diversity_selection.py` / `tests/test_social_chat_daily_workflow.py`：覆盖每广告主上限、差异度优先于曝光、缺失向量兜底和 wrapper 固定传 Top10。
+
+## 2026-06-17
+
+### [广大大] 轻量可安装爬取包入口
+
+- 新增根目录 `pyproject.toml`，项目包名 `guangdada-crawl`，安装后提供 `guangdada` CLI；当前包只暴露爬取入口，不默认触发 VE / Arrow2 / 多维表同步 / LLM 分析 / 看板等业务下游。
+- 新增 `guangdada_crawl/`：`jobs.py` 统一把每次爬取落到 `~/.guangdada-crawl/jobs/{job_id}/manifest.json|raw.json|summary.json|run.log`；`cli.py` 提供 `guangdada crawl chart`、`guangdada crawl advertiser`、`guangdada crawl ad` 和 `guangdada job show`；`adapters.py` 薄封装现有 `ua_workflows/shared/guangdada` 爬取内核。
+- `guangdada_crawl/auth.py` / `cli.py`：新增 `guangdada auth status` 与 `guangdada auth login --headed`；登录态默认写到 `~/.guangdada-crawl/auth/state.json`，chart 的 `auth-state` 模式会使用该路径。`auth login --dry-run` 可用于同事 Codex 先检查路径与参数，不打开浏览器。
+- `guangdada_crawl/doctor.py` / `cli.py`：新增 `guangdada --json doctor`，可从任意 cwd 输出包版本、home/jobs/auth 路径、凭据/登录态状态、Playwright/共享爬虫核心/MCP optional extra 可用性，以及是否已具备真实浏览器爬取条件；无登录态或未安装 MCP extra 时返回 `status=setup_needed` 但命令本身仍成功，适合同事 Codex 作为第一步环境诊断。
+- `guangdada crawl ad` 已支持 `--search-flag` / `--app-type` / 从广大大 detail URL 自动解析 `id/type/search_flag`；有 `search_flag` 时会尝试用本机 auth state 拉 `detail-v2` 并写入 `raw.json.items[0].detail_v2`，没有时只写 detail URL seed 且 `summary.json.detail_v2_status=skipped_missing_search_flag`。
+- `guangdada job list --limit N` / `guangdada job artifacts JOB_ID`：新增最近任务发现与 artifact 路径查询。`job list` 会返回最近 job 的 `kind/status/summary/raw_path/log_path`，`job artifacts` 会返回 `manifest/summary/raw/log` 的路径、存在性与大小，便于同事 Codex 不知道 job_id 时先发现再读取结果。
+- 新增 `guangdada_crawl/mcp_tools.py` / `mcp_server.py` 与 optional extra `.[mcp]` 下的 `guangdada-mcp` 入口；MCP 层只注册 `auth_status`、`start_chart_crawl`、`start_advertiser_crawl`、`start_ad_crawl`、`list_recent_jobs`、`get_job_status`、`get_job_artifacts` 等工具，内部仍调用 `guangdada` CLI 并解析 JSON，不把 Playwright 爬取逻辑搬进 MCP，也不触发 VE/Arrow2/飞书等下游。
+- `guangdada crawl advertiser` 新增 `--date-mode active|first-seen`，默认 `first-seen` 表示抓 UTC+8 目标日首次出现的素材；不要因 `resume_advertising_flag` / 重投标记过滤素材，只要 `first_seen` 命中目标日就保留。需要“某日仍在投放”时显式传 `--date-mode active`。MCP `start_advertiser_crawl` 同步支持 `date_mode`；wrapper 现在能从“进度日志 + 最后 JSON”的 stdout 中提取最后 JSON，避免真实爬取成功但 MCP 外层误报 failed。旧 job `20260617T082403Z_advertiser_95055161` 的 PixVerse 2026-06-17 first-seen 口径仍为 3 条。
+- 新增完整 Codex plugin 结构：`.codex-plugin/plugin.json`、`.mcp.json`、`skills/guangdada-crawl/SKILL.md`。plugin manifest 暴露 repo-local skill 与 `guangdada-crawl` MCP server；`.mcp.json` 通过 `python3 -m guangdada_crawl.mcp_server` 启动 MCP，仍依赖同一个轻量 CLI/job artifact 边界。
+- `guangdada_crawl/examples.py` / `cli.py`：新增 `guangdada --json examples`，机器可读返回 first steps、常用 crawl/job 命令、MCP tool 名称和安全边界，便于其他同事 Codex 在不知道用法时先自发现。
+- 新增 `docs/guangdada-crawl-package.md` 和 `codex/skills/guangdada-crawl/SKILL.md`，给同事 Codex 使用时明确边界：默认只产出 raw/job artifact，不写 VE/Arrow2/飞书，多维表和验证码必须人工处理，不做破解。
+- 新增 `tests/test_guangdada_crawl_package.py`，覆盖安装元数据、plugin manifest/MCP/skill、job artifact、CLI dry-run、auth status/login dry-run、doctor from non-repo cwd、examples、job show/list/artifacts、ad detail seed、ad detail-v2 fake-run、chart/advertiser adapter fake-run、MCP CLI wrapper 参数/JSON 解析/失败返回/doctor/examples，以及文档/skill 安全边界。已验证 `.venv/bin/python -m pip install -e . --no-deps`、`.venv/bin/guangdada --help`、`guangdada --json doctor` from `/tmp`、`guangdada --json examples`、auth dry-run、chart/ad dry-run、job list/artifacts、MCP wrapper chart dry-run、MCP wrapper doctor/examples、`.venv/bin/python -m compileall guangdada_crawl`、`.venv/bin/python /Users/oliver/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py /Users/oliver/guru/ua素材` 与该测试文件通过。系统 `python3` 跑 validator 会因缺 `yaml` 失败，项目 `.venv` 可通过。
+
+## 2026-06-15
+
+### [VE] 3星及以上素材模板复刻点击触发入口
+
+- `浩鹏评分` / `尉蓝评分` 已从 1星/2星/3星单选字段改为飞书 number rating 星级评分字段（star，1～5 颗星）；字段 ID 保持 `fldjNfzzoG` / `fldGfV16uF`，代码仍兼容旧文本值解析。
+- `ua_workflows/video_enhancer/template_trigger.py` / `template_trigger_server.py`（新增）：3 星及以上素材可通过 HTTP 点击触发生成 `data/ve_template_copy_jobs/{job_id}.json`，任务中包含来源记录、图片/视频模板初判和 `aigc-template-copy` skill handoff 信息；按钮传 `record_id` 时走单条记录读取，低于 3 星记录返回 `not_top_rating`，避免误触发。
+- `scripts/run_ve_template_trigger_server.py`（新增）：本机触发服务入口，默认读取 `VIDEO_ENHANCER_BITABLE_URL`，支持 `/trigger?record_id=...` 或 POST `/trigger`；可用 `VE_TEMPLATE_TRIGGER_TOKEN` 加简单 token 校验。
+- `scripts/run_ve_template_trigger_links.py`（新增）：把目标日 3 星及以上素材的 `模板复刻触发链接` 写回主表，并把 `模板复刻状态` 置为 `待触发`；默认链接到本机触发服务，也可传公网/内网 `--trigger-url`。
+- `ua_workflows/video_enhancer/template_copy_worker.py` / `scripts/run_ve_template_copy_worker.py`（新增）：本地 worker 可消费 `data/ve_template_copy_jobs/{job_id}.json`，下载/引用源素材、从 `data/template_model_refs/` 选默认模特图，生成 `codex_prompt.txt`、`params.image-editing.json`、`params.image-to-video.json`；默认 dry-run 不调用 Codex、不创建 Video Lab 任务，显式 `--execute-codex` 才拉起本地 Codex。
+- `ua_workflows/video_enhancer/template_trigger_server.py`：新增 `--auto-prepare` / `VE_TEMPLATE_COPY_AUTO_PREPARE`，点击触发后可自动进入 worker 准备态；当前本机临时服务在 `screen` session `ve-template-trigger` 中运行，已开启 `--auto-prepare --auto-execute-codex`。Video Lab CLI 已安装并登录，`preset_image_editing` 与 `preset_image_to_video_single` payload dry-run 均通过。
+- `ua_workflows/video_enhancer/template_copy_worker.py`：`--execute-codex` 现在会真正调用本地 `codex exec` 跑 `$aigc-template-copy`，解析最终消息里的 `VE_TEMPLATE_COPY_RESULT_JSON`，并写回 job 的 `completed` / `quality_failed` / `blocked` / `codex_failed` 状态；skill 只有输出 `status=completed` 且 `quality_verdict=passed` 才会被映射为多维表 `已完成`，低于 90 或质量不达标统一写 `失败`。2026-06-17 增加 `--codex-model` / `VE_TEMPLATE_COPY_CODEX_MODEL`，当前临时服务固定 `gpt-5.5`，用于规避默认模型 `Selected model is at capacity`；代码兼容把口语写法 `gpt5.5` 归一成 `gpt-5.5`。
+- `ua_workflows/video_enhancer/template_trigger_server.py`：新增 `--auto-execute-codex` / `VE_TEMPLATE_COPY_AUTO_EXECUTE_CODEX`，点击触发后可从准备态继续进入本地 Codex skill 执行层，并根据结构化结果回写 `模板复刻状态`；测试可用 `VE_TEMPLATE_COPY_CODEX_BIN` 指向 fake codex，避免消耗 Video Lab credits。
+- `ua_workflows/video_enhancer/template_trigger.py` / `template_trigger_server.py`：触发成功后会把源记录的 `模板复刻状态` 写为 `已提交` 并回填 `模板复刻任务ID`；worker 准备失败时写 `失败`。飞书 URL 字段写入必须使用 `{"text": "...", "link": "..."}` 结构，不能直接传裸 URL 字符串。
+- `scripts/run_ve_template_trigger_links.py` / `ua_workflows/video_enhancer/template_trigger.py`：新增 `--include-all-records --link-only` 口径，可给目标日期所有记录预写 `模板复刻触发链接`，不修改状态/任务 ID；点击时服务端仍重新读取记录并校验 3 星及以上，低分或未评分会返回 `not_top_rating`。用于避免“打完星但行里没有链接”的体验问题。
+- `ua_workflows/video_enhancer/template_trigger.py` / `template_trigger_server.py` / `scripts/upsert_ve_template_rating_link_workflow.py`：新增评分变更自动写链接链路。Base Workflow 使用 `SetRecordTrigger` 监听 `浩鹏评分` / `尉蓝评分 >= 3`，POST 到 `${PUBLIC_URL}/ensure-link`；服务端只给当前记录写 `模板复刻触发链接`，不会创建 job、不会调用 Codex 或 Video Lab。2026-06-17 因 Quick Tunnel 变更，旧 Workflow `wkf41pFBFURE4nX2` / `wkfeSi3DxnYRdjdD` 已禁用；当前备份表 `tblF7kz1DuncOpc5` 启用 `wkfg0v9Ry1jFKSAe`（浩鹏评分）与 `wkfGUdzKkgFThiUI`（尉蓝评分），指向 `data/ve_template_trigger_public_url.txt` 当前 URL。
+- 已用备份表 `tblF7kz1DuncOpc5` / 视图 `vewd67ZK4J` 实测：给记录 `recvmEuOFWXMdQ` 临时写入 `浩鹏评分=3` 后，通过 Cloudflare 公网触发链接点击生成 job `2026-06-15_671ab51710dacabec2ba686f26b812e7_1b01f235`，本地状态为 `prepared`；随后真实调用 Video Lab 跑通 GPT Image 2 首帧图和 Vidu Q3 Turbo 图生视频，任务 ID 分别为 `a653fe5c-7dbc-4311-b150-4c04962751e7` / `8b1bb5bb-43b5-4527-b0ad-130377b61dfd`，实际消耗 47 credits。但该样本质量不达标：模特图是近景自拍，强行生成全身跳舞模板导致身份与姿态迁移不稳定；已把本地 `real_run_summary.json` 标为 `quality_verdict=failed`，并将表内状态回写为 `失败`。
+- `scripts/build_ve_template_workflow_payload.py`（新增）：生成飞书 Base `ButtonTrigger -> HTTPClientAction` Workflow JSON；按钮 Workflow 需要一个飞书服务器能访问到的触发 URL，本机 `127.0.0.1` 仅适合浏览器直接点链接触发。
+- `scripts/upsert_ve_template_button_workflow.py`（新增）：按当前 tunnel URL 创建或更新同名 Base Workflow，并可启用；临时 Cloudflare Quick Tunnel URL 改变时用它替换 Workflow 里的 `/trigger` 地址。
+- `docs/ve-template-trigger-deployment.md`（新增）：记录本机临时 Quick Tunnel 部署、Workflow URL 替换命令，以及后续 Mac mini 常驻部署步骤。
+- `ua_workflows/video_enhancer/sync.py`：主表字段定义补充「模板复刻状态」「模板复刻任务ID」「模板复刻触发链接」，用于后续把点击触发状态写回多维表。
+- `tests/test_ve_template_copy_worker.py` / `tests/test_ve_template_trigger.py`（新增）：覆盖 3 星及以上记录触发落盘、低于 3 星拦截、Workflow payload 会 POST 当前记录 ID、fake codex 结构化成功/质量失败解析，以及服务端 `--auto-execute-codex` 状态回写。
 
 ## 2026-06-12
 
@@ -1253,6 +1420,14 @@ daily_ua_job.sh（可选）
 
 主流程合并后的 `analysis` JSON 还可能含：`pipeline_items`、`exclude_from_cluster`（2.8）、`launched_effect_match`（2.9）、`semantic_dedup`_* 等，以当日产物为准。
 
+## 2026-08-05
+
+### [社交聊天 AI] 新增独立日工作流
+
+- 新增 `config/social_chat_apps.json`，覆盖 Linky AI、zeta、LoveyDovey、PolyBuzz、Character AI、CHAI、Talkie、Tipsy 的 Android appid。
+- `scripts/run_social_chat_daily.py` / `scripts/cron_social_chat_daily.sh` 复用 VE 主流程的广大大抓取、封面去重、分析和多维表同步，使用 `workflow_social_chat_{date}` 独立产物前缀。
+- 爬取节点新增自定义配置文件/分类及 `--skip-advertiser-filter`，该工作流不按广告主名字筛选；默认 VE 行为保持不变。
+
 ## 2026-10-15
 
 ### [广大大] 浏览器逐卡采集 skill 与证据状态机
@@ -1298,3 +1473,333 @@ daily_ua_job.sh（可选）
 - `skills/guangdada-browser-crawl/SKILL.md` 标记 `metadata.version=1.0.0`，发布范围为浏览器展示广告采集、逐项点击读回和截图证据、逐 App 完成清单、断点恢复及六帧视频初筛。
 - 本版验证：37项 Python 状态机/真实 FFmpeg 抽帧测试、6项 JS 点击助手测试及 skill quick_validate；真实页面覆盖代表筛选值与双端 Tipsy 单卡/分页，Android SeaHaze100条和Sea Soul36条全量采集已验收。未穷举所有筛选组合、未完成新版 iOS 全量验收，内容仍为未完整审听的抽帧初筛。
 - 本次提交仅包含该浏览器 skill、对应测试和相关日志；采集视频、登录态、运行证据和分享 ZIP 留在本地。
+
+
+### [广大大浏览器 skill] npm 分发包（2026-10-16）
+
+- 新增 `packages/guangdada-browser-skill/`，包名 `guangdada-browser-skill`、版本1.0.0，Node20+、零npm依赖，提供 install/doctor、CODEX_HOME或自定义skills目录、dry-run、相同内容免写、不同内容拒绝隐式覆盖、force可恢复备份及失败回滚；安装无postinstall、无网络请求、不启动浏览器或读取凭据。
+- prepack从已提交skill按8文件白名单生成独立payload并校验版本与SHA256，npm tarball仅13文件；不含项目.env、登录态、视频和业务下游。构建产物skill目录和tgz不进Git。
+- `test/installer.test.cjs` 8项测试通过，含真实npm pack与离线npm exec安装、目录含空格、备份/回滚、符号链接拒绝、损坏阻断与依赖缺失；本机doctor确认Python/FFmpeg可用，但不代表浏览器登录已检查。
+- 本地包 `data/skill_exports/guangdada-browser-skill-1.0.0.tgz`，31169字节，SHA256 `91db52a7f1c042d8a8ae95e210139aa1e824282bc1e13a08f2407a5daca72a03`；registry查询该包返回404，本机npm whoami返回ENEEDAUTH，未发布。包保留UNLICENSED，公开发布前由权利人决定许可。
+
+
+### [社交聊天竞品] 用户确认双端完整名称总名单（2026-10-16）
+
+- 新增 `config/social_chat_browser_competitors.json`，逐字保存用户提供的iOS10项、Android11项完整App名，供浏览器采集选品与搜索使用；平台分任务，未提供的另一端名称不自行推断。名单不携带默认筛选条件，也不触发采集；现有生产日工作流配置保持原状。
+
+### [社交聊天竞品] 手动浏览器日采集与全局前10%（2026-10-16）
+
+- 用户确认新口径：北京时间昨天首次发现的视频，渠道/地区/语言/尺寸不限，仅排除真人口播；iOS10项和Android11项全部完成后合并按展示估值取前10%，数量向上取整。保持手动执行，不创建定时任务；不沿用旧工作流每广告主Top10/差异度精选或旧日韩/9:16/男性/女频条件。
+- 新增 `config/social_chat_browser_daily.json`、`ua_workflows/social_chat_browser_daily.py`、`scripts/run_social_chat_browser_daily.py`，提供 prepare/select/sync/provision。prepare仅准备浏览器任务；真实采集仍由 `guangdada-browser-crawl` 执行，不调用广大大私有接口/项目爬虫。select强制完整21项清单、状态机REVIEW_COMPLETE、可见首次发现标签、六帧审核和有效估值；未解决的目标日内容或字段缺失阻塞全局排名。
+- 通过项目.env的飞书应用新建 Base `Adz4bj9ECaCCJrsgkj7coheYn3c`，表 `tblwhAqPfQoBXK3Q`，25个业务字段已配置并读回校验，素材名称为主字段；仅清理该新建空表的默认字段和10条空白行，未插入测试素材。provision实际验证字段管理和记录读取，真实素材写入尚未端到端执行。
+- sync以日期/平台/App ID/广告ID幂等写入，逐字段读回后才将同日旧落选记录改为当前入选=false，保留历史；不写旧VE表、不发群消息。new skill `skills/social-chat-browser-daily/SKILL.md` 已安装到本机同名skills目录，说明见 `docs/social-chat-browser-daily.md`。
+- 已准备 `data/social_chat_browser_daily/2026-10-15/` 的21项任务，当前尚未真实采集；远端表0条素材。`tests/test_social_chat_browser_daily.py` 23项通过（全局取整、单位换算、日期语义、部分采集阻塞、待复核阻塞、幂等写入、同日退榜及写入读回失败保护），新skill quick_validate通过。
+
+### [社交聊天竞品] 改为 App ID + 最新创意，重跑21项单卡测试（2026-10-16）
+
+- 用户纠正采集顺序：日期设置后选择最新创意，每次App ID搜索并选中广告主后必须重新点击最新创意；全量拿齐后在本地按实际展示估值合并选前10%，不在网页按估值预筛。daily config、任务说明、两份skill与已安装副本已更新；默认新目录为 `data/social_chat_browser_daily_latest/{date}`，旧条件证据不混用。
+- 浏览器状态机增加最新创意排序与 `query_type=app_id` / `query_app_id`，仍核对完整App身份、正确平台和唯一广告主；排序点击必须晚于该App的选中事件。新增对应回归，状态机与daily测试共61项通过。
+- `config/social_chat_browser_app_ids.json` 保存21项平台映射：20项通过广大大候选ID/已选图标核对，其中18项还由单卡详情商店链接核对；Heyyyy iOS ID `6761748236` 由官方App Store确认，但广大大按完整名和ID均无可确认候选，不算零素材。
+- 按最新条件重跑21项：18项单卡打开并身份校验通过，dotdotdot iOS与Talkie Lab iOS目标条件下无卡片，Heyyyy待确认。259条脚本点击检查通过，9条失败日志保留；20项已选App均有独立且晚于选中事件的最新创意点击，全部事件截图SHA256复核通过。证据与清单在 `data/social_chat_browser_probe_20261016/latest-restart/`；此前旧排序测试保留在父目录，不能算本轮通过证据。
+- 此轮按用户要求仅做单卡交互测试：不翻页采全、不抽帧内容筛选、不计算/写入正式榜单。临时桌面视口用于解决窄栏候选点击遮挡，结束已恢复默认；广大大标签保留以便后续继续。
+
+## 2026-10-19
+
+### [广大大浏览器日采集] 首次发现日期口径修正
+
+- 用户确认详情日期范围起点即首次发现；社交聊天技能、通用广大大技能及已安装副本同步更新，明确单独首次发现字段优先、否则采用详情范围起点。
+- `social_chat_browser_daily.discovered()` 支持从真实详情范围提取日期，仍拒绝仅凭旧 first_seen 或列表日期；保留原始证据，新增范围/显式字段优先级回归测试。
+
+### [广大大浏览器] 目标日窗口采集与只读检查
+
+- 按用户新规则，国家/渠道不限时只读检查，有残留才清除；最新创意排序遇首张首次发现早于目标日的详情即停止，明确字段优先于详情范围起点。已同步两个 repo/installed skill。
+- 2026-10-18 剩余18项原始窗口采集落盘 `data/social_chat_window_20261018`：101条目标日，79条保留、9条真人口播排除、13条YouTube外链无下载源待补全；已保存逐卡脚本点击/截图/哈希、日期截止证据及六帧审核。合并先前Heyyyy和Whispy iOS后107条，83保留/11排除/13待补全。
+- 目标日清单用独立证据校验 `validation.json`，明确不是旧版全列表FSM通过；因13条媒体未补全，不计算全局Top10%、不写飞书。汇总交付 `delivery/index.html` / `全部素材清单.csv`，83条视频本地路径已核验，首条在浏览器实际播放成功。
+
+### [YouTube 原始链接补全]
+
+- 用户授权补全后，使用已安装 yt-dlp 仅下载已从广大大详情观察到的12个公开YouTube原始URL，不使用cookies或读取浏览器登录态。12条均成功下载，真实六帧审核保留11/排除1条真人口播；汇总为94保留、12排除、1待补全。
+- 剩余 `cf861c6e02f2f08e0c16b6f2f325745b` 实为Admob，独立详情无原始链接、video src为空且下载禁用，证据保存在 `empty-original-link.txt/.jpg`。此前把13条全部称为YouTube外链不准确，已在交付中修正。
+
+### [广大大浏览器 skill] YouTube 外链补全规则
+
+- 用户要求将本轮成功流程加入 skill：详情已观察到的 YouTube 原始链接主动尝试 yt-dlp 单视频下载，记录来源、日志、大小和 SHA256，解码检查后继续真实六帧审核；不读取 cookies/共享登录态。
+- 补全失败保留待处理原因与断点，不作内容排除或零估值处理；空原始链接/其他渠道不得误标 YouTube。明确媒体子步骤与原有状态机关卡的关系，同步通用/日采集两份项目 skill 与本机安装版。
+
+### [社交聊天竞品] 2026-10-18 前10%导入飞书
+
+- 用户明确“按前10%，解决不了的就不解决”，本批跳过1条无视频未审核Admob，在94条已审核可用视频中全平台合并按展示估值取10条；不将该例外改成日常默认规则。已写入原指定表并添加“视频附件”，10条记录25项业务字段和10个附件token/大小均API读回核验。
+- 批次脚本 `data/social_chat_window_20261018/run_scripts/import_feishu_top10.py` 重新核验94条日期、六帧、源哈希与审核，保留独立窗口校验及用户例外，不冒充旧FSM通过。排名/结果分别存 `selection-with-media-waiver.json`、`feishu-sync-result.json`，预览和汇总已更新。
+- 真实写表发现并修复 `social_chat_browser_daily.sync` 请求token格式：飞书拒绝UUIDv5，改为批内容摘要生成稳定UUIDv4格式；数值字段API返回十进制字符串，读回支持数值转换并仍拒绝不一致/非有限值/布尔值。回归测试25项通过。
+
+### [社交聊天飞书表] 字段结构调整
+
+- 用户要求删除“入选数量/有效候选总数/全局排名”；主字段改名appid并填实际App ID，App完整名称改名广告主。广告主/平台改为单选，投放渠道/投放地区/文案语言改为多选，已初始化真实选项并按原数据回填。10条记录及视频附件保留，API读回22项业务字段与附件一致；迁移前快照留在批次目录。
+- 同步字段映射、读回校验、业务skill/本机副本与文档同步更新，避免下次复建删除列；测试覆盖选项值及主列。
+- 授予霍振堃管理权限尚待账号标识：当前应用通讯录查询缺权限，现有协作者只有应用，已向用户请求飞书绑定邮箱或本应用open_id，未猜测账号或授权他人。
+
+### [飞书协作者] 霍振堃管理权限已授予
+
+- 用户确认添加官方API调试台可信回调后完成用户登录授权；使用广告之神（cli_a906892c9c8c1cb3）的user_access_token按“霍振堃”搜索，唯一匹配open_id `ou_e94416b8d17116481afde4e229147771`。
+- 应用身份为目标Base `Adz4bj9ECaCCJrsgkj7coheYn3c`添加该openid的full_access/container权限，并GET协作者列表核验成功；搜索/授权结果保存在本批次目录，无群消息或邀请通知。临时令牌文件已删除、REPL变量已清空、调试台已关闭。
+
+### [社交聊天竞品] 每日09:00自动采集与导入
+
+- 用户授权后续每天早上执行，创建当前聊天heartbeat自动化，id=automation，ACTIVE，每天北京时间09:00。沿用21项竞品、昨天首次发现、最新创意截止、口播排除、YouTube补全、已审核候选前10%向上取整、视频附件和目标表新字段；缺失媒体有限重试后单列跳过，验证码/登录失效暂停。
+- config.execution设scheduled并登记schedule；业务skill及本机副本同步自动执行授权与缺失媒体边界。不另建系统cron或新聊天，不扩展到群消息/其他表。
+
+- 用户随后要求提前：同一自动化已更新为每天北京时间07:00，保持ACTIVE；config及skill同步，不新增重复任务。
+
+### [飞书表] 来源字段
+
+- 新增来源单选：广大大、facebookad libarary、小红书、抖音（按用户提供拼写）。现有本批10条回填广大大，后续浏览器日采集同步映射增加来源=广大大，区别于投放渠道；业务skill和本机副本同步。
+
+### [广大大 skill] 2026-10-19 本地分享包
+
+- 最新通用浏览器skill按8文件白名单重打npm tgz和直接安装ZIP，包含YouTube外链补全及目标日窗口规则。产物在data/skill_exports/2026-10-19，版本沿用1.0.0，以日期与SHA256区分，未发布registry；不包含业务日采集配置、账号、登录态或视频。
+- npm安装器8项测试、skill quick_validate、ZIP逐文件一致性与tgz入口一致性检查通过；包内分别9项（含安装说明）和13项。
+
+### [广大大 skill] 采集启动群通知与@所有人
+
+- 用户授权每次实际采集开始发群通知，先到测试群“霍振堃”。通过广告之神搜索唯一群并GET核对，保存chat_id于业务config，群允许所有成员@。已发一条明确“不重新抓取”的测试通知，message_id=om_x100b626833f688a0cf9a62837ebce9f；应用缺im:message读取权限，未重发，改在本机飞书群界面确认发送者、正文及真实@所有人并保存截图。
+- 新模块social_chat_crawl_notice提供 --run-dir / --test：稳定请求UUID+持久化回执去重、正式启动必须有目标日期、精确核对群名/chat_id、不擅自扩大接收人。发送API归一化回执可核验，不要求读取全部消息；异常状态保留message_id，禁止因回读失败重发。
+- 通用skill新增按用户授权目标发送通知的规则，业务skill/已安装副本、07:00同一自动化prompt同步；通知仅启动一次，不扩展完成/失败通知。通用分享包不携带私人群ID或凭据。30项业务和通知测试、两个skill quick_validate通过；本地ZIP/npm包重新打包。
+
+### [广大大日采集] 完成播报与视频+图片范围
+
+- 用户新增完成日报，广告之神已向既有霍振堃测试群发送真实10-19执行/10-18首次发现的结果：21项App/平台、上新107、详情107、视频成功106、口播排除12、缺失1、审核94、前10%入表10，卡片附多维表格按钮。message_id=om_x100b6268a97410acce4fd7482c49186，官方发送回执已保存；没有再次@全体。
+- 新增social_chat_crawl_report.py，发前核验候选/哈希与远端入选记录/附件，稳定UUID/本地回执避免重复。完成日报单独授权，仅同测试群；后续支持视频/图片分项及合计，明确监测范围而非平台全集。
+- 用户随后要求每日获取视频和图片，config.media_types改为两类、移除仅视频筛选；prepare保存21项App/42项类型检查计划，生成指令同步最新日期截止/通知/审核规则。07:00同一自动化、通用/业务skill及本机副本同步：视频六帧、图片原图验证，合并取前10%，上传对应附件，日报分项统计。图片/混合采集尚未真实页面验收，旧视频FSM不能冒充支持图片，自动化明确要求执行时先补全验证独立混合证据/同步适配。
+- 测试36项通过，两个skill校验通过，本地分享ZIP与npm包重打并核对哈希。
+
+### [广大大混合类型] 默认空选纠正
+
+- 用户指出类型空选即图片&视频，撤销之前分视频/图片两轮及42项计划。改为21项App/平台各采一次混合列表，逐卡识别类型；只读核对默认，有残留才清除。prepare计划、config、两份skill/本机副本及07:00自动化同步。
+- 10-17批次按用户要求继续暂停，旧视频限定查询证据保留，hold记PAUSED_BY_USER，恢复前须清除残留并按新scope建批次或迁移；未继续浏览器操作或发新群消息。
+
+### [小红书] EveryInfra 单关键词测试入口
+
+- `scripts/test_xhs_keyword_search.py`：单页关键词搜索测试，默认乙女向/all/newest/any_time，保存真实请求与响应，检查笔记ID、URL、分页及媒体字段；无自动重试/翻页，不写飞书或发通知。
+- 已按用户提供的官方文档配置 EveryInfra 端点与游标字段；本地暂缺 `EVERYINFRA_API_KEY`，真实调用尚未执行，配置保持禁用每日任务。
+
+- 2026-10-19 已真实测试 EveryInfra「乙女向」第一页：20条笔记、14条视频均返回播放地址、20条返回图片字段，存在下一页；结果位于 `data/xhs_keyword_tests/20261019T173135_757379/`。仅搜索字段核验，未下载审核媒体、未翻页、未写飞书、未启用每日任务。
+
+- 2026-10-19 18:09 实测「乙女向 / last_24_hours / newest」：18条（7视频、11图文），无下一页；全部互动数据导出至 `data/xhs_keyword_tests/20261019T180900_836415/互动数据.csv`。本次7条视频未返回播放URL，与上次不限日期测试不同；未自动补调收费详情或写表。
+
+### [广大大混合日采集] 2026-10-17 完整批次与图片入表
+
+- `ua_workflows/social_chat_mixed_window.py`：新增独立目标日窗口校验，核对21项混合列表 scope、App ID搜索后重新点击最新创意、真实身份与点击前后截图哈希、连续页/卡位、首张早于目标日的截止证据；分别验证所有原图格式/尺寸/解码/哈希与视频源/六帧，并绑定实际查看的审核看板和媒体清单哈希。不改写旧视频FSM为通过；缺估值、未审核、身份失败仍阻断，媒体失败例外不能隐藏已有媒体。
+- `ua_workflows/social_chat_mixed_delivery.py`：图片与视频候选合并按展示估值取前10%向上取整；生成带视频封面、本地播放和原图的HTML，上传图片附件/视频附件，新增素材类型/图片链接字段，地区、渠道和语言拆为独立选项。重跑按唯一键更新、只退选同目标日旧入选，逐字段和附件token/大小读回；其他日期记录保留。
+- `social_chat_crawl_report.py`：兼容明确的 unavailable 媒体失败记录与独立混合校验；只在真实写表读回后播报，分别报告视频/图片上新和成功数，试玩范围外单列。修正历史 Heyyyy 特殊路径只在该实际子目录存在时使用。
+- 本轮 `data/social_chat_mixed_20261017_restart/` 已完成21/21：目标日1083张卡，包括765视频、317图片、1条HTML试玩（原先误判图片，已按实际iframe/截图修正并保留原始证据）。视频752成功、13条有限重试仍无法获取（8条YouTube、5条Admob无源）；317条图片的321张原图全部实际查看。752条视频全部实际查看六帧；45条真人产品口播排除，真人情景短剧和AI角色对话保留。有效1024，合并前10%103条（86视频、17图片）。
+- 飞书正式写入103条，字段/附件/当前入选读回通过，保留10-18原10条，UI可见总计113条。广告之神完成播报已发送霍振堃测试群，message_id=`om_x100b626a95df14b4b070e3702c44579`；没有再次@全体。启动通知沿用本批已有回执，未重发。原图、视频、失败日志、独立清单、审核记录、选择结果、写表回执、播报回执和HTML均存本批次目录。
+- 业务skill及本机副本更新为混合校验/交付模块入口；旧视频CLI不承担混合证据认证。`tests/test_social_chat_mixed_delivery.py` 新增混合合并取整、未审核/例外阻断、原图缺失/篡改、附件和字段读回验证；连同浏览器日采集/启动通知/完成日报41项测试通过，业务skill quick_validate通过。看板已真实验证视频播放与原图显示。
+
+- 2026-10-19 18:18 已按官方 `xiaohongshu/video` 文档实测一条搜索返回的视频笔记（ID `6ad5eaf1000000002f039e2d`），付费 $0.005556，返回同一笔记ID及播放URL；实际下载4,019,606字节，ffprobe确认720×954、22.799秒，FFmpeg完整视频流解码通过。证据在 `data/xhs_keyword_tests/20261019T180900_836415/video_test_181859/`。
+
+### [小红书] 7关键词最近24小时全分页搜索
+
+- 新增 `scripts/run_xhs_keyword_search.py`，顺序采集配置中全部关键词，按真实游标翻至末页，逐页保存请求/响应/断点，跨关键词笔记ID去重及命中词合并，输出CSV；重复页或游标等异常标记未完成，不冒充末页。明确非计费429有限重试，其他不确定结果不盲目重发。
+- 2026-10-19 18:35～18:37 实测7关键词全部末页，共25页/25次请求、491条命中、去重480篇（132视频/348图文），实际回执费用合计$0.138900。独立核对请求游标链、终止游标、数量、费用和每条发布时间均通过，日期异常0。产物 `data/xhs_keyword_runs/20261019T183543_693287/`，未下载媒体、未补调详情、未写飞书或更改定时任务。
+
+### [小红书] 每日00:00点赞前10%媒体入表与广告之神日报
+
+- 新增 `ua_workflows/xhs_daily.py`：重验7关键词真实搜索与游标/时间/合并证据，去重后点赞全局Top10%向上取整，同赞发布时间降序；缺点赞/时间/类型阻塞。下载仅入选笔记媒体，视频缺URL才用保留token的原文调用video，图文下载返回的全部图片，保留原字节及PNG，核验解码/尺寸/哈希。
+- 幂等写指定飞书表：来源小红书、笔记/关键词/作者/赞藏评分享及图片视频附件，null不当0，不填伪造App/广告估值字段；媒体失败不补位，保留部分完成，远端读回核验字段与附件。已真实创建并核验新增字段，未立即写入本批记录或发群消息。
+- 广告之神应用身份检查、霍振堃测试群身份检查、稳定UUID/消息回执去重，日报沿用广大大卡片版式，附表格按钮；不@全体、不发额外启动消息，不影响07:00广大大任务。
+- 自动化 `24` 已ACTIVE，Asia/Shanghai每日00:00，首次2026-10-20 00:00；执行 `.venv/bin/python -m ua_workflows.xhs_daily run`。同日目录/文件锁固定日期，完整日报已完成重跑直接返回。
+- `tests/test_xhs_daily.py` 6项通过：原始证据与合并排名、ceil/同赞时间排序、null点赞阻塞、未末页阻塞、越界日期阻塞、字段语义和附件读回及部分日报幂等。真实480篇搜索证据plan通过，选48篇；首次完整下载/写表/群播报尚待午夜执行。
+
+### [抖音] EveryInfra 单关键词单页测试
+
+- 新增 `scripts/test_douyin_keyword_search.py`，默认乙女向、one_day、newest、limit20；仅一次请求，无自动翻页/重试，保存请求、响应、互动CSV与日期核验，不下载或写表。
+- 2026-10-19 18:48 实测返回17条，发布时间均落在最近24小时，实际计费$0.000556；响应均标记 image，17条同时有 video_url，不能仅据播放链接判断视频笔记。证据 `data/douyin_keyword_tests/20261019T184855_240303/`。
+
+### [抖音] 搜索媒体字段异常实测
+
+- 样本 `7698301790031103679` 搜索标记 `media_type=image`，`video_url` 实际GET返回 audio/mpeg、MP3、308579字节，ffprobe仅1条音频流，约19.252秒，完整解码通过；证据在单页测试目录 `media_probe/`。
+- 同作品 `douyin/video` 详情补调返回空对象，费用0，未拿到图片。定位为供应商返回的video_url在此样本指向音频，不能把有URL视为成功获取视频；media_type是否错需原帖或原图证据，不据此断言。未改写原始数据、未上传音频冒充视频。
+
+- 2026-10-19 18:54 换测搜索作品 `7698318125444909978` 的douyin/video仍空结果且费用0；随后用供应商真实搜索响应样例作品 `7635624004494435825` 调video成功，费用$0.000556，下载1,006,389字节MP4，H.264视频576×1024+AAC音频，8.1秒，完整解码通过。关键反证：详情仍返回media_type=image，实际确有视频流，证明供应商该字段至少在此样本错误。证据 `data/douyin_keyword_tests/documented_video_20261019T185449/`。后续必须独立保存reported_media_type与探测actual_media_type，不能依赖标签或URL存在性判断媒体成功。
+
+### [抖音] 全关键词最近24小时数量与分页能力核验
+
+- 新增 `scripts/test_douyin_all_keywords.py`，每关键词仅一次one_day/newest/limit50请求。实时catalog及实际7次响应均没有分页游标或has_more，不能声称翻到末页或全量页数。
+- 2026-10-19 18:58批次：乙女向14、女性向2、虚拟男友18、猫箱16、星野13、破次元恋人1、梦女向0，共64条命中；梦女向空响应未收费，总费用$0.003336。证据和去重互动CSV在 `data/douyin_keyword_runs/20261019T185816_011515/`。未补调媒体、未写表或创建抖音定时任务。
+
+### [抖音] 午夜点赞前10%媒体入表及群日报
+
+- 新增 `ua_workflows/douyin_daily.py`、`config/social_chat_douyin_daily.json`、`docs/social-chat-douyin-daily.md`；7词one_day/newest/limit50搜索，原始证据核验、作品ID去重后按点赞取前10%向上取整，只下载入选项。抖音无翻页能力明确披露，缺赞/日期及新分页信号阻塞。
+- 下载后按真实视频流或原图解码确认媒体，拒绝音频/封面冒充，缓存一次付费详情补全结果；失败不补位，保留分母。复用已存在小红书通用飞书辅助，不修改其00:00任务或广大大07:00任务。
+- 飞书平台及来源均标注抖音，笔记互动/原文/真实附件幂等写入同一指定表；远端provision已核验平台单选含抖音，未即时写入素材或发群。日报按广大大样式，明确无分页范围和部分失败，发广告之神的霍振堃测试群，不@全体。
+- 新增 `tests/test_douyin_daily.py`，与 `tests/test_xhs_daily.py` 共12项通过；真实63篇算出7篇入选的plan通过。`scripts/test_douyin_all_keywords.py` 增加--run-dir供每日落盘，已有证据不覆盖。
+- 已创建ACTIVE本聊天自动化 `24-2`：每天北京时间00:00，首次2026-10-20 00:00。完整首批下载/上传/播报尚未运行，不以字段测试冒充日报完成。
+
+### [抖音] 2026-10-20 午夜批次搜索异常阻塞
+
+- 已执行自动化24-2对应 `douyin_daily run`，日目录 `data/douyin_daily/20261020/`。返回49条已知命中；星野11条中3条posted_at早于请求24h窗口（含10/3与10/18）；破次元恋人ReadTimeout、计费未知，未自动重发。其余词响应保存，梦女向空结果费用0。
+- 校验按规则阻塞在排名前：未计算前10%、未下载媒体、未写飞书、未发送成功/部分完成群日报。证据与 `blocked-result.json` 已落盘，避免把失败词当0、把旧帖混入最近24h或重复计费。
+
+### [抖音] 午夜批次授权恢复并完成入表/播报
+
+- 用户2026-10-20授权旧帖直接剔除、破次元恋人额外重试一次。已单独重试成功1条，新增费用$0.000556；原超时计费仍未知，其余6词未重新搜索。保存原summary与重试授权/结果，不覆盖原始响应。
+- `douyin_daily.select` 改为先剔除请求24h窗之前旧帖并落清单，日期缺失/未来、点赞缺失等仍阻塞；自动化24-2已同步此规则，不将一次重试授权扩展成不确定费用自动重试。
+- 本批50条命中剔除3条旧帖，47篇合格、点赞前10%取5篇；均实际图文，共16张原图对应附件，0视频、0失败，已写指定飞书表，平台/来源抖音；再次独立核验业务字段、哈希、解码、附件token和精确大小均通过。广告之神已向霍振堃群发日报，message_id `om_x100b6258e1cfd884ce33a3904b2b270`，未重复@或发多条。
+- 运行中补齐实际观察到的douyinpic.com/douyinmusicpromotion.com/amemv.com媒体域名，搜索音频/下载失败仍可复用缓存详情原图列表，避免误判为不可获取；无新搜索/已完成详情重调。自有旧worker在第五条尚无付费详情intent时因CDN GET等待终止并以修正版恢复，证据 `resume-download-fix.json`。
+- `tests/test_douyin_daily.py` 补旧帖先于点赞剔除、未来时间拦截、缓存原图兜底；与xhs测试共15项通过。批次证据 `data/douyin_daily/20261020/completion-validation.json`，首批前后搜索快照差异已在群日报披露。
+
+## 2026-10-20
+
+### [小红书] 午夜批次断点恢复、全量媒体入表及群日报完成
+
+- 用户明确授权重试星野第5页后，新增 `scripts/resume_xhs_keyword_search.py`，仅从原checkpoint续采，保留旧请求、汇总备份和授权记录；其他6关键词不重复请求。星野续至第12页末页，7关键词合计33页、651次笔记命中，跨关键词/分页去重607篇；原超时调用费用仍未知，回执已知费用不冒充全部费用。
+- `ua_workflows/xhs_daily.py` 增强：视频CDN原URL按Content-Range分段下载并断点续传，核对每段/总大小；图片加Referer及User-Agent解决真实405；大于20MB的附件走飞书官方prepare/part/finish并记录分片校验/回执；重跑校验已匹配远端记录后不重复更新。未修改其他平台流程。
+- 本批 `data/xhs_daily/20261020/` 报告归属2026-10-19，按各页请求时刻前24h（含续采，不声称严格自然日）。607篇点赞全局前10%向上取整61篇，21视频/40图文，最低111赞；全部213个媒体文件（21视频/192图片）下载、解码及SHA256核验通过。
+- 飞书指定主表实际61篇小红书当前入选记录，业务字段、附件token/大小及入选集合读回通过，失败0；已有广大大/其他平台记录保留。首轮51成功/10失败证据在 `sync-attempt-1/`，修复后无失败。独立证据为 `delivery-validation.json`。
+- 广告之神已向已核实霍振堃测试群发送唯一完成日报，message_id=`om_x100b6258ad118cb0ce80a054eb732ea`，未@全体；回执 `report-receipt.json`、`daily-result.json`、`execution-status.json` 已落盘，防止重复发送。每日00:00自动化24保持启用。
+- `tests/test_xhs_daily.py` 9项通过，新增分段下载范围/尺寸/断点/来源头及大文件分片上传/回执复用测试。
+
+
+## 2026-10-20
+
+### [社交聊天竞品] 用户确认17号日期规则与采后重投剔除
+
+- 用户明确确认17号采集口径正确。日采集只使用详情日期范围起点判断目标日与截止；独立首次发现旧日期仅保存，不参与停止判断。重投卡片也先逐卡保存，21项全采封账后按可见独立重投标签统一排除，剩余审核可用视频/图片合并取展示估值前10%。
+- 同步项目与已安装两份业务/广大大skill、prepare任务说明、独立混合媒体筛选、日报重投分项及07:00现有自动任务。保留原始采集证据，不自动重写历史批次、不重发历史群通知。
+- 回归覆盖旧独立首次发现日期不抢占范围起点、只见独立首次发现而无范围时阻塞、重投标签与标题子串区分、重投剔除后重新计算Top10%及日报统计对账。
+
+
+## 2026-10-20
+
+### [抖音] 多维表专属视图布局
+
+- 调整 `tblwhAqPfQoBXK3Q / vewqmFbfSz` 抖音视图：正文、图片/视频附件、赞藏评分享、发布时间及命中关键词前置，超高行高用于预览；隐藏空标题及广告业务字段，缩窄不可隐藏的主字段 appid。
+- 筛选为来源=抖音且当前入选=true，按目标日期降序、点赞数降序自动排序，已通过浏览器保存并用官方 API 核验筛选；当前显示 5 条记录。未修改帖子数据、其他视图或权限。
+- 证据保存在 `data/view_adjustments/douyin_20261020.json` 与同名截图。
+
+### [飞书] 小红书视图阅读布局调整
+
+- 仅整理主表小红书视图 `vewTbxTE4Z` 的列顺序/显隐/列宽/行高/冻结及排序：标题、视频/图片附件、素材类型、命中关键词、赞藏评分享、发布时间、作者、原文、摘要、目标日期；原始appid索引列保留并压缩，标题冻结；高行高预览媒体，数字和类型列收窄。
+- 隐藏25个广告专用、源媒体链接与内部同步字段，保留来源=小红书的原筛选；点赞降序/发布时间降序两级自动排序并保存。刷新后布局仍生效；实际视图61记录、字段名称/类型无变化。API前后快照与截图位于 `data/feishu_xhs_view_layout_20261020/`。未修改素材内容、字段业务类型或日采集排名规则。
+
+## 2026-10-20
+
+### [小红书] 人物图片审核前置到点赞精选
+
+- `ua_workflows/xhs_daily.py`、`config/social_chat_xhs_daily.json`：新增 `person_or_digital_human_v1` 图片内容闸口。所有图文候选先下载/解码并生成联系表，Agent实际逐图看图后写每篇 `image-review.json`；逐图绑定来源列表、路径和SHA256，缺图、缺审、身份/哈希变更阻塞。人物为实质主体才保留；纯文字、小说页、聊天截图、小头像及非人物画面排除。多图只同步keep附件，整篇无合格图才退出排名。
+- 按视频与审核合格图文合并候选计算点赞前10%，分别保留原始总量、内容剔除数、合格分母；`prepare-images` 提供6线程CDN下载及审核图集，不调用付费视频API。旧完成状态不能绕过新审核；报告回执仍幂等保留，不重复群发。
+- 当前 `data/xhs_daily/20261020` 已实际看图416篇/1417张，保留446张、排除971张，235篇无合格图；原始607篇缩为372篇合格候选，精选38篇（21视频、17图文/30张图片附件）。飞书38篇字段/附件读回核验成功，旧23篇仅标记当前入选=false，不删除历史。小红书视图 `vewTbxTE4Z` 增加当前入选=true条件，API和浏览器均确认38条；广大大/抖音记录未变。
+- 旧榜单/汇总/回执备份 `before-person-image-filter/`，视觉证据为 `selected-image-review/`、`pending-review-1/`、`pending-review-2/`；`delivery-validation.json` 保存新统计，`person-filter-result.jpg` 为飞书结果截图。
+- `docs/social-chat-xhs-daily.md`、自动化24已同步新审核顺序，仍北京时间00:00，广大大07:00任务未改。`tests/test_xhs_daily.py` 12项通过，覆盖混合图文只留合格页、全图覆盖/缺审阻塞、图片哈希变更以及图片剔除后重新计算分母。
+
+### [小红书] 男性主体筛选前置
+
+- 用户进一步要求男频暂不收女性类素材。新增 `male_subject_v1`，配置 `audience_content_filter` 覆盖图片/视频，顺序为人物图片审核→男性主体审核→合并点赞前10%。女性主体、男女混合、无人画面排除，不确定停待审；保持7关键词，不用标题或关键词代替视觉判断。
+- `ua_workflows/xhs_daily.py` 新增逐文件哈希绑定的男性主体审核、候选视频真实6帧准备命令 `prepare-audience`，`select` / `sync` 都执行闸口，缺审不会沿用旧38篇或写表。排名产物记录独立主体剔除数及审核摘要，原始总量不变。自动化24及说明已更新，午夜时间保持不变。
+- 当前批次已实跑闸口，返回 `AUDIENCE_REVIEW_PENDING`；旧38篇仍是上一版人物图片规则结果，尚未重新完成全量男频视觉审核，未声称新规则通过、未修改远端或重发旧日报。
+- `tests/test_xhs_daily.py` 已15项通过，新增男女混合/女性排除、缺审/不确定阻塞及排名前闸口用例。
+
+### [广大大浏览器 Skill] 明确每 App 上限与真实只读/点卡证据
+
+- `state.py` 支持 scope 显式 `collection_limit_per_app`，保留网站总数及实际采集数；只有达到上限且存在未采卡片/下一页证据时允许 `limit_reached` 封账，未配置上限仍要求真实末页。
+- `browser_check.js` 新增 `gddReadOnlyCheck`（仅空选不限渠道/地区/语言）与 `gddCheckedCard`（点击前固定App身份、点击后核对详情广告ID）；校验器保留身份、截图哈希、时间、分页和唯一性约束，不手改FSM状态。
+- 已同步安装 skill，`tests/test_guangdada_browser_skill_state.py` 41项通过，覆盖残留筛选/身份错配/上限冒充末页拦截。
+
+### [小红书] 归属2026-10-19批次补做男频筛选
+
+- 实际复核181篇图文的446张人物图片，以及191条视频的分布抽帧；女性主体、混合、无人画面和实际看过仍不能确认的素材暂不入选，缺审核证据仍阻塞。
+- 607篇原始笔记筛为230篇合格候选，点赞前10%为23篇（8视频、15图文），飞书小红书视图23篇业务字段与附件读回核验通过；历史保留，旧群回执保留不重复播报。
+- 修复音频/容器时长超过实际视频导致抽空帧，改用真实解码帧序号并记录时间与SHA256；新增稀疏视频回归，tests/test_xhs_daily.py 16项通过。更新自动任务24及流程文档，原始搜索不重发。
+
+### [广告之神] 测试群@小红书链接手动收录
+
+- 新增`ua_workflows/xhs_link_bot.py`、`config/feishu_xhs_link_bot.json`及操作文档，官方长连接接收消息，仅白名单霍振堃测试群、真人用户@本机器人触发；支持完整链接与校验跳转的xhslink。
+- 手动收录不走日排名/男性主体筛选；note详情加实际媒体附件，独立`小红书|手动|笔记ID`幂等键，远端字段附件读回。消息持久队列、付费请求intent闸口、上传缓存和稳定回复UUID防重复；每日选择退榜逻辑限定日排名唯一键，不影响手动记录。
+- 已真实测试note详情接口：ID/标题/发布时间及图片列表通过；单元/回归22项通过。部署本机screen常驻会话adgod-xhs-link（LaunchAgent因外置卷启动阻塞未启用）；群接收权限与版本发布需确认后完成，未声称群端全链路已上线。
+
+- 后续用户确认授权后，已开通im:message.group_at_msg:readonly，长连接及im.message.receive_v1已配置，广告之神1.0.5于2026-10-20 15:07发布成功；screen服务存活。真人群消息完整链路待首个用户@链接触发验证，不能声称已完成该项实测。
+
+- 首条用户测试群@链接已真实跑通：笔记6a98e2d8000000001001f37b，视频附件1个，飞书记录reczz28PZqspkb6U业务字段及附件读回通过，群回复发送API返回message_id。消息历史读取权限未开通，不为额外验证扩大权限。
+
+### [多维表格] 平台与收录来源拆分
+
+- 按用户要求迁移182条记录：平台单选固定广大大、facebook ad、小红书、抖音；113条iOS/Android改广大大，64条小红书、5条抖音补齐。来源固定每日最新、手动增加；181条自动采集、1条手动链接，全部远端读回核验通过。迁移前字段/记录/视图已备份到data/field-migration-20261020-*。
+- 将原来源平台筛选迁移为平台字段，保留竞品/社媒创作者两个现有视图及原筛选范围；删除旧选项前完成行值迁移。
+- xhs_daily、xhs_link_bot、douyin_daily、social_chat_browser_daily及群日报校验同步新口径；手动缓存期望行更新，机器人服务重启。自动任务24、24-2、automation保留原计划并更新字段规则。64项相关测试通过。
+
+
+### [抖音] 群内@广告之神链接手动收录
+
+- 扩展现有 xhs_link_bot 单一监听服务，支持抖音完整视频/图文及短分享链接，逐跳白名单和作品ID校验；仅原霍振堃测试群，最多5链接，小红书入口保留。
+- 详情付费请求缓存并保留不确定结果闸口，复用 douyin_daily 媒体验证和飞书附件上传/读回；平台=抖音、来源=手动增加，独立手动唯一键，不参加每日筛选排名，不新增群权限。
+- 18项相关测试通过；包含短链安全、请求缓存、抖音手动命名空间/重复入表和原小红书回归。尚待用户群内真实抖音链接端到端验证。
+
+### [抖音] 官方分享短链修复
+
+- 用户群内真实短链跳转 www.iesdouyin.com/share/video/ID，被旧白名单拒绝；此前未发生付费详情请求。加入精确官方分享域名及路径，仍逐跳校验，拒绝相似恶意域名。
+- 增加分享跳转回归，19项测试通过；错误栈仅保存文件/函数/行号，不输出密钥或原始响应。群回复按消息与结果状态幂等，使失败恢复后可发成功回执。恢复原用户任务，沿用已有缓存。
+
+- 同条作品详情成功后媒体经环境代理 ReadTimeout，直连成功；下载模块加入超时/连接失败后直连回退并新增回归。20项相关测试通过。实际作品7695307129971952939已解码、上传1个视频附件并读回，记录reczz28PaGnJDlE5；群成功回复回执已保存，详情仅调用一次，未补收费请求。
+
+### [广告之神] 双用户任务隔离核查
+
+- 核实当前为单worker串行消费，消息ID独立任务文件，回复接口绑定原始message_id，无聊天历史/LLM会话上下文。增加双用户隔离回归：A失败、B成功，验证各自状态/结果/回复目标/UUID独立；链接机器人11项测试通过。共享仅限平台+笔记ID素材缓存及公开素材去重，不提供群内成员间隐私隔离。
+
+### [广告之神] 链接收录正式群白名单切换
+
+- 用户将机器人加入正式群后，读取群列表并核验群名/ID，将唯一入口切换为afizzy小红书创作者挖人&视频下载（oc_ba246953f910d88ccf16585c6a4b97f8）。原霍振堃及AI推送测试群均通过忽略测试，日采集播报配置未变。重启链接机器人加载新配置，旧配置已备份。
+
+### [广告之神] 接收事件审计补齐
+
+- 用户指出未响应后，飞书事件日志核实17:54:47与17:55:57的im.message.receive_v1均投递SUCCESS。仅凭任务目录为空不能断言未收到@，旧版本不保存过滤信息，无法追溯具体过滤条件。
+- enqueue新增仅元数据审计：消息ID、收到时间、白名单匹配、@身份匹配、消息类型、支持链接数及忽略/拒绝原因；不保存正文/链接token到审计，不扩大群权限。11项测试通过并重启服务。
+
+### [广告之神] xhslink.cn分享域名兼容
+
+- 用户真实链接暴露域名遗漏：新增xhslink.cn与www.xhslink.cn精确白名单，保留逐跳安全检查；真实链接已解析到笔记6acf2eb900000000140397fd并保留token。13项链接机器人测试通过。依据原群消息接收证据和用户提供链接恢复此前忽略任务，不伪造事件回执。
+
+### [广告之神] 自由分享文案链接提取
+
+- 提取逻辑独立为extract_links，支持中文文案紧邻链接、换行/中文标点、Markdown、富文本href、HTML &amp;、无协议白名单域名，查询token保持原样、同消息链接去重。保留群/@/域名/逐跳/每消息5条限制；拒绝伪装子域、用户名伪装、嵌入非可信URL、非法端口，非法链接不再使整条解析崩溃。
+- 51项链接/XHS/抖音相关测试通过；重启正式群链接服务应用新提取器。
+
+### [广告之神] 抖音modal_id链接与@尾缀
+
+- 正式群18:13消息失败在本地链接解析，尚未调用详情API：搜索页使用modal_id作品ID，末尾Feishu @@_user_1被拼入URL。补充可信抖音域名modal_id数字ID提取及URL末尾@标记切分，保留域名/跳转白名单；增加回归并恢复该阻塞任务。
+
+### [广告之神] 分享格式矩阵与真实收录回归
+
+- 新增tests/test_social_share_formats.py，14类小红书/抖音链接×10类整段文案包装，另测富文本、HTTP安全升级HTTPS、无协议、混合多链接、去重/5条上限、攻击域名/端口/逐跳及无作品ID拒绝；全链路fixture逐格式校验API参数、媒体上传、飞书字段/附件和幂等。
+- 修复HTTP分享提取、英文逗号/分号相连URL及URL:标签，维持群/@/域名白名单限制。相关268项测试通过。4条历史真实样本整段文案重放与远端字段附件读回通过，0新付费详情/0新表记录/0测试群消息；保存XML、真实验证JSON与范围报告。
+- 重启正式群链接服务加载新提取器。明确fixture与真实验证边界，不宣称任意链接/供应商永远成功。
+
+
+### [抖音] 2026-10-21 日采集手动记录保护
+
+- 自动任务仍在原目录执行，迁移未切换。执行前发现同日旧入选取消逻辑仅限定平台和目标日，补充来源=每日最新及抖音|目标日期|前缀限制，保护手动增加记录；10项抖音回归通过。
+
+### [抖音] 归属2026-10-20批次恢复完成
+
+- 用户授权继续后仅对虚拟男友/星野各补采一次，分别1/8条；其余5词缓存复用。共47命中/47有效去重，0超时窗旧帖，统一点赞前10%入选5篇。各词快照跨午夜及上午，日报已披露各请求rolling24h范围，旧超时费用仍未知。
+- 5篇全部实际媒体验证及远端业务字段、附件token/精确大小/SHA256通过：4视频+1图文，共12附件39332626字节。27MB视频触发单次附件上传1061002，改复用xhs_daily.upload_attachment分片/断点实现；28项相关测试通过，未重复下载/调用详情。
+- 先发部分日报后恢复完成，原消息om_x100b62b5ad02f898cd192a04e17cab3已原位更新完成，不另发重复完成日报。completion-validation.json、resolved-result.json与回执均在data/douyin_daily/20261021。运行仍在原目录，迁移worktree尚未切换；本次修复未同步worktree。
+
+
+### 2026-10-21 [社交聊天竞品] 10月20日混合媒体日采集完成
+
+- `data/social_chat_mixed_20261020/`：21项双端App混合列表全部封账并经独立证据校验；目标日详情801条，其中视频664、图片133、范围外HTML试玩4。日期仅按可见详情范围起点，先全采后排除185条范围内重投。
+- 剩余612条完成有限重试：视频482条、原图102条成功并实际查看六帧/原图，28条下载失败留痕；排除35条真人口播，审核可用549条。合并展示估值前10%向上取整55条（47视频、8图片）。审核记录绑定148张不可覆盖看板和媒体清单SHA256。
+- 55条实际附件写入指定飞书表，业务字段、附件token/正大小及当前入选集合读回通过；新建55、更新/落选撤销0。广告之神向霍振堃测试群发送完成日报，回执 `om_x100b62b1656bd938cd32b1ffdbaf958`，未重复启动通知。
+- `social_chat_mixed_delivery.py` 增加仅允许平台广大大/来源每日最新的自动记录更新与撤销，同唯一键手动/外部记录冲突阻断；日报按真实唯一键而非表内平台字段识别双端，远端集合仅检查自动来源。修正看板硬编码日期/试玩数。相关40项测试通过。
+
+
+### 2026-10-21 [广大大skill] 切App基础筛选改为只读复核
+
+- 通用state.py与browser_check.js允许分类、日期等全部非排序基础筛选使用真实只读证据，before/after均须匹配scope；不再要求对正确条件重复点击。保留每App新证据、前后原生截图/哈希和前App封账后的时间约束。App选择、排序、点卡/翻页不能使用只读证据。
+- 同步项目与本机安装skill的脚本及状态/浏览器文档，保持每次App搜索后真实点击排序；增加只读分类/日期/非空渠道及残留、App/排序拒绝回归。未启动采集或修改历史批次。
+
+### 2026-10-21 [广大大插件] 隔离字段采集原型与多维表只读核对
+
+- 新增本地隔离测试副本 `data/guangdada-metadata-probe/extension/`，未改现有安装版或生产源。原型按每卡可见文字/商店链接补充日期范围、可见重投、估值原文/缩写精度、身份及缺失字段，ZIP增加字段JSON；未获取字段保持null，不以零或false代替。
+- Node测试18项通过（新增3项元数据测试），覆盖缩写估值、无效日期、未知身份/重投、字段传递和报告不泄露签名URL。尚未加载该隔离版做广大大实站验收，不宣称已全字段可采。
+- 只读调用当前目标飞书表，保存真实40字段schema及27项广大大字段类型核对至 `remote-schema.json` / `field-audit.json`，类型匹配。其余13项为笔记/互动字段，不要求广大大填充。未写表、未发群消息。

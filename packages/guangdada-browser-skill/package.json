@@ -1,0 +1,18 @@
+{
+  "name": "guangdada-browser-skill",
+  "version": "1.0.0",
+  "description": "Install the Guangdada browser collection skill for Codex, with evidence checks, resumable state and video frame review.",
+  "license": "UNLICENSED",
+  "bin": {
+    "guangdada-browser-skill": "bin/cli.cjs"
+  },
+  "files": ["bin/", "skill/", "scripts/build.cjs", "README.md"],
+  "engines": {"node": ">=20"},
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "test": "node scripts/build.cjs && node --test test/*.test.cjs",
+    "prepack": "node scripts/build.cjs"
+  },
+  "keywords": ["codex", "skill", "guangdada", "socialpeta", "browser", "ad-creatives"],
+  "publishConfig": {"registry": "https://registry.npmjs.org", "access": "public"}
+}

@@ -28,6 +28,25 @@ from ua_workflows.video_enhancer import haopeng_topn_push as topn_mod
 
 
 class PushHaopengTopNToFeishuTest(unittest.TestCase):
+    def test_actual_summary_uses_rating_summary_when_available(self) -> None:
+        text = actual_summary(
+            {
+                "summary": {
+                    "top10": {
+                        "rated": 3,
+                        "five_star_hits": 2,
+                        "average_rating": 4.33,
+                        "rating_counts": {"5星": 2, "3星": 1},
+                    }
+                }
+            },
+            10,
+        )
+
+        self.assertIn("5星命中 2/10", text)
+        self.assertIn("平均评分 4.33", text)
+        self.assertIn("5星 2 / 3星 1", text)
+
     def test_actual_summary_uses_rating_distribution_when_available(self) -> None:
         text = actual_summary(
             {"results": []},
@@ -180,12 +199,15 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
         self.assertIn("**Hook** 普通自拍一键变成手绘生活拼贴", md)
         self.assertIn("**风险** 低风险", md)
         self.assertIn("不代表浩鹏已审核", md)
+        self.assertIn("VE 浩鹏评分预测 Top10", md)
         self.assertNotIn("理由：", md)
         self.assertNotIn("ID：", md)
         self.assertNotIn("手绘类正样本反馈极佳", md)
         self.assertNotIn("`a1`", md)
         self.assertNotIn("回测命中", md)
         self.assertNotIn("浩鹏实际", md)
+        self.assertNotIn("采纳预测", md)
+        self.assertNotIn("浩鹏接受情况", md)
 
         top1_md = render_topn_markdown(report, top_n=1)
         self.assertIn("真人照片生成手绘生活拼贴画", top1_md)
@@ -210,6 +232,8 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
                     "product": "AI Mirror: AI Photo & Video",
                     "core": "真人照片生成手绘生活拼贴画",
                     "accept_score": 85,
+                    "rating": 5,
+                    "rating_label": "5星",
                     "confidence": "high",
                     "matched_play_label": "手绘",
                     "play_label": "手绘",
@@ -222,9 +246,11 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
 
         md = render_topn_markdown(report, top_n=10, include_backtest=True)
 
-        self.assertIn("采纳+入素材库：8/10", md)
-        self.assertIn("**浩鹏实际** 采纳", md)
+        self.assertIn("5星命中 1/10", md)
+        self.assertIn("**浩鹏评分** 5星", md)
         self.assertNotIn("不代表浩鹏已审核", md)
+        self.assertNotIn("采纳+入素材库", md)
+        self.assertNotIn("浩鹏实际", md)
 
     def test_render_topn_markdown_skips_admob_and_youtube_rows(self) -> None:
         report = {
@@ -378,7 +404,7 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
             date="2026-05-28",
             model="qwen/qwen3.7-max",
             history_start_date="2026-05-25",
-            reviewer_field="浩鹏接受情况",
+            reviewer_field="浩鹏评分",
         )
         generated = ({"target_date": "2026-05-28", "results": []}, Path("/tmp/2026-05-28_label_prior.json"))
 
@@ -395,7 +421,7 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
             target_date="2026-05-28",
             model="qwen/qwen3.7-max",
             history_start_date="2026-05-25",
-            reviewer_field="浩鹏接受情况",
+            reviewer_field="浩鹏评分",
         )
 
     def test_bitable_enrich_skips_reviewer_field_by_default(self) -> None:
@@ -422,6 +448,40 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
 
         self.assertEqual(report["results"][0]["video_url"], "https://video.example/a1.mp4")
         self.assertNotIn("actual_hp", report["results"][0])
+
+    def test_bitable_enrich_reads_rating_field_for_backtest(self) -> None:
+        report = {"results": [{"ad_key": "a1", "video_url": ""}]}
+        fake_records = [
+            {
+                "fields": {
+                    "广告ID": "a1",
+                    "视频链接": "https://video.example/a1.mp4",
+                    "浩鹏评分": "5星",
+                    "浩鹏接受情况": "不采纳",
+                }
+            }
+        ]
+
+        with patch(
+            "ua_workflows.video_enhancer.haopeng_topn_push.fetch_bitable_records",
+            create=True,
+            return_value=fake_records,
+        ), patch(
+            "ua_workflows.video_enhancer.feedback_training.fetch_bitable_records",
+            return_value=fake_records,
+        ):
+            enrich_results_from_bitable(
+                report,
+                "https://example.invalid/base/xxx?table=tbl",
+                "浩鹏评分",
+                include_reviewer=True,
+            )
+
+        row = report["results"][0]
+        self.assertEqual(row["rating"], 5)
+        self.assertEqual(row["rating_label"], "5星")
+        self.assertEqual(row["rating_source_field"], "浩鹏评分")
+        self.assertEqual(row["actual_hp"], "不采纳")
 
 
 if __name__ == "__main__":

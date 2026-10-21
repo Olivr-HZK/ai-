@@ -54,6 +54,23 @@ class VeVideoContentFilteringEvalTest(unittest.TestCase):
         self.assertIn("LLM视频内容筛选", rows[1]["analysis"])
         self.assertEqual(rows[1]["effect_one_liner"], "")
 
+    def test_minimal_analysis_prompt_uses_bitable_core_selling_point_semantics(self) -> None:
+        from ua_workflows.video_enhancer.video_content_minimal_analysis import _user_prompt
+
+        prompt = _user_prompt(
+            {
+                "product": "Glam AI",
+                "ad_key": "ad_1",
+                "title": "AI magazine cover",
+                "body": "Generate your own cover",
+                "guangdada_video_content": "开篇密集展示多张 AI 杂志封面。",
+            }
+        )
+
+        self.assertIn("多维表「核心卖点」字段", prompt)
+        self.assertIn("用户能得到的 AI 效果/产品能力", prompt)
+        self.assertIn("不要写成开篇镜头", prompt)
+
     def test_seed_analysis_results_include_video_content_for_sync_safe_minimal_flow(self) -> None:
         from ua_workflows.video_enhancer.video_content_minimal_analysis import seed_analysis_results_from_raw
 
@@ -228,6 +245,68 @@ class VeVideoContentFilteringEvalTest(unittest.TestCase):
         self.assertIn("业务硬拦:ecommerce_effect", row["material_tags"])
         self.assertNotIn("大模型历史重复", row["material_tags"])
         self.assertEqual(row["llm_video_content_filter_match"]["final_decision"], "业务硬拦")
+
+    def test_apply_llm_video_content_filter_clears_stale_human_photo_rule_exclusion_when_kept(self) -> None:
+        from ua_workflows.video_enhancer.video_content_llm_filter import apply_llm_filter_results
+
+        analysis_results = [
+            {
+                "ad_key": "today_a",
+                "analysis": "女性足球动作特效",
+                "exclude_from_bitable": True,
+                "exclude_from_cluster": True,
+                "human_photo_effect_filter_match": {
+                    "reason": "missing_human_photo_input",
+                    "snippet": "旧正则误判",
+                },
+                "material_tags": ["非人物照片加工特效", "已有标签"],
+            },
+        ]
+        payload = {
+            "records": [
+                {
+                    "ad_key": "today_a",
+                    "final_decision": "保留",
+                    "situations": ["保留"],
+                    "business_hard_block": False,
+                    "business_labels": [],
+                    "is_duplicate": False,
+                    "duplicate_type": "none",
+                }
+            ]
+        }
+
+        summary = apply_llm_filter_results(analysis_results, payload)
+
+        row = analysis_results[0]
+        self.assertEqual(summary["applied"], 0)
+        self.assertFalse(row.get("exclude_from_bitable"))
+        self.assertFalse(row.get("exclude_from_cluster"))
+        self.assertNotIn("human_photo_effect_filter_match", row)
+        self.assertEqual(row["material_tags"], ["已有标签"])
+        self.assertEqual(row["llm_video_content_filter_match"]["final_decision"], "保留")
+
+    def test_video_content_filter_prompt_keeps_business_hard_blocks_in_llm(self) -> None:
+        from ua_workflows.video_enhancer.video_content_llm_filter import _user_prompt
+
+        prompt = _user_prompt(
+            advertiser_name="PixVerse",
+            target_date="2026-06-12",
+            history_records=[],
+            intraday_prior_records=[],
+            target_records=[
+                {
+                    "ad_key": "today_a",
+                    "video_content": "红发女性在酒店外进入车辆，结尾出现应用 Logo。",
+                }
+            ],
+        )
+
+        self.assertIn("业务硬拦只由本阶段大模型判断", prompt)
+        self.assertIn("不要按单个关键词命中就硬拦", prompt)
+        self.assertIn("Logo", prompt)
+        self.assertIn("车辆", prompt)
+        self.assertIn("核心效果/核心主体", prompt)
 
     def test_evaluate_filter_coverage_uses_or_union_for_adult_and_non_person(self) -> None:
         from scripts.evaluate_ve_video_content_filtering import evaluate_filter_coverage

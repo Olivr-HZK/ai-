@@ -30,6 +30,19 @@ BUSINESS_LABELS = {
 }
 
 FINAL_ORDER = ["业务硬拦", "历史重复", "日内重复", "保留"]
+_LLM_FILTER_TAGS = {
+    "大模型业务硬拦",
+    "大模型历史重复",
+    "大模型日内重复",
+}
+_STALE_HUMAN_PHOTO_FILTER_TAG = "非人物照片加工特效"
+_PRESERVED_EXCLUSION_KEYS = {
+    "adult_content_filter_match",
+    "launched_effect_match",
+    "intraday_effect_match",
+    "old_effect_match",
+    "effect_embedding_duplicate_match",
+}
 
 
 def _coerce_text(value: Any) -> str:
@@ -218,6 +231,7 @@ def _system_prompt(target_date: str) -> str:
     return (
         "你是 VE 素材筛选助手。你只根据给定的视频内容文本判断目标日素材是否应被筛掉。"
         f"目标日是 {target_date}。筛选类型只有两类：业务硬拦、视频内容重复。"
+        "业务硬拦只由本阶段大模型判断，不能用外部关键词规则替代。"
         "必须保守，证据不足就保留。只返回纯 JSON。"
     )
 
@@ -244,10 +258,12 @@ def _user_prompt(
 3. target_records：需要判断的 {target_date} 素材。请按 target_records 的顺序处理；同一批里排在前面的 target 也可以作为后面 target 的日内候选。
 
 业务硬拦规则：
+- 业务硬拦只由本阶段大模型判断。请判断素材的核心效果/核心主体/核心转化意图，不要按单个关键词命中就硬拦。
 - adult：成人、色情、性暗示、脱衣、亲密性内容。
 - ecommerce_effect：商品图、带货、电商卖点、实物商品/店铺/购物强导向。
 - non_human_photo_effect：核心效果不是人物照片加工，例如宠物、动物、房间装修、风景、食物、车辆、纯文字、logo、海报、物体动画。
 - missing_human_photo_input：明确不是用户上传人物照片/自拍/人像照片参与加工，或只是在演示通用文生视频/图生视频/APP工具流程。不要仅因为文本没写“上传”两个字就判定；如果结果清楚是人像/自拍/真人照片特效，可以不命中这个标签。
+- Logo、图标、CTA、下载按钮、APP界面、品牌露出、车辆/商品/建筑等背景物体，只有在它们是核心效果或核心主体时才作为业务硬拦证据；只是结尾露出、场景背景、剧情道具或辅助说明时不能单独触发硬拦。
 
 重复判断规则：
 - 重复是指用户看到的广告创意实质同款：核心玩法、画面模板、故事脚本、主体结果高度一致。
@@ -661,6 +677,26 @@ def _append_unique_tags(row: dict[str, Any], tags: list[str]) -> None:
     row["material_tags"] = current
 
 
+def _clear_previous_llm_and_deprecated_human_filter(row: dict[str, Any]) -> None:
+    tags = row.get("material_tags")
+    if isinstance(tags, list):
+        row["material_tags"] = [
+            tag
+            for tag in tags
+            if _coerce_text(tag) not in _LLM_FILTER_TAGS
+            and not _coerce_text(tag).startswith("业务硬拦:")
+            and _coerce_text(tag) != _STALE_HUMAN_PHOTO_FILTER_TAG
+        ]
+    row.pop("human_photo_effect_filter_match", None)
+
+
+def _clear_exclusion_if_only_llm_or_deprecated_human_filter(row: dict[str, Any]) -> None:
+    if any(row.get(key) for key in _PRESERVED_EXCLUSION_KEYS):
+        return
+    row.pop("exclude_from_bitable", None)
+    row.pop("exclude_from_cluster", None)
+
+
 def _compact_match(record: dict[str, Any]) -> dict[str, Any]:
     keep = [
         "final_decision",
@@ -700,9 +736,11 @@ def apply_llm_filter_results(
         record = by_key.get(_coerce_text(row.get("ad_key")))
         if not record:
             continue
+        _clear_previous_llm_and_deprecated_human_filter(row)
         row["llm_video_content_filter_match"] = _compact_match(record)
         decision = _coerce_text(record.get("final_decision"))
         if decision == "保留":
+            _clear_exclusion_if_only_llm_or_deprecated_human_filter(row)
             continue
 
         row["exclude_from_bitable"] = True

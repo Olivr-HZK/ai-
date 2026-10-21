@@ -22,5 +22,15 @@ const {gddCheckedClick} = require('../skills/guangdada-browser-crawl/scripts/bro
   const jpeg=Buffer.from([255,216,255,224,0,2,255,217]);
   result=await gddCheckedClick({...args,eventId:'jpeg',expected:value,click:async()=>{clicks++},tab:{...args.tab,getScreenshot:async()=>jpeg}});
   assert.equal(result.event.images.after.format,'jpg');assert.ok(files.has('evidence/clicks/jpeg.after.jpg'));
-  console.log('6 checked-click cases passed: readback, mismatch, action failure, screenshot persistence failure');
+  const {gddReadOnlyCheck}=require('../skills/guangdada-browser-crawl/scripts/browser_check.js');
+  const observation={...args,click:undefined};const clicksBefore=clicks;
+  for (const [key,wanted] of [['filter.category','工具'],['filter.date',{mode:'preset',preset:'30天'}],['filter.channels',['Facebook']]]) {
+    value=wanted;result=await gddReadOnlyCheck({...observation,key,expected:wanted,eventId:'read-'+key.split('.')[1]});
+    assert.equal(result.event.kind,'read');assert.equal(result.event.status,'passed');
+  }
+  assert.equal(clicks,clicksBefore);
+  value='教育';await assert.rejects(gddReadOnlyCheck({...observation,key:'filter.category',expected:'工具',eventId:'wrong-category'}),/Evidence check failed/);
+  await assert.rejects(gddReadOnlyCheck({...observation,key:'filter.sort',expected:value,eventId:'readonly-sort'}),/require clicks/);
+  await assert.rejects(gddReadOnlyCheck({...observation,key:'app',expected:value,eventId:'readonly-app'}),/require clicks/);
+  console.log('Checked-click and read-only base-filter cases passed');
 })().catch(e=>{console.error(e);process.exitCode=1});

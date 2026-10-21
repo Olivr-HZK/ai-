@@ -6,6 +6,19 @@ from unittest.mock import patch
 
 
 class VeTemplateNormalizationTest(unittest.TestCase):
+    def test_main_field_defs_include_rating_fields_and_legacy_acceptance(self) -> None:
+        from ua_workflows.video_enhancer.sync import FIELD_DEFS
+
+        fields = {field["field_name"]: field for field in FIELD_DEFS}
+
+        self.assertIn("浩鹏评分", fields)
+        self.assertIn("尉蓝评分", fields)
+        self.assertIn("接受情况", fields)
+        self.assertEqual(fields["浩鹏评分"]["type"], 2)
+        self.assertEqual(fields["浩鹏评分"].get("style"), {"type": "rating", "icon": "star", "min": 1, "max": 5})
+        self.assertEqual(fields["尉蓝评分"]["type"], 2)
+        self.assertEqual(fields["尉蓝评分"].get("style"), {"type": "rating", "icon": "star", "min": 1, "max": 5})
+
     def test_filter_review_cards_show_first_seen_and_created_at(self) -> None:
         from unittest.mock import patch
 
@@ -193,6 +206,32 @@ class VeTemplateNormalizationTest(unittest.TestCase):
 
         self.assertEqual(pick_video_url_direct(creative), "https://cdn.example.com/material.mp4")
         self.assertEqual(pick_video_url(creative), "https://cdn.example.com/material.mp4")
+
+    def test_image_suffix_urls_are_normalized_to_png_for_consumers(self) -> None:
+        from ua_workflows.shared.db.video_enhancer import _pick_image_url_from_raw
+        from ua_workflows.shared.media.resolve import (
+            normalize_image_url_for_consumption,
+            pick_image_url_direct,
+        )
+        from ua_workflows.video_enhancer.analyze import _pick_image_url
+        from ua_workflows.video_enhancer.cover_dedupe import pick_cover_url
+        from ua_workflows.video_enhancer.review_dashboard import _image_url
+        from ua_workflows.video_enhancer.sync import normalize_cover_image_url_for_bitable
+
+        raw = "https://sp2cdn-idea-global.zingfront.com/sp_opera/cover.image?token=1#frag"
+        expected = "https://sp2cdn-idea-global.zingfront.com/sp_opera/cover.png?token=1#frag"
+        creative = {
+            "preview_img_url": raw,
+            "resource_urls": [{"image_url": raw}],
+        }
+
+        self.assertEqual(normalize_image_url_for_consumption(raw), expected)
+        self.assertEqual(normalize_cover_image_url_for_bitable(raw), expected)
+        self.assertEqual(pick_image_url_direct(creative), expected)
+        self.assertEqual(_pick_image_url(creative), expected)
+        self.assertEqual(_pick_image_url_from_raw(creative), expected)
+        self.assertEqual(pick_cover_url(creative), expected)
+        self.assertEqual(_image_url({"preview_img_url": raw}), expected)
 
     def test_cover_history_lookback_defaults_to_sixty_days(self) -> None:
         from ua_workflows.video_enhancer.cover_dedupe import _cover_history_lookback_days
@@ -461,6 +500,38 @@ class VeTemplateNormalizationTest(unittest.TestCase):
                     source="https://example.com/video.mp4",
                 )
             )
+
+    def test_webm_video_attachment_payload_is_transcoded_to_mp4(self) -> None:
+        from pathlib import Path
+
+        from ua_workflows.video_enhancer.sync import _prepare_video_attachment_payload
+
+        def fake_run(cmd, check, stdout, stderr):
+            self.assertTrue(check)
+            self.assertIn("-i", cmd)
+            Path(cmd[-1]).write_bytes(b"fake mp4 bytes" * 40)
+
+        with patch("ua_workflows.video_enhancer.sync.subprocess.run", side_effect=fake_run):
+            content, name = _prepare_video_attachment_payload(
+                b"fake webm bytes",
+                content_type="video/webm",
+                source_url="https://sp2cdn-idea-global.zingfront.com/sp_opera/abc.webm",
+                ad_key="ad_1",
+            )
+
+        self.assertEqual(content, b"fake mp4 bytes" * 40)
+        self.assertEqual(name, "abc.mp4")
+
+    def test_ffmpeg_binary_falls_back_to_homebrew_path_when_not_in_path(self) -> None:
+        from ua_workflows.video_enhancer.sync import _ffmpeg_binary
+
+        def fake_exists(path):
+            return str(path) == "/opt/homebrew/bin/ffmpeg"
+
+        with patch.dict(os.environ, {"FFMPEG_PATH": ""}):
+            with patch("ua_workflows.video_enhancer.sync.shutil.which", return_value=None):
+                with patch("ua_workflows.video_enhancer.sync.Path.exists", fake_exists):
+                    self.assertEqual(_ffmpeg_binary(), "/opt/homebrew/bin/ffmpeg")
 
     def test_daily_similarity_count_includes_same_day_cover_removed_members(self) -> None:
         from ua_workflows.video_enhancer.sync import build_daily_similarity_count_map
@@ -897,7 +968,7 @@ class VeTemplateNormalizationTest(unittest.TestCase):
         self.assertIn("synced_records", metrics)
         self.assertTrue(all("PixVerse" in a["retry_command"] for a in alerts))
 
-    def test_human_photo_effect_filter_blocks_ecommerce_and_non_human_effects(self) -> None:
+    def test_human_photo_effect_filter_no_longer_blocks_business_hard_rules(self) -> None:
         from ua_workflows.video_enhancer.content_filters import apply_human_photo_effect_filter
 
         rows = [
@@ -938,16 +1009,57 @@ class VeTemplateNormalizationTest(unittest.TestCase):
 
         newly_marked, details = apply_human_photo_effect_filter(rows)
 
-        self.assertEqual(newly_marked, 3)
-        self.assertFalse(rows[0].get("exclude_from_bitable"))
-        for row in rows[1:]:
-            self.assertTrue(row.get("exclude_from_bitable"))
-            self.assertTrue(row.get("exclude_from_cluster"))
-            self.assertIn("非人物照片加工特效", row.get("material_tags") or [])
-        reasons = {detail["ad_key"]: detail["reason"] for detail in details}
-        self.assertEqual(reasons["ecom_bad"], "ecommerce_effect")
-        self.assertEqual(reasons["pet_bad"], "non_human_photo_effect")
-        self.assertEqual(reasons["room_bad"], "non_human_photo_effect")
+        self.assertEqual(newly_marked, 0)
+        self.assertEqual(details, [])
+        for row in rows:
+            self.assertFalse(row.get("exclude_from_bitable"))
+            self.assertFalse(row.get("exclude_from_cluster"))
+            self.assertNotIn("非人物照片加工特效", row.get("material_tags") or [])
+
+    def test_human_photo_effect_filter_does_not_mutate_human_scene_rows(self) -> None:
+        from ua_workflows.video_enhancer.content_filters import apply_human_photo_effect_filter
+
+        rows = [
+            {
+                "ad_key": "logo_cta_ok",
+                "effect_one_liner": "视频开篇展示一名金发卷发男子在公园吃苹果，随后切换至微缩特效场景。",
+                "analysis": "视频结尾显示 AI Catch 应用 Logo、Try it now 按钮及应用商店下载标识。",
+                "material_tags": [],
+            },
+            {
+                "ad_key": "vehicle_scene_ok",
+                "effect_one_liner": "视频开场展示红发女性在酒店外被粉丝和安保人员包围并进入车辆。",
+                "analysis": "核心是红发女性的名人感实拍/生成效果，车辆只是剧情背景。",
+                "material_tags": [],
+            },
+            {
+                "ad_key": "human_scene_without_upload_ok",
+                "effect_one_liner": "视频开场展示一名女性在足球场完成高难度倒钩射门动作。",
+                "analysis": "女性角色在体育场完成动作并叠加高光特效，文本没有直接写上传自拍。",
+                "material_tags": [],
+            },
+            {
+                "ad_key": "app_icon_ok",
+                "effect_one_liner": "视频展示一个穿着巴西队球衣的卷发男孩生成世界杯海报。",
+                "analysis": "结尾出现应用图标及下载按钮，引导用户获取自己喜欢的国家队版本。",
+                "material_tags": [],
+            },
+            {
+                "ad_key": "pet_bad",
+                "effect_one_liner": "宠物照片生成跳舞动画",
+                "analysis": "用户上传宠物照片，让猫狗生成跳舞动画。",
+                "material_tags": [],
+            },
+        ]
+
+        newly_marked, details = apply_human_photo_effect_filter(rows)
+
+        self.assertEqual(newly_marked, 0)
+        self.assertEqual(details, [])
+        for row in rows:
+            self.assertFalse(row.get("exclude_from_bitable"))
+            self.assertFalse(row.get("exclude_from_cluster"))
+            self.assertNotIn("非人物照片加工特效", row.get("material_tags") or [])
 
     def test_ve_prompt_leaves_unmatched_play_labels_blank(self) -> None:
         from ua_workflows.video_enhancer.analyze import _ve_fixed_footer

@@ -1,0 +1,56 @@
+{
+  "competitor_list": "config/social_chat_browser_competitors.json",
+  "timezone": "Asia/Shanghai",
+  "execution": "scheduled",
+  "date_semantics": "first_discovered_on_target_date",
+  "ranking": {
+    "scope": "all_apps_and_platforms",
+    "fraction": "0.10",
+    "rounding": "ceil",
+    "ties": "stable_app_platform_ad_id"
+  },
+  "filters": {
+    "category": "工具",
+    "dedupe": "素材",
+    "sort": "最新创意",
+    "channels": [],
+    "regions": [],
+    "languages": []
+  },
+  "content_checks": {
+    "real_person_talking_head": false
+  },
+  "feishu": {
+    "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
+    "table_id": "tblwhAqPfQoBXK3Q",
+    "base_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c"
+  },
+  "app_id_registry": "config/social_chat_browser_app_ids.json",
+  "schedule": {
+    "timezone": "Asia/Shanghai",
+    "time": "07:00",
+    "automation_id": "automation",
+    "kind": "thread_heartbeat"
+  },
+  "crawl_start_notice": {
+    "enabled": true,
+    "chat_name": "霍振堃",
+    "chat_id": "oc_fad698ee80dd1314b531f65cfa6599fc",
+    "mention_all": true,
+    "event": "before_browser_collection"
+  },
+  "crawl_completion_report": {
+    "enabled": true,
+    "chat_name": "霍振堃",
+    "chat_id": "oc_fad698ee80dd1314b531f65cfa6599fc",
+    "mention_all": false,
+    "event": "after_verified_bitable_sync"
+  },
+  "media_types": [
+    "视频",
+    "图片"
+  ],
+  "media_filter_mode": "default_images_and_videos",
+  "date_rule": "detail_date_range_start_only",
+  "relaunch_policy": "collect_all_then_exclude_visible_badge_before_ranking"
+}

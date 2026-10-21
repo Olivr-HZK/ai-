@@ -19,6 +19,49 @@ class VeAdBreakdownAnalysisTest(unittest.TestCase):
         ):
             self.assertIn(label, footer)
 
+    def test_ve_prompt_marks_undress_and_two_person_kissing_as_adult_high_risk(self) -> None:
+        from ua_workflows.video_enhancer.analyze import _ve_fixed_footer
+
+        footer = _ve_fixed_footer()
+
+        self.assertIn("AI脱衣", footer)
+        self.assertIn("双人亲吻", footer)
+        self.assertIn("成人色情风险", footer)
+        self.assertIn("高风险", footer)
+
+    def test_ve_production_risk_fallback_upgrades_undress_and_kissing(self) -> None:
+        from ua_workflows.video_enhancer.analyze import _apply_ve_production_adult_risk_tags
+
+        tags, risk_level = _apply_ve_production_adult_risk_tags(
+            material_tags=["擦边露肤风险"],
+            risk_level="中风险",
+            analysis="",
+            title="",
+            body="",
+            effect_one_liner="AI 脱衣滤镜前后对比",
+            play_fingerprint="",
+            differentiator="",
+            template_fingerprint="",
+        )
+
+        self.assertIn("成人色情风险", tags)
+        self.assertEqual(risk_level, "高风险")
+
+        tags, risk_level = _apply_ve_production_adult_risk_tags(
+            material_tags=[],
+            risk_level="低风险",
+            analysis="【Hook解析】展示原始照片生成双人亲吻动态视频",
+            title="",
+            body="",
+            effect_one_liner="",
+            play_fingerprint="",
+            differentiator="",
+            template_fingerprint="双人照片生成亲吻动态视频",
+        )
+
+        self.assertIn("成人色情风险", tags)
+        self.assertEqual(risk_level, "高风险")
+
     def test_ve_ad_breakdown_is_kept_in_local_analysis_summary(self) -> None:
         from ua_workflows.video_enhancer.analyze import (
             _build_ve_structured_analysis_summary,

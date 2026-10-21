@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "expected_app_id": "cli_a906892c9c8c1cb3",
+  "allowed_chat_id": "oc_ba246953f910d88ccf16585c6a4b97f8",
+  "allowed_chat_name": "afizzy小红书创作者挖人&视频下载",
+  "state_dir": "data/xhs_link_bot",
+  "max_links_per_message": 5,
+  "mode": "manual_direct_import"
+}

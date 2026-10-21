@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "广大大 · 页面媒体下载",
+  "version": "1.8.0",
+  "description": "跨页点选广大大图片、视频与Playable原HTML，或自动采到末页，汇总为一个 ZIP 下载。",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "downloads",
+    "storage",
+    "alarms",
+    "offscreen"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "采集并打包媒体 ZIP"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ]
+}

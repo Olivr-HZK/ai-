@@ -25,6 +25,9 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import uuid
 from collections import Counter, defaultdict
@@ -54,7 +57,10 @@ from ua_workflows.shared.db.video_enhancer import (
     normalize_effect_one_liner,
     update_push_status,
 )
-from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
+from ua_workflows.shared.media.resolve import (
+    normalize_image_url_for_consumption,
+    normalize_video_url_for_consumption,
+)
 from ua_workflows.shared.llm.client import bytes_to_embedding, cosine_similarity
 from ua_workflows.video_enhancer.content_filters import (
     apply_adult_content_filter,
@@ -78,18 +84,7 @@ def normalize_cover_image_url_for_bitable(url: str) -> str:
     广大大等来源的封面 URL 路径若以 .image 结尾，飞书多维表「链接」字段常无法预览；
     将路径后缀改为 .png（多数 CDN 同资源可访问）。
     """
-    u = (url or "").strip()
-    if not u:
-        return u
-    try:
-        p = urlparse(u)
-        path = p.path
-        if not re.search(r"\.image$", path, re.IGNORECASE):
-            return u
-        new_path = re.sub(r"\.image$", ".png", path, flags=re.IGNORECASE)
-        return urlunparse((p.scheme, p.netloc, new_path, p.params, p.query, p.fragment))
-    except Exception:
-        return u
+    return normalize_image_url_for_consumption(url)
 
 
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
@@ -312,6 +307,7 @@ def _upload_all_media_safely(
 
 
 def upload_image_as_attachment(image_url: str, app_token: str) -> str | None:
+    image_url = normalize_image_url_for_consumption(image_url)
     if not image_url:
         return None
     if image_url in _IMAGE_CACHE:
@@ -355,6 +351,98 @@ def _guess_video_filename(url: str, ad_key: str) -> str:
     path = urlparse(url).path
     name = (path.split("/")[-1] or "").strip() or f"video_{(ad_key or 'a')[:16]}.mp4"
     return name[:200]
+
+
+def _is_webm_video_payload(content: bytes, *, content_type: str, source_url: str) -> bool:
+    try:
+        path = urlparse(source_url or "").path.lower()
+    except Exception:
+        path = ""
+    ctype = (content_type or "").lower()
+    return path.endswith(".webm") or "webm" in ctype or content[:4] == b"\x1aE\xdf\xa3"
+
+
+def _mp4_filename_for_video(url: str, ad_key: str) -> str:
+    path = urlparse(url or "").path
+    stem = Path(path).stem.strip()
+    if not stem:
+        stem = f"video_{(ad_key or 'a')[:16]}"
+    return f"{stem}.mp4"[:200]
+
+
+def _ffmpeg_binary() -> str:
+    configured = (os.getenv("FFMPEG_PATH") or "").strip()
+    if configured:
+        return configured
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if Path(candidate).exists():
+            return candidate
+    return "ffmpeg"
+
+
+def _convert_video_bytes_to_mp4(content: bytes, *, source_url: str) -> bytes | None:
+    ffmpeg = _ffmpeg_binary()
+    try:
+        with tempfile.TemporaryDirectory(prefix="ve_webm_to_mp4_") as tmp:
+            src = Path(tmp) / "source.webm"
+            dst = Path(tmp) / "output.mp4"
+            src.write_bytes(content)
+            subprocess.run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(src),
+                    "-movflags",
+                    "+faststart",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "23",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    str(dst),
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            converted = dst.read_bytes()
+            if len(converted) < 500:
+                return None
+            return converted
+    except Exception as e:
+        print(f"[sync] webm 转 mp4 失败，跳过视频附件: {e} url={(source_url or '')[:80]!r}")
+        return None
+
+
+def _prepare_video_attachment_payload(
+    content: bytes,
+    *,
+    content_type: str,
+    source_url: str,
+    ad_key: str = "",
+) -> tuple[bytes, str] | None:
+    if _is_webm_video_payload(content, content_type=content_type, source_url=source_url):
+        converted = _convert_video_bytes_to_mp4(content, source_url=source_url)
+        if converted is None:
+            return None
+        return converted, _mp4_filename_for_video(source_url, ad_key)
+
+    name = _guess_video_filename(source_url, ad_key)
+    if not re.search(r"\.(mp4|mov|m4v)$", name, re.I):
+        name = re.sub(r"\.[^.]+$", "", name) + ".mp4" if name else "video.mp4"
+    return content, (name or "video.mp4")[:200]
 
 
 def upload_video_as_attachment(video_url: str, app_token: str, ad_key: str = "") -> str | None:
@@ -408,13 +496,15 @@ def upload_video_as_attachment(video_url: str, app_token: str, ad_key: str = "")
     ):
         print(f"[sync] 视频 URL 返回 HTML 非直链，跳过附件 url={v[:80]}")
         return None
-    name = _guess_video_filename(v, ad_key)
-    if not re.search(r"\.(mp4|mov|webm|m4v)$", name, re.I):
-        if "webm" in content_type:
-            name = re.sub(r"\.[^.]+$", "", name) + ".webm" if name else "video.webm"
-        else:
-            name = re.sub(r"\.[^.]+$", "", name) + ".mp4" if name else "video.mp4"
-    name = (name or "video.mp4")[:200]
+    prepared = _prepare_video_attachment_payload(
+        content,
+        content_type=content_type,
+        source_url=v,
+        ad_key=ad_key,
+    )
+    if prepared is None:
+        return None
+    content, name = prepared
     body = (
         UploadAllMediaRequestBody.builder()
         .file_name(name)

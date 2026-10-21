@@ -1,0 +1,196 @@
+{
+  "source": "browser_and_official_store_verified",
+  "recorded_on": "2026-10-16",
+  "items": [
+    {
+      "task_id": "ios-01",
+      "app_name": "dotdotdot Fantasy AI Boyfriend",
+      "platform": "iOS",
+      "app_id": "6744018732",
+      "verification": "app_id_search_candidate_and_selected_icon",
+      "detail_verified": false
+    },
+    {
+      "task_id": "ios-02",
+      "app_name": "Whispy AI: Cozy Chat",
+      "platform": "iOS",
+      "app_id": "6770413766",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "http://itunes.apple.com/app/id6770413766"
+    },
+    {
+      "task_id": "ios-04",
+      "app_name": "TizzChat: Craft Your World",
+      "platform": "iOS",
+      "app_id": "6768571224",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "http://itunes.apple.com/app/id6768571224"
+    },
+    {
+      "task_id": "ios-05",
+      "app_name": "zeta: AI Chat, Story, Play",
+      "platform": "iOS",
+      "app_id": "1619030760",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://apps.apple.com/app/zeta-ai-chat-story-play/id1619030760"
+    },
+    {
+      "task_id": "ios-06",
+      "app_name": "LoveyDovey - Dream AI Chats",
+      "platform": "iOS",
+      "app_id": "6468766519",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "http://itunes.apple.com/app/id6468766519"
+    },
+    {
+      "task_id": "ios-07",
+      "app_name": "PolyBuzz: Chat with Characters",
+      "platform": "iOS",
+      "app_id": "6449190344",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://apps.apple.com/us/app/polybuzz-chat-with-ai-friends/id6449190344"
+    },
+    {
+      "task_id": "ios-08",
+      "app_name": "EMOCHI World: AI Story Chat",
+      "platform": "iOS",
+      "app_id": "6758488675",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://apps.apple.com/app/id6758488675?mt=8"
+    },
+    {
+      "task_id": "ios-09",
+      "app_name": "Talkie Lab - AI Playground",
+      "platform": "iOS",
+      "app_id": "6740326134",
+      "verification": "app_id_search_candidate_and_selected_icon",
+      "detail_verified": false
+    },
+    {
+      "task_id": "ios-10",
+      "app_name": "Tipsy Chat: Live Your Story",
+      "platform": "iOS",
+      "app_id": "6572296119",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://apps.apple.com/app/tipsy-chat-live-your-story/id6572296119"
+    },
+    {
+      "task_id": "android-01",
+      "app_name": "dotdotdot: AI Romance, Stories",
+      "platform": "Android",
+      "app_id": "com.rheality.dot",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=com.rheality.dot"
+    },
+    {
+      "task_id": "android-02",
+      "app_name": "Whispy AI: Cozy Chat",
+      "platform": "Android",
+      "app_id": "com.nexbase.whispy",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=com.nexbase.whispy"
+    },
+    {
+      "task_id": "android-03",
+      "app_name": "TizzChat: Craft Your World",
+      "platform": "Android",
+      "app_id": "aiapp.tizzchat.chatbot",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "http://play.google.com/store/apps/details?id=aiapp.tizzchat.chatbot"
+    },
+    {
+      "task_id": "android-04",
+      "app_name": "zeta: AI Chat, Story, Play",
+      "platform": "Android",
+      "app_id": "com.scatterlab.messenger",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=com.scatterlab.messenger&referrer=bytedanceglobal_E.C.P.CtAB75-6I4hPtPjecN_ure3ZhmqnsG-RpYmJ73eM1jSHzPwA3ik6iwzwPcaklhVLEHWpQqbcK3VP7NgznhhweJAAoqyVX4AMoEdZuy7Q6nYT5IKPxL3Un16vxWiiWDrjsDLm7WCzHggJZnSLzZ-kn-FfKSX08ZaodKa4wdvVQ_SI8LuF77rSZ92Od6CGBOSNzykX8Gv0xkHg1oe7h_swHdWjxP-cEdMrz3Hh9WUZw0M5x1i0yVWB0LCHB2s7ZT52B3gJ5xRsFQcGYyG5Ny5yfduVJRIEdjIuMBogVyqXvh_zRfjKLTXdwGfi_0IOL7Y9QMIcN_YUHtX4E9Y"
+    },
+    {
+      "task_id": "android-05",
+      "app_name": "LoveyDovey - Dream Chats",
+      "platform": "Android",
+      "app_id": "ai.tain.reelso",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=ai.tain.reelso"
+    },
+    {
+      "task_id": "android-06",
+      "app_name": "PolyBuzz: Chat with AI Friends",
+      "platform": "Android",
+      "app_id": "ai.socialapps.speakmaster",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=ai.socialapps.speakmaster&referrer=applovin_1001a0ce3b0ccf3dcbaa638e2c4a1eeab919c1ee"
+    },
+    {
+      "task_id": "android-07",
+      "app_name": "Emochi: Chat With Character",
+      "platform": "Android",
+      "app_id": "com.flow.mobile",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=com.flow.mobile"
+    },
+    {
+      "task_id": "android-08",
+      "app_name": "SeaHaze - AI Chat & Friends",
+      "platform": "Android",
+      "app_id": "ai.seaart.app.hot",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=ai.seaart.app.hot"
+    },
+    {
+      "task_id": "android-09",
+      "app_name": "Tipsy Chat: Live Your Story",
+      "platform": "Android",
+      "app_id": "com.tipsyturbo.app",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=com.tipsyturbo.app"
+    },
+    {
+      "task_id": "android-10",
+      "app_name": "Talkie: Creative AI Community",
+      "platform": "Android",
+      "app_id": "com.weaver.app.prod",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "https://play.google.com/store/apps/details?id=com.weaver.app.prod"
+    },
+    {
+      "task_id": "android-11",
+      "app_name": "Sea Soul: AI Chat",
+      "platform": "Android",
+      "app_id": "ai.seaart.seasoul",
+      "verification": "app_id_search_selected_icon_and_store_link",
+      "detail_verified": true,
+      "store_url": "http://play.google.com/store/apps/details?id=ai.seaart.seasoul"
+    },
+    {
+      "task_id": "ios-03",
+      "app_name": "Heyyyy: Stories that text back",
+      "platform": "iOS",
+      "app_id": "6761748236",
+      "verification": "guangdada_visible_detail_official_store_link",
+      "detail_verified": true,
+      "guangdada_verified": true,
+      "store_url": "https://apps.apple.com/us/app/heyyyy-stories-that-text-back/id6761748236",
+      "status": "verified",
+      "verification_evidence": "data/heyyyy_probe_20261019/detail.json"
+    }
+  ]
+}

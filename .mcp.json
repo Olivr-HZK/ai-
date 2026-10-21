@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "guangdada-crawl": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "guangdada_crawl.mcp_server"
+      ]
+    }
+  }
+}

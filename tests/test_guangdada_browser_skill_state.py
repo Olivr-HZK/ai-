@@ -17,6 +17,20 @@ fsm = importlib.util.module_from_spec(spec);spec.loader.exec_module(fsm)
 
 
 class StateTests(unittest.TestCase):
+    def test_observed_name_alias_requires_explicit_exact_scoped_app_id(self):
+        task = {'app_name': 'Store Full Name', 'platform': 'Android', 'app_id': 'io.example'}
+        observed = {'app_name': 'Localized Site Full Name', 'canonical_app_name': 'Store Full Name',
+                    'platform': 'Android', 'app_id': 'io.example'}
+        fsm.identity(observed, task)
+        for changed in [dict(observed, app_id='io.other'),
+                        dict(observed, platform='iOS'),
+                        dict(observed, canonical_app_name='Other Store Name'),
+                        dict(observed, app_name='')]:
+            with self.assertRaises(Exception):
+                fsm.identity(changed, task)
+        with self.assertRaises(Exception):
+            fsm.identity(observed, {'app_name':'Store Full Name','platform':'Android'})
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.run = Path(self.tmp.name)/'run';self.run.mkdir()
@@ -107,6 +121,58 @@ class StateTests(unittest.TestCase):
         self.assertEqual(self.status()['state'], 'COMPLETED')
         (self.root/'delivery/a.mp4').write_bytes(b'corrupted')
         self.assertEqual(self.status()['state'], 'FRAMES_PENDING')
+
+    def test_unrestricted_filter_readonly_accepts_empty_and_rejects_residue(self):
+        filters=load_json(self.root/'filters.json');ref=filters['ui_checks']['languages']
+        event=load_json(self.root/ref);event.update(producer='gdd-readonly-check/v1',kind='read',before=[])
+        fsm.write(self.root/ref,event)
+        self.assertEqual(self.status()['state'],'COMPLETED')
+        event['before']=['英语'];fsm.write(self.root/ref,event)
+        self.assertEqual(self.status()['state'],'FILTERS_PENDING')
+        event.update(before=[],key='filter.channels',expected=['Facebook'],after=['Facebook'])
+        fsm.write(self.root/ref,event)
+        with self.assertRaises(fsm.GateError):fsm.click_check(self.root,ref,self.fp,'app-ios','filter.channels',['Facebook'])
+
+    def test_correct_base_filters_can_be_read_only_but_not_app_or_sort(self):
+        filters=load_json(self.root/'filters.json')
+        for key,ref in filters['ui_checks'].items():
+            event=load_json(self.root/ref)
+            event.update(producer='gdd-readonly-check/v1',kind='read',before=event['expected'])
+            fsm.write(self.root/ref,event)
+        self.assertEqual(self.status()['state'],'COMPLETED')
+        for name in ['app.json','sort.json']:
+            value=load_json(self.root/name);ref=value['ui_check'];event=load_json(self.root/ref)
+            event.update(producer='gdd-readonly-check/v1',kind='read',before=event['expected'])
+            fsm.write(self.root/ref,event)
+            self.assertEqual(self.status()['state'],'APP_PENDING' if name=='app.json' else 'SORT_PENDING')
+            event.update(producer='gdd-checked-click/v1',kind='click');fsm.write(self.root/ref,event)
+
+    def test_card_identity_event_requires_observed_ad_and_intended_app(self):
+        expected={'ad_id':'a'*32,'app_id':'123','platform':'iOS'}
+        ref=self.event('card.open',{'app_id':'123','platform':'iOS'})
+        event=load_json(self.root/ref);event.update(producer='gdd-checked-card/v1',after=expected)
+        fsm.write(self.root/ref,event)
+        fsm.click_check(self.root,ref,self.fp,'app-ios','card.open',expected)
+        event['expected']['app_id']='different-app';fsm.write(self.root/ref,event)
+        with self.assertRaises(fsm.GateError):fsm.click_check(self.root,ref,self.fp,'app-ios','card.open',expected)
+        event.update(expected={'app_id':'123','platform':'iOS'},after={**expected,'ad_id':'ad1'});fsm.write(self.root/ref,event)
+        with self.assertRaises(fsm.GateError):fsm.click_check(self.root,ref,self.fp,'app-ios','card.open',{**expected,'ad_id':'ad1'})
+
+    def test_explicit_per_app_limit_seals_without_claiming_site_terminal(self):
+        self.scope['collection_limit_per_app']=1;self.rebase()
+        self.put(self.root,'app.json',{**self.app,'card_count':2})
+        self.put(self.root,'pages/0001.json',{**self.page,'visible_count':2,'has_next':False,'terminal_reason':'limit_reached','collection_limit':1})
+        (self.root/'collection_complete.json').unlink()
+        result=self.status();self.assertIn('CRAWL_COMPLETE',result['passed'])
+        self.assertEqual(result['collection']['site_card_count'],2)
+        sealed=subprocess.run([sys.executable,str(SCRIPT),'seal','--run-dir',str(self.run),'--task','app-ios'],capture_output=True,text=True)
+        self.assertEqual(sealed.returncode,0,sealed.stdout+sealed.stderr)
+        self.assertEqual(self.status()['state'],'COMPLETED')
+        self.put(self.root,'pages/0001.json',{**self.page,'visible_count':2,'terminal_reason':'next_disabled'})
+        self.assertEqual(self.status()['state'],'COLLECTING')
+        self.scope.pop('collection_limit_per_app');self.rebase()
+        self.put(self.root,'pages/0001.json',{**self.page,'visible_count':2,'terminal_reason':'limit_reached','collection_limit':1})
+        self.assertEqual(self.status()['state'],'COLLECTING')
 
     def test_missing_card_cannot_pass_probe(self):
         (self.root/'cards/0001-0001.json').unlink()
@@ -282,6 +348,16 @@ class StateTests(unittest.TestCase):
     def test_heat_sort_is_supported_after_app(self):
         self.scope['filters']['sort']='热度';self.rebase()
         self.assertEqual(self.status()['state'],'COMPLETED')
+
+    def test_latest_sort_and_verified_app_id_query(self):
+        self.scope['filters']['sort']='最新创意';self.rebase()
+        app=load_json(self.root/'app.json')
+        app.update(query_type='app_id',query_app_id='123')
+        app.pop('query_full_name',None)
+        fsm.write(self.root/'app.json',app)
+        self.assertEqual(self.status()['state'],'COMPLETED')
+        app['query_app_id']='different-id';fsm.write(self.root/'app.json',app)
+        self.assertEqual(self.status()['state'],'APP_PENDING')
 
     def test_app_cannot_be_selected_before_base_filters(self):
         app=load_json(self.root/'app.json');event=load_json(self.root/app['ui_check'])

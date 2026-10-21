@@ -25,7 +25,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 import re
-from difflib import SequenceMatcher
 
 from ua_workflows.shared.config import CONFIG_DIR, DATA_DIR
 
@@ -177,19 +176,61 @@ def _norm_text(s: str) -> str:
     return re.sub(r"[^0-9a-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+", "", s)
 
 
+_GENERIC_ADVERTISER_TOKENS = {
+    "ai",
+    "app",
+    "apps",
+    "ask",
+    "assistant",
+    "bot",
+    "chat",
+    "chatbot",
+    "editor",
+    "enhancer",
+    "face",
+    "filter",
+    "generator",
+    "headshot",
+    "image",
+    "images",
+    "maker",
+    "photo",
+    "photos",
+    "photoshoot",
+    "selfie",
+    "trend",
+    "trends",
+    "video",
+    "videos",
+}
+
+
+def _brand_key(text: str) -> str:
+    first_segment = re.split(r"[:：\-–—]", str(text or ""), maxsplit=1)[0]
+    tokens = re.findall(r"[0-9a-z]+|[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+", first_segment.lower())
+    while tokens and tokens[-1] in _GENERIC_ADVERTISER_TOKENS:
+        tokens.pop()
+    if not any(token not in _GENERIC_ADVERTISER_TOKENS for token in tokens):
+        return ""
+    return "".join(tokens)
+
+
 def advertiser_matches_product(advertiser_name: str, product: str) -> bool:
     """
-    过滤明显不相关的广告主：
-    - 强匹配：归一化后互为包含
-    - 弱匹配：相似度阈值
+    过滤非目标广告主。
+
+    广大大会在按 appid 搜索时返回相邻广告主；AI Video Generator 这类泛名不能用
+    包含或相似度兜底，否则会把 PixVerse / Toki 等邻近广告主误当成目标产品。
     """
     a = _norm_text(advertiser_name)
     p = _norm_text(product)
     if not a or not p:
         return False
-    if a in p or p in a:
+    if a == p:
         return True
-    return SequenceMatcher(None, a, p).ratio() >= 0.58
+    advertiser_brand = _brand_key(advertiser_name)
+    product_brand = _brand_key(product)
+    return bool(advertiser_brand and advertiser_brand == product_brand)
 
 
 def parse_args():
@@ -376,4 +417,3 @@ if __name__ == "__main__":
     import asyncio
 
     asyncio.run(main())
-

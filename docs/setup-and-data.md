@@ -11,7 +11,7 @@ playwright install chromium
 ```
 
 - 依赖列表：`requirements.txt`（Playwright、OpenAI、`lark-oapi`、`sentence-transformers`、Torch 等）。
-- **cron** 脚本不 `activate`，直接调用 `**./venv/bin/python`**（路径相对于仓库根）。
+- **cron** 脚本不 `activate`，直接调用 `**.venv/bin/python`**（路径相对于仓库根）。
 
 ## `.env`
 
@@ -23,6 +23,7 @@ playwright install chromium
 | 广大大           | `GUANGDADA_EMAIL`、`GUANGDADA_PASSWORD`                               |
 | LLM           | `OPENROUTER_API_KEY` 等                                               |
 | VE 多维表        | `VIDEO_ENHANCER_BITABLE_URL`、可选 `VIDEO_ENHANCER_CLUSTER_BITABLE_URL` |
+| VE 留存维护       | `VE_RETENTION_ARCHIVE_AFTER_DAYS`、`VE_RETENTION_ARTIFACT_KEEP_DAYS`、`VE_RETENTION_KEEP_REMOTE_SNAPSHOTS`、`VE_RETENTION_EXTRA_ARGS` |
 | VE 筛选口径       | `INTRADAY_EFFECT_FILTER_ENABLED`、`INTRADAY_EFFECT_SIMILARITY_THRESHOLD`、`OLD_EFFECT_BITABLE_FILTER_ENABLED`、`OLD_EFFECT_SIMILARITY_THRESHOLD`、`OLD_EFFECT_LOOKBACK_DAYS`、`EFFECT_EMBEDDING_DUP_FILTER_ENABLED`、`EFFECT_EMBEDDING_INTRADAY_HARD_THRESHOLD`、`EFFECT_EMBEDDING_CROSSDAY_HARD_THRESHOLD`、`EFFECT_EMBEDDING_LOOKBACK_DAYS`、`EMBEDDING_DUP_CANDIDATE_ENABLED`、`EMBEDDING_DUP_CANDIDATE_THRESHOLD`、`DAILY_PLAY_CLUSTER_TEXT_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_THRESHOLD`、`DAILY_PLAY_CLUSTER_EMBEDDING_ENABLED`、`VIDEO_ENHANCER_PER_PRODUCT_TRUNCATE_ENABLED` |
 | 飞书写入          | `FEISHU_APP_ID`、`FEISHU_APP_SECRET`                                  |
 | Arrow2 SQLite | `ARROW2_SQLITE_PATH`（可选，默认 `data/arrow2_pipeline.db`）                |
@@ -40,10 +41,21 @@ playwright install chromium
 | `data/haopeng_topn_experiments/`  | VE 浩鹏二次 AI 筛选 TopN JSON，本地产物不提交                  |
 | `data/remote_snapshots/ve/`       | 从 Mac mini 拉取的 VE-only 生产库快照，本地产物不提交             |
 | `data/*.json`                     | 各工作流离线 raw / analysis / 报告                             |
+| `reports/ve_retention_*.json`     | VE 留存维护 dry-run / 执行报告，本地产物不提交                      |
 | `logs/`                           | cron 与手工重定向的运行日志（可 gitignore）                          |
 
 
 `data/` 与 `reports/` 在运行时自动创建目录。
+
+## VE 留存维护
+
+`scripts/run_ve_retention.py` 默认只生成报告，不改表、不删文件：
+
+```bash
+.venv/bin/python scripts/run_ve_retention.py
+```
+
+报告会列出两类候选：一类是可在主多维表标记「已归档」的旧素材，另一类是可删除的本地 raw/report/snapshot 运行产物。实际执行必须显式传 `--apply-bitable` 或 `--apply-local`；该入口不调用飞书删除接口，也不清理 `data/video_enhancer_pipeline.db` / `creative_library`。
 
 ## VE 玩法资产数据
 

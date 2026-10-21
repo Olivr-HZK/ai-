@@ -17,6 +17,7 @@ from ua_workflows.shared.llm.client import call_text, flush_usage
 from ua_workflows.video_enhancer.feedback_training import cell_to_text, fetch_bitable_records
 from ua_workflows.video_enhancer.feedback_rating import (
     RATING_LABELS,
+    feedback_fields_from_primary,
     legacy_status_to_rating,
     normalize_rating_value,
     resolve_feedback_rating,
@@ -87,13 +88,6 @@ def is_excluded_topn_platform(value: Any) -> bool:
     return _normalize_platform(value) in EXCLUDED_TOPN_PLATFORMS
 
 
-def _rating_field_for_reviewer_field(reviewer_field: str) -> str:
-    text = str(reviewer_field or "").strip()
-    if text.endswith("接受情况") and text != "接受情况":
-        return text[: -len("接受情况")] + "评分"
-    return "浩鹏评分"
-
-
 def _row_rating(row: dict[str, Any]) -> int | None:
     rating = normalize_rating_value(row.get("rating"))
     if rating is not None:
@@ -113,15 +107,16 @@ def _with_rating(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "浩鹏接受情况") -> dict[str, Any]:
+def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "浩鹏评分") -> dict[str, Any]:
     fields = record.get("fields") or {}
     if not isinstance(fields, dict):
         fields = {}
+    rating_field, status_field = feedback_fields_from_primary(reviewer_field, reviewer="haopeng")
     feedback = resolve_feedback_rating(
         fields,
         reviewer="haopeng",
-        rating_field=_rating_field_for_reviewer_field(reviewer_field),
-        status_field=reviewer_field,
+        rating_field=rating_field,
+        status_field=status_field,
     )
     ad_key = _first_text(fields, ("广告ID", "ad_key")) or str(record.get("record_id") or record.get("id") or "")
     date_value = fields.get("抓取日期")
@@ -135,7 +130,7 @@ def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "�
         "date": _normalize_date_value(date_value),
         "core": _first_text(fields, ("核心卖点", "玩法指纹", "AI分析结果", "标题")),
         "play_label": _first_text(fields, ("玩法", "玩法资产", "玩法指纹")),
-        "actual_hp": _first_text(fields, (reviewer_field, "接受情况")),
+        "actual_hp": _first_text(fields, (status_field, "接受情况")),
         "rating": feedback.rating,
         "rating_label": feedback.rating_label,
         "rating_source_field": feedback.source_field,
@@ -154,7 +149,7 @@ def normalize_bitable_record(record: dict[str, Any], *, reviewer_field: str = "�
     return row
 
 
-def fetch_rows_from_bitable(bitable_url: str, *, reviewer_field: str = "浩鹏接受情况") -> list[dict[str, Any]]:
+def fetch_rows_from_bitable(bitable_url: str, *, reviewer_field: str = "浩鹏评分") -> list[dict[str, Any]]:
     return [
         normalize_bitable_record(record, reviewer_field=reviewer_field)
         for record in fetch_bitable_records(bitable_url)
@@ -166,9 +161,9 @@ def _history_payload(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {
             "ad_key": row.get("ad_key", ""),
             "date": row.get("date", ""),
-            "status": row.get("actual_hp", ""),
             "rating": row.get("rating"),
             "rating_label": row.get("rating_label", ""),
+            "rating_source_field": row.get("rating_source_field", ""),
             "platform": row.get("platform", ""),
             "core": clamp(row.get("core"), 140),
             "play_label": row.get("play_label", ""),
@@ -203,7 +198,7 @@ def build_ai_prompt(
     history: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
 ) -> str:
-    return f"""你是 Video Enhancer 竞品素材的二次筛选助手。你的任务不是拦截主流程，而是从当天素材中挑出最可能被浩鹏采纳的推荐素材。
+    return f"""你是 Video Enhancer 竞品素材的二次筛选助手。你的任务不是拦截主流程，而是从当天素材中挑出最可能获得浩鹏高星评分的推荐素材。
 
 浩鹏评分定义：
 - 5星=强烈值得复刻/制作；APP 内部还未上线该类型内容，或上线到 APP 模板后对付费意愿提高有明显价值、好玩、可能产生付费。
@@ -317,16 +312,29 @@ def _normalize_decisions(candidates: list[dict[str, Any]], raw: list[dict[str, A
 
 def summarize_topn(rows: list[dict[str, Any]], *, top_n: int = 10) -> dict[str, Any]:
     top = rows[:top_n]
+    rating_values = [_row_rating(row) for row in top]
+    rated = [rating for rating in rating_values if rating in {1, 2, 3, 4, 5}]
+    rating_counts = Counter(RATING_LABELS[rating] for rating in rated)
     actual_counts = Counter(str(row.get("actual_hp") or "<空>") for row in top)
     accepted = sum(1 for row in top if str(row.get("actual_hp") or "") in {"采纳", "接受"})
     library = sum(1 for row in top if str(row.get("actual_hp") or "") == "入素材库")
-    return {
+    summary = {
         "candidate_count": len(rows),
         "top_n": top_n,
         "accepted": accepted,
         "accepted_or_library": accepted + library,
         "actual_counts": dict(actual_counts),
     }
+    if rated:
+        summary.update(
+            {
+                "rated": len(rated),
+                "five_star_hits": rated.count(5),
+                "average_rating": round(sum(rated) / len(rated), 2),
+                "rating_counts": dict(rating_counts),
+            }
+        )
+    return summary
 
 
 def build_report_from_rows(
@@ -335,7 +343,7 @@ def build_report_from_rows(
     target_date: str,
     model: str = DEFAULT_MODEL,
     history_start_date: str = DEFAULT_HISTORY_START_DATE,
-    reviewer_field: str = "浩鹏接受情况",
+    reviewer_field: str = "浩鹏评分",
 ) -> dict[str, Any]:
     history_end = previous_date(target_date)
     history = [
@@ -452,7 +460,7 @@ def generate_report_from_bitable(
     target_date: str,
     model: str = DEFAULT_MODEL,
     history_start_date: str = DEFAULT_HISTORY_START_DATE,
-    reviewer_field: str = "浩鹏接受情况",
+    reviewer_field: str = "浩鹏评分",
     output_dir: Path = DEFAULT_OUTPUT_DIR,
 ) -> tuple[dict[str, Any], Path]:
     rows = fetch_rows_from_bitable(bitable_url, reviewer_field=reviewer_field)
@@ -475,7 +483,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="生成 VE 浩鹏二次 AI 筛选 TopN JSON")
     parser.add_argument("--date", default=yesterday_shanghai(), help="目标日期 YYYY-MM-DD，默认昨天")
     parser.add_argument("--bitable-url", default="", help="VE 主多维表 URL，默认 VIDEO_ENHANCER_BITABLE_URL")
-    parser.add_argument("--reviewer-field", default="浩鹏接受情况")
+    parser.add_argument("--reviewer-field", default="浩鹏评分", help="浩鹏评分字段名；传旧浩鹏接受情况也会兼容映射")
     parser.add_argument("--model", default=(os.getenv("VE_HAOPENG_FILTER_MODEL") or DEFAULT_MODEL).strip())
     parser.add_argument(
         "--history-start-date",

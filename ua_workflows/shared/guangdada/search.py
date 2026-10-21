@@ -83,7 +83,8 @@ def _load_selectors():
     sel_map = {}
     if OP_FILE.exists():
         try:
-            data = json.load(open(OP_FILE, encoding="utf-8"))
+            with open(OP_FILE, encoding="utf-8") as f:
+                data = json.load(f)
             for item in data.get("data", []):
                 name, html = item.get("element"), item.get("html", "")
                 if name and html:
@@ -93,10 +94,11 @@ def _load_selectors():
         except Exception:
             pass
     sel_map["搜索框_容器"] = ["#display-search-input-container", "[id='display-search-input-container']"]
-    # operation.json: 时间=7/30/90天, 广告素材=广告/素材/广告主, 筛选=最新创意/最后看见/展示估值
+    # operation.json: 时间=7/30/90天/近1年, 广告素材=广告/素材/广告主, 筛选=最新创意/最后看见/展示估值
     defaults = {
         "时间": [".filter-search-radio-group_new", "#filter-search-radio-group_new", ".ant-radio-group-solid"],
         "七天": ["label:has-text('7天')", "input[value='7']", ".ant-radio-group-solid label:has-text('7天')"],
+        "近一年": ["label:has-text('近1年')", "label:has-text('1年')", "input[value='365']", ".ant-radio-group-solid label:has-text('近1年')"],
         "广告素材": ["#filter_duplicate_removal", ".ant-radio-group-outline"],
         "素材": ["#filter_duplicate_removal label:has-text('素材')", "label:has-text('素材')", "input[value='1']"],
         "筛选": [".flex.items-center.gap-x-3", "div:has(span:has-text('展示估值'))", "div:has(span:has-text('最新创意'))"],
@@ -169,25 +171,32 @@ def _extract_creative_lists(obj) -> list[list]:
 
 
 async def _click_day_span(page, day_span: str, log_prefix: str) -> bool:
-    """点击时间窗：7 / 30 / 90 天。显式请求 30/90 却点不中时返回 False，不再默默改回 7 天。"""
+    """点击时间窗：7 / 30 / 90 天 / 近1年。显式请求非 7 天却点不中时返回 False，不再默默改回 7 天。"""
     s = str(day_span or "7").strip()
-    if s in ("7", "7天"):
+    if s in ("7", "7天", "7d", "7D"):
         ok = await _click(page, ["七天", "时间"])
         print(f"{log_prefix}7天 {'✓' if ok else '✗'}")
         return bool(ok)
-    if s in ("30", "30天"):
+    if s in ("30", "30天", "30d", "30D"):
         for keys in (["label:has-text('30天')", "30天", "时间"], ["input[value='30']"], ["三十天", "时间"]):
             if await _click(page, keys):
                 print(f"{log_prefix}30天 ✓")
                 return True
         print(f"{log_prefix}30天 ✗ 未找到可选中的时间窗", file=sys.stderr)
         return False
-    if s in ("90", "90天"):
+    if s in ("90", "90天", "90d", "90D"):
         for keys in (["label:has-text('90天')", "90天", "时间"], ["input[value='90']"], ["九十天", "时间"]):
             if await _click(page, keys):
                 print(f"{log_prefix}90天 ✓")
                 return True
         print(f"{log_prefix}90天 ✗ 未找到可选中的时间窗", file=sys.stderr)
+        return False
+    if s in ("365", "365天", "1y", "1Y", "1年", "近1年", "一年", "近一年"):
+        for keys in (["近一年", "时间"], ["label:has-text('近1年')", "1年", "时间"], ["input[value='365']"]):
+            if await _click(page, keys):
+                print(f"{log_prefix}近1年 ✓")
+                return True
+        print(f"{log_prefix}近1年 ✗ 未找到可选中的时间窗", file=sys.stderr)
         return False
     print(f"{log_prefix}[提醒] 未知 day_span={s!r}，尝试点 7 天", file=sys.stderr)
     ok = await _click(page, ["七天", "时间"])
@@ -889,6 +898,478 @@ def _print_dom_detail_probe(idx: int, meta: dict[str, str], detail_rows: list[di
         )
 
 
+def _clean_detail_analysis_value(value: str) -> str:
+    v = re.sub(r"\s+", " ", str(value or "")).strip()
+    v = re.sub(r"^[↑↓↗↘→←啯嘇嗁営\s]+", "", v).strip()
+    v = re.sub(r"[。；;，,]+$", "", v).strip()
+    return v
+
+
+def _clean_detail_analysis_text(value: str) -> str:
+    v = re.sub(r"\s+", " ", str(value or "")).strip()
+    return re.sub(r"^[↑↓↗↘→←啯嘇嗁営\s]+", "", v).strip()
+
+
+def _detail_analysis_value_parts(label: str, value: str) -> list[str]:
+    cleaned = _clean_detail_analysis_value(value)
+    if not cleaned:
+        return []
+    if label == "视频类型" or " " not in cleaned:
+        return [cleaned]
+    tokens = cleaned.split()
+    parts: list[str] = []
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token == "AI" and idx + 1 < len(tokens):
+            parts.append(f"{token} {tokens[idx + 1]}")
+            idx += 2
+            continue
+        if idx + 1 < len(tokens) and tokens[idx + 1] == "App" and token in {"操作", "打开", "使用"}:
+            parts.append(f"{token} App")
+            idx += 2
+            continue
+        parts.append(token)
+        idx += 1
+    return [x for x in parts if x]
+
+
+def _normalize_detail_dom_analysis(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize Guangdada detail-page DOM analysis text into a stable JSON shape."""
+    if not isinstance(raw, dict):
+        return {}
+    full_text = str(raw.get("text") or "").strip()
+    if not full_text or ("创意分析" not in full_text and "素材脚本分析" not in full_text):
+        return {}
+    starts = [pos for pos in (full_text.find("创意分析"), full_text.find("素材脚本分析")) if pos >= 0]
+    start = min(starts) if starts else 0
+    end = len(full_text)
+    for marker in ("AI辅助功能", "选择生成prompt", "生成Prompt"):
+        pos = full_text.find(marker, start)
+        if pos >= 0:
+            end = min(end, pos)
+    if end <= start:
+        end = min(len(full_text), start + 4000)
+    raw_text = full_text[start:end].strip()
+
+    script_pos = raw_text.find("素材脚本分析")
+    creative_raw = raw_text[:script_pos] if script_pos >= 0 else raw_text
+    script_raw = raw_text[script_pos:] if script_pos >= 0 else raw_text
+
+    creative_text = creative_raw.replace("\r", "\n")
+    creative_markers = [
+        "创意分析",
+        "创意内容",
+        "创意策略",
+        "视频类型",
+        "场景",
+        "视觉对象",
+        "对象行为",
+        "呈现方式",
+        "色彩调性",
+        "目标受众",
+        "核心功能",
+        "用户痛点",
+        "核心收益",
+        "营销卖点",
+        "App信任要素",
+        "素材脚本分析",
+        "AI辅助功能",
+    ]
+    for marker in creative_markers:
+        creative_text = creative_text.replace(marker, f"\n{marker}\n")
+    creative_lines = [_clean_detail_analysis_value(x) for x in creative_text.splitlines()]
+    creative_lines = [x for x in creative_lines if x]
+
+    script_text = script_raw.replace("\r", "\n")
+    script_markers = [
+        "素材脚本分析",
+        "视频内容：",
+        "视频内容:",
+        "hook：",
+        "hook:",
+        "ending：",
+        "ending:",
+        "AI辅助功能",
+    ]
+    for marker in script_markers:
+        script_text = script_text.replace(marker, f"\n{marker}\n")
+    script_text = re.sub(r"(?<!\d)(\d{1,2}:\d{2})(?!\d)", r"\n\1", script_text)
+    lines = [_clean_detail_analysis_value(x) for x in script_text.splitlines()]
+    lines = [x for x in lines if x]
+
+    creative_analysis: dict[str, list[str]] = {}
+    label_order = [
+        "视频类型",
+        "场景",
+        "视觉对象",
+        "对象行为",
+        "呈现方式",
+        "色彩调性",
+        "目标受众",
+        "核心功能",
+        "用户痛点",
+        "核心收益",
+        "营销卖点",
+        "App信任要素",
+    ]
+    stop_labels = set(label_order + ["创意分析", "创意内容", "创意策略", "素材脚本分析", "AI辅助功能"])
+    for idx, line in enumerate(creative_lines):
+        if line not in label_order:
+            continue
+        values: list[str] = []
+        for next_line in creative_lines[idx + 1 :]:
+            if next_line in stop_labels:
+                break
+            if next_line.startswith("视频内容"):
+                break
+            if re.fullmatch(r"\d{1,2}:\d{2}", next_line):
+                break
+            for cleaned in _detail_analysis_value_parts(line, next_line):
+                if cleaned and cleaned not in values:
+                    values.append(cleaned)
+        if values:
+            creative_analysis[line] = values
+
+    video_content = ""
+    m = re.search(
+        r"视频内容\s*[：:]\s*(.*?)(?=\n\s*(?:hook|ending)\s*[：:]|\n\s*\d{1,2}:\d{2}\b|\n\s*AI辅助功能\b|\Z)",
+        script_text,
+        re.S,
+    )
+    if m:
+        video_content = _clean_detail_analysis_text(m.group(1))
+    hook = ""
+    m_hook = re.search(
+        r"(?:^|\n)\s*hook\s*[：:]\s*(.*?)(?=\n\s*(?:ending|AI辅助功能)\b|\n\s*\d{1,2}:\d{2}\b|\Z)",
+        script_text,
+        re.S | re.I,
+    )
+    if m_hook:
+        hook = _clean_detail_analysis_text(m_hook.group(1))
+    ending = ""
+    m_ending = re.search(
+        r"(?:^|\n)\s*ending\s*[：:]\s*(.*?)(?=\n\s*AI辅助功能\b|\n\s*\d{1,2}:\d{2}\b|\Z)",
+        script_text,
+        re.S | re.I,
+    )
+    if m_ending:
+        ending = _clean_detail_analysis_text(m_ending.group(1))
+
+    timeline: list[dict[str, str]] = []
+    for m in re.finditer(r"(?<!\d)(\d{1,2}:\d{2})(?!\d)[ \t]*([^\n]*)", script_text):
+        tm = m.group(1)
+        label = _clean_detail_analysis_value(m.group(2))
+        if (
+            not label
+            or label.startswith("截取")
+            or "AI辅助功能" in label
+            or re.fullmatch(r"\d{1,2}:\d{2}", label)
+        ):
+            continue
+        if len(label) > 40:
+            label = label[:40].rstrip()
+        item = {"time": tm, "label": label}
+        if item not in timeline:
+            timeline.append(item)
+    for idx, line in enumerate(lines):
+        if not re.fullmatch(r"\d{1,2}:\d{2}", line):
+            continue
+        if idx + 1 >= len(lines):
+            continue
+        label = _clean_detail_analysis_value(lines[idx + 1])
+        if (
+            not label
+            or label.startswith("截取")
+            or "AI辅助功能" in label
+            or re.fullmatch(r"\d{1,2}:\d{2}", label)
+            or re.match(r"^\d{1,2}:\d{2}\b", label)
+            or label.startswith("视频内容")
+        ):
+            continue
+        if len(label) > 40:
+            label = label[:40].rstrip()
+        item = {"time": line, "label": label}
+        if item not in timeline:
+            timeline.append(item)
+
+    if not creative_analysis and not video_content and not timeline:
+        return {}
+    out: dict[str, Any] = {"source": "guangdada_detail_dom"}
+    if creative_analysis:
+        out["creative_analysis"] = creative_analysis
+    if video_content or timeline:
+        out["script_analysis"] = {}
+        if video_content:
+            out["script_analysis"]["video_content"] = video_content
+        if hook:
+            out["script_analysis"]["hook"] = hook
+        if ending:
+            out["script_analysis"]["ending"] = ending
+        if timeline:
+            out["script_analysis"]["timeline"] = timeline
+    out["raw_text"] = re.sub(r"\s+", " ", raw_text)[:2000]
+    return out
+
+
+def _detail_analysis_time_label(seconds: object) -> str:
+    try:
+        t = int(round(float(seconds)))
+    except Exception:
+        return ""
+    if t >= 3600:
+        h = t // 3600
+        m = (t % 3600) // 60
+        s = t % 60
+        return f"{h}:{m:02d}:{s:02d}"
+    if t >= 60:
+        return f"{t // 60}:{t % 60:02d}"
+    return f"0:{t:02d}"
+
+
+def _detail_analysis_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _detail_analysis_names(values: object) -> list[str]:
+    if not isinstance(values, list):
+        values = [values] if values else []
+    out: list[str] = []
+    for item in values:
+        if isinstance(item, dict):
+            name = (
+                item.get("cn_name")
+                or item.get("zh_name")
+                or item.get("name")
+                or item.get("label")
+                or item.get("en_name")
+                or item.get("value")
+            )
+        else:
+            name = item
+        cleaned = _clean_detail_analysis_value(str(name or ""))
+        if cleaned and cleaned not in out:
+            out.append(cleaned)
+    return out
+
+
+def _normalize_material_script_analysis_response(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize Guangdada material-script-analysis API response."""
+    if not isinstance(raw, dict):
+        return {}
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+    if isinstance(data.get("data"), dict):
+        data = data["data"]
+    if not isinstance(data, dict):
+        return {}
+
+    creative_analysis: dict[str, list[str]] = {}
+    for key in (
+        "video_hook_type",
+        "video_ending",
+        "video_type",
+        "creative_content",
+        "scene",
+        "color_tone",
+        "material_ai_tag",
+    ):
+        names = _detail_analysis_names(data.get(key))
+        if names:
+            creative_analysis[key] = names
+
+    script = data.get("material_script_analysis")
+    if not isinstance(script, dict):
+        script = data.get("script_analysis") if isinstance(data.get("script_analysis"), dict) else {}
+
+    video_content = _clean_detail_analysis_text(
+        str(script.get("video_content") or script.get("video_summary") or data.get("video_summary") or "")
+    )
+    timeline: list[dict[str, Any]] = []
+    for segment in script.get("timeline") or data.get("timeline") or []:
+        if not isinstance(segment, dict):
+            continue
+        start = _detail_analysis_float(segment.get("start"))
+        end = _detail_analysis_float(segment.get("end"))
+        label = _clean_detail_analysis_value(
+            str(
+                segment.get("segment_type")
+                or segment.get("segment_type_cn")
+                or segment.get("label")
+                or segment.get("type")
+                or segment.get("segment_type_en")
+                or ""
+            )
+        )
+        if end is None and start is None:
+            continue
+        item: dict[str, Any] = {}
+        if start is not None:
+            item["start"] = start
+        if end is not None:
+            item["end"] = end
+            item["time"] = _detail_analysis_time_label(end)
+        elif start is not None:
+            item["time"] = _detail_analysis_time_label(start)
+        if label:
+            item["label"] = label
+        if item and item not in timeline:
+            timeline.append(item)
+
+    if not creative_analysis and not video_content and not timeline:
+        return {}
+    out: dict[str, Any] = {"source": "guangdada_material_script_analysis_api"}
+    if creative_analysis:
+        out["creative_analysis"] = creative_analysis
+    if video_content or timeline:
+        out["script_analysis"] = {}
+        if video_content:
+            out["script_analysis"]["video_content"] = video_content
+        if timeline:
+            out["script_analysis"]["timeline"] = timeline
+    return out
+
+
+def _detail_analysis_wait_ms() -> int:
+    try:
+        return max(1000, int((os.environ.get("GUANGDADA_DETAIL_ANALYSIS_WAIT_MS") or "").strip() or "20000"))
+    except Exception:
+        return 20000
+
+
+def _detail_analysis_has_script(analysis: dict[str, Any]) -> bool:
+    if not isinstance(analysis, dict):
+        return False
+    script = analysis.get("script_analysis")
+    if not isinstance(script, dict):
+        return False
+    if str(script.get("video_content") or "").strip():
+        return True
+    timeline = script.get("timeline")
+    return isinstance(timeline, list) and bool(timeline)
+
+
+def _detail_analysis_video_content(analysis: dict[str, Any]) -> str:
+    if not isinstance(analysis, dict):
+        return ""
+    direct = _clean_detail_analysis_text(str(analysis.get("video_content") or ""))
+    if direct:
+        return direct
+    script = analysis.get("script_analysis")
+    if not isinstance(script, dict):
+        return ""
+    return _clean_detail_analysis_text(str(script.get("video_content") or ""))
+
+
+def _attach_guangdada_video_content(creative: dict[str, Any], analysis: dict[str, Any]) -> bool:
+    """Persist only Guangdada's built-in video-content paragraph on the creative."""
+    if not isinstance(creative, dict):
+        return False
+    creative.pop("guangdada_detail_analysis", None)
+    video_content = _detail_analysis_video_content(analysis)
+    if not video_content:
+        return False
+    creative["guangdada_video_content"] = video_content
+    return True
+
+
+async def _fetch_material_script_analysis_from_page(page, creative: dict[str, Any]) -> dict[str, Any]:
+    """Fetch Guangdada's built-in script analysis using the logged-in Playwright page."""
+    if not isinstance(creative, dict):
+        return {}
+    params: dict[str, object] = {}
+    for key in ("ad_key", "app_type", "search_flag", "ads_type"):
+        value = creative.get(key)
+        if value not in (None, "", [], {}):
+            params[key] = value
+    if not params.get("ad_key"):
+        return {}
+    try:
+        raw = await page.evaluate(
+            """
+async (params) => {
+  const readCookie = (name) => {
+    const prefix = `${name}=`;
+    const part = document.cookie.split(';').map((x) => x.trim()).find((x) => x.startsWith(prefix));
+    return part ? part.slice(prefix.length) : '';
+  };
+  let jwt = null;
+  try { jwt = JSON.parse(localStorage.getItem('jwt') || 'null'); } catch (e) { jwt = null; }
+  const userToken = readCookie('user-token') || localStorage.getItem('user-token') || '';
+  const headers = {
+    'accept': 'application/json, text/plain, */*',
+    'content-type': 'application/x-www-form-urlencoded',
+    'x-token': readCookie('x-token') || '',
+    'x-timezone': Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+    'x-product-id': window.appProductId || '',
+    'x-nbs-user-token': userToken,
+  };
+  const auth = (jwt && jwt.nbs) || window.token || '';
+  if (auth) headers.Authorization = auth;
+  const search = new URLSearchParams();
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
+  });
+  const resp = await fetch(`/napi/v1/creative/material-script-analysis?${search.toString()}`, {
+    credentials: 'include',
+    headers,
+  });
+  const text = await resp.text();
+  let body = null;
+  try { body = JSON.parse(text); } catch (e) { body = { text }; }
+  return { status: resp.status, body, sentHeaderKeys: Object.keys(headers).filter((key) => !!headers[key]) };
+}
+""",
+            params,
+        )
+    except Exception:
+        return {}
+    if _env_truthy("ARROW2_DEBUG_MATERIAL_SCRIPT_API", default=False):
+        print(
+            "[素材脚本API] "
+            f"params={json.dumps(params, ensure_ascii=False, default=str)} "
+            f"response={json.dumps(raw, ensure_ascii=False, default=str)[:1200]}",
+            flush=True,
+        )
+    if not isinstance(raw, dict) or int(raw.get("status") or 0) != 200:
+        return {}
+    body = raw.get("body")
+    return _normalize_material_script_analysis_response(body if isinstance(body, dict) else {})
+
+
+async def _extract_detail_dom_analysis_from_page(page, timeout_ms: int | None = None) -> dict[str, Any]:
+    """Read Creative Analysis and Script Analysis from the currently opened detail modal."""
+    wait_ms = timeout_ms if timeout_ms is not None else _detail_analysis_wait_ms()
+    deadline = max(1000, int(wait_ms))
+    step_ms = 350
+    elapsed = 0
+    last_raw: dict[str, Any] = {}
+    best_analysis: dict[str, Any] = {}
+    while elapsed <= deadline:
+        try:
+            raw = await page.evaluate(
+                """
+() => {
+  return { text: document.body ? (document.body.innerText || '') : '' };
+}
+"""
+            )
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            last_raw = raw
+            analysis = _normalize_detail_dom_analysis(raw)
+            if _detail_analysis_has_script(analysis):
+                return analysis
+            if analysis:
+                best_analysis = analysis
+        await page.wait_for_timeout(step_ms)
+        elapsed += step_ms
+    return best_analysis or _normalize_detail_dom_analysis(last_raw)
+
+
 async def _await_post_login_shell(page) -> None:
     """
     登录后进入主站。勿长时间「仅等 networkidle」：广大大类 SPA 常有轮询/长连，
@@ -896,6 +1377,10 @@ async def _await_post_login_shell(page) -> None:
 
     顺序：`load` → 短等 `networkidle`（不成就放弃）→ 短 sleep，供 Tab/筛选项渲染。
     """
+    if _env_truthy("GUANGDADA_FAST_POST_LOGIN_WAIT", default=False):
+        print("[guangdada] FAST_POST_LOGIN_WAIT=1，跳过 post-login load/networkidle 等待。", flush=True)
+        await asyncio.sleep(3)
+        return
     try:
         await page.wait_for_load_state("load", timeout=15000)
     except Exception:
@@ -1859,6 +2344,7 @@ async def _do_setup(
     ad_channel_labels: list[str] | None = None,
     country_codes: list[str] | None = None,
     log_quiet: bool = False,
+    skip_time_filter: bool = False,
 ) -> bool:
     """
     在已登录的页面上做一次性的筛选设置：工具标签（可选）→ 广告渠道多选（可选）→
@@ -1875,24 +2361,39 @@ async def _do_setup(
         _p(f"{log_prefix}切换到「工具」标签…", log_quiet=log_quiet)
         tool_ok = False
         tool_selectors = [
+            "div.flex.items-center.justify-center.gap-x-12.text-base div:has-text('AI工具'):not(:has(.text-primary))",
+            "div.border-transparent.cursor-pointer:has-text('AI工具')",
+            "div:has-text('AI工具').cursor-pointer:not(:has(.text-primary))",
+            "div.flex.items-center.justify-center.gap-x-12.text-base >> text=AI工具",
+            "text=AI工具",
+            "div.flex.items-center.justify-center.gap-x-12.text-base div:has-text('AI 工具'):not(:has(.text-primary))",
+            "div.border-transparent.cursor-pointer:has-text('AI 工具')",
+            "div:has-text('AI 工具').cursor-pointer:not(:has(.text-primary))",
+            "div.flex.items-center.justify-center.gap-x-12.text-base >> text=AI 工具",
             "div.flex.items-center.justify-center.gap-x-12.text-base div:has-text('工具'):not(:has(.text-primary))",
             "div.border-transparent.cursor-pointer:has-text('工具')",
             "div.flex.items-center.justify-center.gap-x-12.text-base >> text=工具",
             "div:has-text('工具').cursor-pointer:not(:has(.text-primary))",
             "text=工具",
         ]
-        for sel in tool_selectors:
-            try:
-                loc = page.locator(sel).first
-                if await loc.count() > 0:
-                    await loc.scroll_into_view_if_needed()
-                    await loc.click(timeout=3000)
-                    await page.wait_for_timeout(1500)
-                    tool_ok = True
-                    _p(f"{log_prefix}已切换到「工具」标签 ✓", log_quiet=log_quiet)
-                    break
-            except Exception:
-                continue
+        # SPA 登录完成后页签可能晚于主站稳定信号渲染，给它一个有限重试窗口。
+        for attempt in range(3):
+            if attempt:
+                await page.wait_for_timeout(2000)
+            for sel in tool_selectors:
+                try:
+                    loc = page.locator(sel).first
+                    if await loc.count() > 0:
+                        await loc.scroll_into_view_if_needed()
+                        await loc.click(timeout=3000)
+                        await page.wait_for_timeout(1500)
+                        tool_ok = True
+                        _p(f"{log_prefix}已切换到「工具」标签 ✓", log_quiet=log_quiet)
+                        break
+                except Exception:
+                    continue
+            if tool_ok:
+                break
         if not tool_ok:
             _p(f"{log_prefix}未找到「工具」标签 ✗", log_quiet=log_quiet)
             print(
@@ -1934,7 +2435,9 @@ async def _do_setup(
             )
             return False
 
-    if date_range:
+    if skip_time_filter:
+        _p(f"{log_prefix}跳过时间窗筛选", log_quiet=log_quiet)
+    elif date_range:
         _p(f"{log_prefix}选择指定日期范围: {date_range!r}", log_quiet=log_quiet)
         if not await _set_custom_date_range(page, date_range, log_prefix):
             print(f"{log_prefix}[失败] 指定日期范围未设置成功，中止。", file=sys.stderr)
@@ -1944,7 +2447,8 @@ async def _do_setup(
         if not await _click_day_span(page, day_span, log_prefix):
             print(f"{log_prefix}[失败] 时间窗未设置成功，中止。", file=sys.stderr)
             return False
-    await page.wait_for_timeout(2000)
+    if not skip_time_filter:
+        await page.wait_for_timeout(2000)
 
     _p(f"{log_prefix}选择 素材…", log_quiet=log_quiet)
     ok = False
@@ -2384,6 +2888,7 @@ async def _click_cards_for_details(
     *,
     log_quiet: bool = False,
     stop_after_detail_first_seen_before_ymd: str | None = None,
+    extract_detail_dom_analysis: bool = False,
 ) -> list[dict]:
     """
     逐一点击页面上的创意卡片，拦截详情响应，提取完整的 creative 数据。
@@ -2459,6 +2964,120 @@ async def _click_cards_for_details(
         except Exception:
             return {}
 
+    async def _print_card_click_probe(idx: int) -> None:
+        try:
+            info = await page.evaluate(
+                r"""
+(idx) => {
+  const card = document.querySelectorAll('.shadow-common-light.bg-white')[idx];
+  if (!card) return { missing: true };
+  const rect = (el) => {
+    const r = el.getBoundingClientRect();
+    return {
+      tag: el.tagName,
+      cls: String(el.className || '').slice(0, 120),
+      text: (el.innerText || el.textContent || '').trim().slice(0, 100),
+      href: el.href || el.getAttribute('href') || '',
+      role: el.getAttribute('role') || '',
+      aria: el.getAttribute('aria-label') || '',
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+    };
+  };
+  const nodes = Array.from(
+    card.querySelectorAll('a,button,[role],img,video,[class*=cursor],[class*=play],.ant-image,.ant-image-img')
+  ).slice(0, 60).map(rect);
+  return { card: rect(card), nodes };
+}
+""",
+                idx,
+            )
+        except Exception as e:
+            info = {"error": str(e)}
+        print(
+            f"    [卡片DOM] 第 {idx + 1} 张: {json.dumps(info, ensure_ascii=False)[:6000]}",
+            flush=True,
+        )
+
+    async def _trigger_detail_request_for_card(idx: int) -> bool:
+        """Trigger the stable detail-v2 request from a card."""
+        try:
+            return bool(
+                await page.evaluate(
+                    """
+(idx) => {
+  const cards = document.querySelectorAll('.shadow-common-light.bg-white');
+  const card = cards[idx];
+  if (!card) return false;
+  card.click();
+  return true;
+}
+""",
+                    idx,
+                )
+            )
+        except Exception:
+            return False
+
+    async def _open_detail_modal_for_card(idx: int) -> bool:
+        """Open a card modal using a trusted mouse click on the preview/media area."""
+        try:
+            cards = page.locator(".shadow-common-light.bg-white")
+            if await cards.count() <= idx:
+                return False
+            card = cards.nth(idx)
+            await card.scroll_into_view_if_needed(timeout=2000)
+            await page.wait_for_timeout(250)
+            box = await card.bounding_box()
+            if not box:
+                return False
+            try:
+                clicked_hidden_detail = await page.evaluate(
+                    """
+(idx) => {
+  const card = document.querySelectorAll('.shadow-common-light.bg-white')[idx];
+  if (!card) return false;
+  card.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window }));
+  card.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
+  const buttons = Array.from(card.querySelectorAll('button'));
+  const detail = buttons.find((btn) => (btn.innerText || btn.textContent || '').trim().includes('详情'));
+  if (!detail) return false;
+  detail.click();
+  return true;
+}
+""",
+                    idx,
+                )
+                if clicked_hidden_detail:
+                    return True
+            except Exception:
+                pass
+            await page.mouse.move(
+                box["x"] + min(max(box["width"] / 2, 10), max(box["width"] - 10, 10)),
+                box["y"] + min(max(box["height"] / 2, 10), max(box["height"] - 10, 10)),
+            )
+            await page.wait_for_timeout(200)
+            try:
+                detail_btn = card.locator("button").filter(has_text="详情").first
+                if await detail_btn.count() > 0:
+                    await detail_btn.click(timeout=1200, force=True)
+                    return True
+            except Exception:
+                pass
+            try:
+                media = card.locator("video, img[src*='sp_opera'], [class*='play-simple'], img").first
+                if await media.count() > 0:
+                    await media.click(timeout=1200, force=True)
+                    return True
+            except Exception:
+                pass
+            await page.mouse.click(box["x"] + box["width"] / 2, box["y"] + min(box["height"] / 2, 180))
+            return True
+        except Exception:
+            return False
+
     async def _on_detail_response(response):
         url = response.url or ""
         if "detail-v2" not in url:
@@ -2495,6 +3114,10 @@ async def _click_cards_for_details(
             detail_holder.clear()
             try:
                 meta = await _card_debug_meta(idx) if log_each_click else {}
+                dom_detail_analysis: dict[str, Any] = {}
+                detail_modal_opened = False
+                if log_each_click and _env_truthy("ARROW2_DEBUG_CARD_DOM", default=False):
+                    await _print_card_click_probe(idx)
                 # 若指定了 target_previews，先检查该卡片的 preview 是否在目标集内
                 if target_previews:
                     card_preview = await page.evaluate(f"""
@@ -2561,15 +3184,7 @@ async def _click_cards_for_details(
                             f"广告主={adv!r} 标题={title!r}",
                             flush=True,
                         )
-                    clicked = await page.evaluate(f"""
-() => {{
-  const cards = document.querySelectorAll('.shadow-common-light.bg-white');
-  const card = cards[{idx}];
-  if (!card) return false;
-  card.click();
-  return true;
-}}
-""")
+                    clicked = await _trigger_detail_request_for_card(idx)
                     if not clicked:
                         break
 
@@ -2616,10 +3231,65 @@ async def _click_cards_for_details(
                     if probe_mode:
                         _print_dom_detail_probe(idx, meta, [])
 
+                if extract_detail_dom_analysis and detail_holder:
+                    first_detail = next((x for x in detail_holder if isinstance(x, dict)), {})
+                    dom_detail_analysis = await _fetch_material_script_analysis_from_page(page, first_detail)
+                    if dom_detail_analysis and log_each_click:
+                        print(
+                            f"    [接口分析] 第 {idx + 1}/{card_count} 张提取成功",
+                            flush=True,
+                        )
+                    # detail-v2 成功时可能尚未打开弹窗；为读取页面自带分析，需要补一次真实点卡。
+                    if not dom_detail_analysis and not detail_modal_opened:
+                        try:
+                            detail_modal_opened = await _open_detail_modal_for_card(idx)
+                        except Exception:
+                            detail_modal_opened = False
+                    if dom_detail_analysis and log_each_click:
+                        print(
+                            f"    [DOM分析] 第 {idx + 1}/{card_count} 张提取成功",
+                            flush=True,
+                        )
+                    elif detail_modal_opened:
+                        dom_detail_analysis = await _extract_detail_dom_analysis_from_page(page)
+                        if dom_detail_analysis and log_each_click:
+                            print(
+                                f"    [DOM分析] 第 {idx + 1}/{card_count} 张提取成功",
+                                flush=True,
+                            )
+                        elif log_each_click:
+                            try:
+                                probe = await page.evaluate(
+                                    """
+() => {
+  const text = document.body ? (document.body.innerText || '') : '';
+  return {
+    hasCreative: text.includes('创意分析'),
+    hasScript: text.includes('素材脚本分析'),
+    sample: text.slice(0, 1000),
+  };
+}
+"""
+                                )
+                            except Exception as e:
+                                probe = {"error": str(e)}
+                            print(
+                                f"    [DOM分析] 第 {idx + 1}/{card_count} 张未提取: "
+                                f"{json.dumps(probe, ensure_ascii=False)[:1200]}",
+                                flush=True,
+                            )
+                    elif log_each_click:
+                        print(
+                            f"    [DOM分析] 第 {idx + 1}/{card_count} 张弹窗未打开，跳过页面分析",
+                            flush=True,
+                        )
+
                 # 把新的 creative 收集起来
                 for c in detail_holder:
                     if isinstance(c, dict):
                         c["_dom_idx"] = idx
+                        if dom_detail_analysis:
+                            _attach_guangdada_video_content(c, dom_detail_analysis)
                     ak = str(c.get("ad_key") or "")
                     if ak and ak not in known_ad_keys:
                         known_ad_keys.add(ak)
@@ -3224,6 +3894,7 @@ async def _collect_keyword_crawl_result_latest_dom_detail(
     early_stop_default: bool = True,
     stop_scroll_if_before_target: bool = False,
     list_source: str = "dom_detail+dom",
+    extract_detail_dom_analysis: bool = False,
 ) -> dict:
     """
     「最新创意」通用点卡主路径：搜索/滚动后，以当前 DOM 卡片为主逐张拿 detail-v2。
@@ -3313,6 +3984,7 @@ async def _collect_keyword_crawl_result_latest_dom_detail(
                     napi_rows_by_preview=napi_rows_by_preview or None,
                     log_quiet=log_quiet,
                     stop_after_detail_first_seen_before_ymd=ymd_for_stop,
+                    extract_detail_dom_analysis=extract_detail_dom_analysis,
                 )
                 for detail in details_page:
                     if isinstance(detail, dict):
@@ -3601,12 +4273,15 @@ async def run_batch(
     enable_dom_track: bool = False,
     detail_click_primary: bool = False,
     first_seen_target_ymd: str | None = None,
+    day_span: str = "7",
     date_range: object | None = None,
     pause_per_keyword: bool = False,
     keep_browser_open: bool = False,
     keyword_labels: dict[str, str] | None = None,
     max_scroll_rounds: int | None = None,
     stop_scroll_if_oldest_first_seen_before_ymd: str | None = None,
+    extract_detail_dom_analysis: bool = False,
+    skip_time_filter: bool = False,
     _human_check_restart_count: int = 0,
 ) -> list:
     """
@@ -3619,11 +4294,14 @@ async def run_batch(
     enable_dom_track: 是否启用 DOM 补充 + 点击详情（默认关闭，仅供 fetch_competitor_raw 等调试脚本使用）。
     detail_click_primary: 是否以当前页面卡片逐张点击 detail-v2 作为主结果源（VE/Arrow2 latest 类工作流使用）。
     first_seen_target_ymd: detail_click_primary 下的目标 first_seen 日期；用于滚动/点卡早停。
-    date_range: 可选 (start_ymd, end_ymd) 或 YYYY-MM-DD；传入后直接设置 UI 日期范围，跳过 7 天快捷项。
+    day_span: "7" / "30" / "90" / "365"；走广大大页面已有快捷时间按钮。
+    date_range: 可选 (start_ymd, end_ymd) 或 YYYY-MM-DD；传入后直接设置 UI 日期范围，跳过快捷时间按钮。
+    skip_time_filter: 为 adkey 精准回填保留当前页面时间范围，不点 7/30/自定义日期。
     pause_per_keyword: 每个关键词爬完后暂停，供 headed 模式人工检查页面。
     keep_browser_open: 全部抓取完成后保持浏览器打开，等人工回车后再关闭。
     max_scroll_rounds: 覆盖搜索后滚动轮数上限。
     stop_scroll_if_oldest_first_seen_before_ymd: napi-list 调试路径的旧 first_seen 早停阈值。
+    extract_detail_dom_analysis: 点卡详情打开后读取页面自带「创意分析 / 素材脚本分析」文本。
     """
     if not keywords:
         return []
@@ -3703,12 +4381,14 @@ async def run_batch(
                     enable_dom_track=enable_dom_track,
                     detail_click_primary=detail_click_primary,
                     first_seen_target_ymd=first_seen_target_ymd,
+                    day_span=day_span,
                     date_range=date_range,
                     pause_per_keyword=pause_per_keyword,
                     keep_browser_open=keep_browser_open,
                     keyword_labels=keyword_labels,
                     max_scroll_rounds=max_scroll_rounds,
                     stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_if_oldest_first_seen_before_ymd,
+                    extract_detail_dom_analysis=extract_detail_dom_analysis,
                     _human_check_restart_count=_human_check_restart_count + 1,
                 )
             if not login_ok:
@@ -3738,16 +4418,19 @@ async def run_batch(
                     enable_dom_track=enable_dom_track,
                     detail_click_primary=detail_click_primary,
                     first_seen_target_ymd=first_seen_target_ymd,
+                    day_span=day_span,
                     date_range=date_range,
                     pause_per_keyword=pause_per_keyword,
                     keep_browser_open=keep_browser_open,
                     keyword_labels=keyword_labels,
                     max_scroll_rounds=max_scroll_rounds,
                     stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_if_oldest_first_seen_before_ymd,
+                    extract_detail_dom_analysis=extract_detail_dom_analysis,
+                    skip_time_filter=skip_time_filter,
                     _human_check_restart_count=_human_check_restart_count + 1,
                 )
 
-            date_desc = "指定日期" if date_range else "7天"
+            date_desc = "不筛时间" if skip_time_filter else ("指定日期" if date_range else f"{day_span}天")
             print(f"[2/4] 一次性设置筛选（{date_desc} / 素材 / 排序方式 / 可选人气值Top1%）...")
             if not await _do_setup(
                 page,
@@ -3755,7 +4438,9 @@ async def run_batch(
                 log_prefix="  ",
                 order_by=order_by,
                 use_popularity_top1=use_popularity_top1,
+                day_span=day_span,
                 date_range=date_range,
+                skip_time_filter=skip_time_filter,
             ):
                 print("[失败] 筛选条件未全部就绪，中止爬取", file=sys.stderr)
                 sys.exit(3)
@@ -3788,6 +4473,7 @@ async def run_batch(
                         early_stop_default=True,
                         stop_scroll_if_before_target=False,
                         list_source="ve_dom_detail+dom",
+                        extract_detail_dom_analysis=extract_detail_dom_analysis,
                     )
                 else:
                     result_for_kw = await _collect_keyword_crawl_result(

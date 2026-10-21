@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Push Haopeng Top-N acceptance predictions to a Feishu group."""
+"""Push Haopeng Top-N rating predictions to a Feishu group."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from dotenv import dotenv_values, load_dotenv
 from ua_workflows.shared.config import DATA_DIR, PROJECT_ROOT, load_project_env
 from ua_workflows.video_enhancer.feedback_rating import (
     RATING_LABELS,
+    feedback_fields_from_primary,
     legacy_status_to_rating,
     normalize_rating_value,
     resolve_feedback_rating,
@@ -121,6 +122,11 @@ def merge_report_rows_from_source(report: dict[str, Any], source_rows: list[dict
             "video_duration",
             "platform",
             "title",
+            "actual_hp",
+            "rating",
+            "rating_label",
+            "rating_source_field",
+            "rating_source_value",
         ):
             if not row.get(key) and source.get(key) not in (None, ""):
                 row[key] = source[key]
@@ -184,6 +190,24 @@ def actual_summary(
         library = sum(1 for r in summary_rows if str(r.get("actual_hp") or "").strip() == "入素材库")
         return f"采纳 {accepted}/{top_n}；采纳+入素材库：{accepted + library}/{top_n}"
 
+    rating_counts = top_summary.get("rating_counts")
+    if isinstance(rating_counts, dict) and rating_counts:
+        ordered = [RATING_LABELS[rating] for rating in (5, 4, 3, 2, 1)]
+        count_parts = [
+            f"{name} {rating_counts[name]}"
+            for name in ordered
+            if rating_counts.get(name)
+        ]
+        extra = [
+            f"{name} {count}"
+            for name, count in rating_counts.items()
+            if name not in ordered and count
+        ]
+        five_star_hits = top_summary.get("five_star_hits", rating_counts.get("5星", 0))
+        avg = top_summary.get("average_rating")
+        avg_text = f"{float(avg):.2f}" if avg is not None else "-"
+        return f"5星命中 {five_star_hits}/{top_n}；平均评分 {avg_text}；评分分布：" + " / ".join(count_parts + extra)
+
     accepted = top_summary.get("accepted")
     accepted_or_library = top_summary.get("accepted_or_library")
     if accepted is None or accepted_or_library is None:
@@ -218,13 +242,6 @@ def _rating_from_row(row: dict[str, Any]) -> int | None:
     return legacy_status_to_rating(row.get("actual_hp"))
 
 
-def _rating_field_for_reviewer_field(reviewer_field: str) -> str:
-    text = str(reviewer_field or "").strip()
-    if text.endswith("接受情况") and text != "接受情况":
-        return text[: -len("接受情况")] + "评分"
-    return "浩鹏评分"
-
-
 def format_material_line(index: int, row: dict[str, Any], include_actual: bool) -> list[str]:
     title = link_escape(material_title(row))
     url = material_url(row)
@@ -235,7 +252,7 @@ def format_material_line(index: int, row: dict[str, Any], include_actual: bool) 
     meta = [
         f"**产品** {md_escape(short_product(row.get('product')))}",
         f"**平台** {md_escape(platform)}" if platform else "",
-        f"**分数** {score}" if score not in (None, "") else "",
+        f"**模型分** {score}" if score not in (None, "") else "",
         f"**风险** {md_escape(risk_level)}" if risk_level else "",
     ]
     play = md_escape(play_name(row))
@@ -247,8 +264,11 @@ def format_material_line(index: int, row: dict[str, Any], include_actual: bool) 
     if hook:
         lines.append(f"   **Hook** {md_escape(hook)}")
     actual = str(row.get("actual_hp") or "").strip()
-    if include_actual and actual:
-        lines.append(f"   **浩鹏实际** {md_escape(actual)}")
+    actual_rating = _rating_from_row(row)
+    if include_actual and actual_rating is not None:
+        lines.append(f"   **浩鹏评分** {RATING_LABELS.get(actual_rating, str(actual_rating))}")
+    elif include_actual and actual:
+        lines.append(f"   **浩鹏旧反馈** {md_escape(actual)}")
     return lines
 
 
@@ -264,25 +284,29 @@ def render_topn_markdown(
     strategy = str(report.get("name") or report.get("payload_kind") or "label_prior").strip()
     all_rows = [r for r in report.get("results") or [] if isinstance(r, dict)]
     rows = [r for r in all_rows if not is_excluded_topn_platform(r)][:top_n]
-    include_actual = include_backtest and any(str(r.get("actual_hp") or "").strip() for r in rows)
+    include_actual = include_backtest and any(
+        _rating_from_row(r) is not None or str(r.get("actual_hp") or "").strip()
+        for r in rows
+    )
 
     lines = [
-        f"**VE 浩鹏采纳预测 Top{top_n} - {target_date}**",
+        f"**VE 浩鹏评分预测 Top{top_n} - {target_date}**",
         "",
     ]
     if history_window:
         lines.append(f"- 历史参考：{history_window}")
     if model:
         lines.append(f"- 模型：{model}")
-    lines.append(f"- 策略：{strategy}（玩法标签历史先验 + 相似正负样本）")
+    lines.append(f"- 策略：{strategy}（玩法标签评分先验 + 相似高低分样本）")
     if not include_backtest:
-        lines.append("- 说明：以下为模型预测/排序，不代表浩鹏已审核；不展示当天「浩鹏接受情况」。")
+        lines.append("- 说明：以下为模型预测/排序，不代表浩鹏已审核；不展示当天「浩鹏评分」。")
     summary_text = (
         actual_summary(
             report,
             top_n,
             rows=rows,
-            force_recalculate=any(is_excluded_topn_platform(r) for r in all_rows),
+            force_recalculate=any(is_excluded_topn_platform(r) for r in all_rows)
+            or any(_rating_from_row(r) is not None for r in rows),
         )
         if include_backtest
         else ""
@@ -497,13 +521,14 @@ def enrich_results_from_bitable(
             "title": cell_to_text(fields.get("标题")),
         }
         if include_reviewer:
+            rating_field, status_field = feedback_fields_from_primary(reviewer_field, reviewer="haopeng")
             feedback = resolve_feedback_rating(
                 fields,
                 reviewer="haopeng",
-                rating_field=_rating_field_for_reviewer_field(reviewer_field),
-                status_field=reviewer_field,
+                rating_field=rating_field,
+                status_field=status_field,
             )
-            row["actual_hp"] = cell_to_text(fields.get(reviewer_field))
+            row["actual_hp"] = cell_to_text(fields.get(status_field)) or cell_to_text(fields.get("接受情况"))
             row["rating"] = feedback.rating
             row["rating_label"] = feedback.rating_label
             row["rating_source_field"] = feedback.source_field
@@ -513,7 +538,7 @@ def enrich_results_from_bitable(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="推送 VE 浩鹏采纳预测 TopN 飞书卡片")
+    parser = argparse.ArgumentParser(description="推送 VE 浩鹏评分预测 TopN 飞书卡片")
     parser.add_argument("--input-json", default="", help="TopN JSON；传入时直接推该文件，不重新生成")
     parser.add_argument("--date", default=yesterday_shanghai(), help="目标日期 YYYY-MM-DD，默认昨天")
     parser.add_argument("--model", default=(os.getenv("VE_HAOPENG_FILTER_MODEL") or "qwen/qwen3.7-max").strip())
@@ -538,9 +563,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receive-id-type", default="chat_id", help="飞书 IM receive_id_type，默认 chat_id")
     parser.add_argument("--feishu-webhook", default="", help="飞书群机器人 webhook")
     parser.add_argument("--bitable-url", default="", help="VE 主多维表 URL，用于补视频/封面链接")
-    parser.add_argument("--reviewer-field", default="浩鹏接受情况", help="回测复盘时读取的主表接受情况字段名，仅 --include-backtest 使用")
+    parser.add_argument("--reviewer-field", default="浩鹏评分", help="回测复盘时读取的主表评分字段名；传旧接受情况字段也兼容")
     parser.add_argument("--dry-run", action="store_true", help="只打印卡片 Markdown，不推送")
-    parser.add_argument("--include-backtest", action="store_true", help="显示回测命中和浩鹏实际结果，默认隐藏")
+    parser.add_argument("--include-backtest", action="store_true", help="显示回测命中和浩鹏评分结果，默认隐藏")
     parser.add_argument("--no-db-enrich", action="store_true", help="不从本地库补视频/封面链接")
     parser.add_argument("--no-bitable-enrich", action="store_true", help="不从飞书主表补视频/封面链接")
     parser.add_argument("--title", default="", help="覆盖飞书卡片标题")
@@ -590,7 +615,7 @@ def main() -> None:
             include_reviewer=bool(args.include_backtest),
         )
     target_date = str(report.get("target_date") or "").strip()
-    title = args.title or f"VE浩鹏采纳预测 Top{args.top_n} {target_date}"
+    title = args.title or f"VE浩鹏评分预测 Top{args.top_n} {target_date}"
     md_text = render_topn_markdown(report, top_n=args.top_n, include_backtest=args.include_backtest)
 
     if args.dry_run:

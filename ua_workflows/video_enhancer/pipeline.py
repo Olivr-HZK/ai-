@@ -45,6 +45,7 @@ from ua_workflows.shared.llm.client import flush_usage, print_openrouter_key_met
 from ua_workflows.shared.media.cover_embedding import maybe_run_cover_embedding_after_library
 from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
 from ua_workflows.video_enhancer.cover_dedupe import apply_intraday_cover_style_dedupe, is_cover_style_intraday_enabled
+from ua_workflows.video_enhancer.diversity_selection import apply_daily_advertiser_diversity_limit
 from ua_workflows.video_enhancer.crawl_similarity import merge_cover_similarity_counts
 from ua_workflows.video_enhancer.competitor_list import sync_competitor_config_if_enabled
 from ua_workflows.video_enhancer.review_dashboard import write_filter_review_dashboard
@@ -91,6 +92,7 @@ from ua_workflows.shared.db.video_enhancer import (
     get_deduped_items_for_analysis,
     init_db as init_pipeline_db,
     load_existing_success_analysis_by_ad_keys,
+    prune_daily_creative_insights_not_in_raw,
     resolve_inspiration_crossday_lookback_days,
     should_persist_suggestion_to_push_table,
     upsert_effect_one_liner_embedding,
@@ -146,6 +148,23 @@ def parse_args() -> argparse.Namespace:
         help="要跑的产品名（逗号分隔，需与 config/ai_product.json 的 key 完全一致）",
     )
     p.add_argument(
+        "--workflow-name",
+        default="video_enhancer",
+        help="产物命名空间，默认 video_enhancer；用于并行运行不同日工作流",
+    )
+    p.add_argument("--crawl-config-file", default="", help="传给爬取节点的竞品配置 JSON")
+    p.add_argument("--crawl-categories", default="", help="传给爬取节点的配置分类，逗号分隔")
+    p.add_argument(
+        "--skip-advertiser-filter",
+        action="store_true",
+        help="传给爬取节点：不按广告主名称筛选",
+    )
+    p.add_argument(
+        "--skip-competitor-config-sync",
+        action="store_true",
+        help="跳过 VE 多维表竞品 list 到默认配置的同步",
+    )
+    p.add_argument(
         "--bitable-url",
         default=None,
         help="飞书多维表完整链接（含 table 参数）。不传则使用环境变量 VIDEO_ENHANCER_BITABLE_URL",
@@ -184,6 +203,12 @@ def parse_args() -> argparse.Namespace:
         "--skip-cover-dedupe",
         action="store_true",
         help="跳过封面日内 CLIP 视觉聚类去重（抓取后直接用全量 raw 入库并继续后续步骤）",
+    )
+    p.add_argument(
+        "--per-advertiser-daily-limit",
+        type=int,
+        default=0,
+        help="封面去重后按差异度优先精选每广告主每日 TopN；0 表示不限制",
     )
     p.add_argument(
         "--no-topn-push",
@@ -714,21 +739,26 @@ def main() -> None:
     args = parse_args()
     bitable_url = _resolve_bitable_url(args)
     cluster_bitable_url = _resolve_cluster_bitable_url(args)
-    competitor_sync = sync_competitor_config_if_enabled(bitable_url=bitable_url)
-    if competitor_sync.ok:
+    competitor_sync = sync_competitor_config_if_enabled(bitable_url=bitable_url) if not args.skip_competitor_config_sync else None
+    if competitor_sync and competitor_sync.ok:
         print(
             f"[competitor-list] 已从多维表竞品list同步 {competitor_sync.competitor_count} 个正式竞品 "
             f"-> {Path(competitor_sync.config_path).name}"
         )
         os.environ["VE_COMPETITOR_LIST_ALREADY_SYNCED"] = "1"
-    else:
+    elif competitor_sync:
         print(f"[competitor-list] 未同步，沿用本地竞品配置：{competitor_sync.error}")
+    else:
+        print("[competitor-list] 已按参数跳过默认 VE 竞品配置同步。")
+        # 让 crawl 节点继承该选择，避免再次触发默认 ai_product.json 同步。
+        os.environ["VE_COMPETITOR_LIST_ALREADY_SYNCED"] = "1"
     if args.date:
         target_date = args.date
     else:
         target_date = (date.today() - timedelta(days=1)).isoformat()
 
-    output_prefix = f"workflow_video_enhancer_{target_date}"
+    workflow_name = (args.workflow_name or "video_enhancer").strip().replace("/", "_")
+    output_prefix = f"workflow_{workflow_name}_{target_date}"
     raw_path = DATA_DIR / f"{output_prefix}_raw.json"
     analysis_path = DATA_DIR / f"video_analysis_{output_prefix}_raw.json"
     sugg_json_path = DATA_DIR / f"ua_suggestion_{output_prefix}.json"
@@ -748,6 +778,12 @@ def main() -> None:
     ]
     if args.products.strip():
         crawl_cmd += ["--products", args.products.strip()]
+    if args.crawl_config_file.strip():
+        crawl_cmd += ["--config-file", args.crawl_config_file.strip()]
+    if args.crawl_categories.strip():
+        crawl_cmd += ["--categories", args.crawl_categories.strip()]
+    if args.skip_advertiser_filter:
+        crawl_cmd.append("--skip-advertiser-filter")
     _run(crawl_cmd)
 
     # 2) 先把“原始素材”落库（不带分析），再做增量分析
@@ -803,6 +839,40 @@ def main() -> None:
             DATA_DIR, output_prefix, target_date, "COVER_STYLE_INTRADAY_DISABLED"
         )
         print(f"[filter-json] {sk_path.name}（封面步骤已跳过）")
+
+    if args.per_advertiser_daily_limit > 0:
+        diversity_candidates = [
+            item for item in (raw_payload.get("items") or []) if isinstance(item, dict)
+        ]
+        # 全量候选只留在素材主库供后续历史去重；日快照、分析与飞书仅保留精选 TopN。
+        upsert_creative_library(
+            target_date,
+            {
+                "target_date": raw_payload.get("target_date"),
+                "crawl_date": raw_payload.get("crawl_date"),
+                "items": diversity_candidates,
+            },
+        )
+        selected_items, diversity_report = apply_daily_advertiser_diversity_limit(
+            diversity_candidates,
+            limit=args.per_advertiser_daily_limit,
+        )
+        raw_payload["total_before_daily_advertiser_limit"] = len(diversity_candidates)
+        raw_payload["items"] = selected_items
+        raw_payload["total"] = len(selected_items)
+        raw_payload["daily_advertiser_selection_report"] = diversity_report
+        diversity_report_path = DATA_DIR / f"{output_prefix}_daily_advertiser_selection.json"
+        diversity_report_path.write_text(
+            json.dumps(diversity_report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        pruned = prune_daily_creative_insights_not_in_raw(target_date, raw_payload)
+        print(
+            f"\n[step:daily-advertiser-selection] 差异度优先 Top{args.per_advertiser_daily_limit}: "
+            f"{len(diversity_candidates)} → {len(selected_items)} 条，日快照清理 {pruned} 条"
+        )
+        print(f"[daily-advertiser-selection] 报告已写 {diversity_report_path.name}")
 
     merge_cover_similarity_counts(raw_payload)
     raw_payload, _tot, _elig, _skip = merge_inspiration_filter_stats(raw_payload)

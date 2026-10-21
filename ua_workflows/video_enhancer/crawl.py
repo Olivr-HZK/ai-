@@ -54,18 +54,25 @@ class Competitor:
 TARGET_CATEGORIES = ("video", "photo")
 
 
-def _load_workflow_competitors(products: list[str] | None = None):
+def _load_workflow_competitors(
+    products: list[str] | None = None,
+    *,
+    config_file: Path | None = None,
+    categories: tuple[str, ...] = TARGET_CATEGORIES,
+):
     """
     从 ai_product.json 读取工作流分类（video enhancer），排除 Hula。
     - 若指定 products，则只保留这些产品名；
     - 否则返回该分类下全部（除 Hula）。
     """
-    if not CONFIG_FILE.exists():
-        raise FileNotFoundError(f"未找到配置：{CONFIG_FILE}")
-    data = json.load(CONFIG_FILE.open("r", encoding="utf-8"))
+    config_path = config_file or CONFIG_FILE
+    if not config_path.exists():
+        raise FileNotFoundError(f"未找到配置：{config_path}")
+    with config_path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
     candidates: list[Competitor] = []
     if isinstance(data, dict):
-        for cat in TARGET_CATEGORIES:
+        for cat in categories:
             bucket = data.get(cat)
             if not isinstance(bucket, dict):
                 continue
@@ -178,6 +185,17 @@ async def main():
         default="",
         help="可选：指定产品名（逗号分隔，需与 config/ai_product.json 完全一致）",
     )
+    parser.add_argument("--config-file", default=str(CONFIG_FILE), help="竞品配置 JSON 路径")
+    parser.add_argument(
+        "--categories",
+        default=",".join(TARGET_CATEGORIES),
+        help="配置中的分类（逗号分隔，默认 video,photo）",
+    )
+    parser.add_argument(
+        "--skip-advertiser-filter",
+        action="store_true",
+        help="不按广告主名称筛选，仅按 appid、目标日期、ad_key 和重投规则筛选",
+    )
     parser.add_argument(
         "--output-prefix",
         default="",
@@ -212,7 +230,12 @@ async def main():
 
     _sync_competitor_list_before_crawl()
     selected_products = [x.strip() for x in (args.products or "").split(",") if x.strip()]
-    competitors = _load_workflow_competitors(products=selected_products or None)
+    categories = tuple(x.strip() for x in args.categories.split(",") if x.strip()) or TARGET_CATEGORIES
+    competitors = _load_workflow_competitors(
+        products=selected_products or None,
+        config_file=Path(args.config_file).expanduser().resolve(),
+        categories=categories,
+    )
     if not competitors:
         print("[终止] 工作流分类中无可用竞品（检查 config/ai_product.json 的 video/photo）", file=sys.stderr)
         return
@@ -267,6 +290,7 @@ async def main():
         keyword_labels={c.appid: c.product for c in competitors},
         max_scroll_rounds=max_scroll_rounds,
         stop_scroll_if_oldest_first_seen_before_ymd=stop_scroll_ymd,
+        extract_detail_dom_analysis=True,
     )
 
 # 应用与主工作流一致的筛选：广告主匹配 + 可选日期命中；重投一律去掉。
@@ -322,8 +346,11 @@ async def main():
             for c in all_creatives
             if isinstance(c, dict)
             and str(c.get("ad_key") or "").strip()
-            and advertiser_matches_product(
-                str(c.get("advertiser_name") or c.get("page_name") or ""), comp.product or ""
+            and (
+                args.skip_advertiser_filter
+                or advertiser_matches_product(
+                    str(c.get("advertiser_name") or c.get("page_name") or ""), comp.product or ""
+                )
             )
         ]
 

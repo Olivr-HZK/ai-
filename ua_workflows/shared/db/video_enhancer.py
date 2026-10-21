@@ -19,9 +19,13 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from ua_workflows.shared.config import DATA_DIR
-from ua_workflows.shared.media.resolve import normalize_video_url_for_consumption
+from ua_workflows.shared.media.resolve import (
+    normalize_image_url_for_consumption,
+    normalize_video_url_for_consumption,
+)
 
-DB_PATH = DATA_DIR / "video_enhancer_pipeline.db"
+_configured_db_path = (os.getenv("VIDEO_ENHANCER_DB_PATH") or "").strip()
+DB_PATH = Path(_configured_db_path).expanduser() if _configured_db_path else DATA_DIR / "video_enhancer_pipeline.db"
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -372,9 +376,9 @@ def _pick_video_url_from_raw(creative: Dict[str, Any]) -> str:
 def _pick_image_url_from_raw(creative: Dict[str, Any]) -> str:
     for r in creative.get("resource_urls") or []:
         if isinstance(r, dict) and r.get("image_url") and not r.get("video_url"):
-            return str(r["image_url"])
+            return normalize_image_url_for_consumption(str(r["image_url"]))
     if creative.get("preview_img_url"):
-        return str(creative["preview_img_url"])
+        return normalize_image_url_for_consumption(str(creative["preview_img_url"]))
     return ""
 
 
