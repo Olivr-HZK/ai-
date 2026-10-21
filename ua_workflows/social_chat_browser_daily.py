@@ -71,6 +71,8 @@ def tasks(config):
 
 
 def prepare(target, run_dir, config):
+    import time
+    prepared_monotonic=time.monotonic();prepared_started_at=datetime.now(ZoneInfo('UTC')).isoformat()
     date.fromisoformat(target)
     scope = {'filters': {**config['filters'], 'date': {'mode': 'custom', 'start': target, 'end': target}},
              'content_checks': config['content_checks'], 'tasks': tasks(config),
@@ -97,12 +99,18 @@ def prepare(target, run_dir, config):
     module.write(run_dir / 'run.json', {'scope_sha256': module.digest(scope)})
     for task in scope['tasks']:
         (run_dir / 'tasks' / task['id']).mkdir(parents=True, exist_ok=True)
-    module.inspect(run_dir)
+    # Mixed daily runs have one authoritative machine; do not initialize the
+    # video-only FSM/state.json beside it. Keep legacy video compatibility.
+    if scope.get('media_types') != ['视频', '图片']:
+        module.inspect(run_dir)
+    from ua_workflows.social_chat_daily_state import init as init_daily_state
+    init_daily_state(run_dir,prepared_started_at,prepared_monotonic)
     media = '、'.join(config.get('media_types', [config['filters'].get('media_type', '视频')]))
     instruction = f'''使用 $social-chat-browser-daily 和 $guangdada-browser-crawl 最新规则完成此日采集任务，run目录：{run_dir.resolve()}
 浏览器采集前执行 .venv/bin/python -m ua_workflows.browser_collection_runtime start --run-dir "{run_dir.resolve()}" 并确认 active=true；每页操作前及每5分钟 renew 同一目录并确认 active=true。保护15分钟未续期自动过期；过期则先start核验再继续。验证码/人工等待、暂停、完成或异常停止时执行stop；恢复先start。不要把prepare命令的短暂保护当作整个浏览器采集保护。异常按skill记录实际工具消息、阶段、App/页/卡和证据路径；工具无堆栈不得编造。
 目标日：{target}，Asia/Shanghai。scope.json 已包含完整21项App/平台名单，优先使用已核实App ID搜索；缺ID时先按完整名发现并核对ID，然后再用该ID搜索，不用简称搜索，不调用私有接口或项目爬虫CLI。
-按skill的分类→基础筛选（含日期）→App ID搜索并选中广告主→重新点击最新创意→逐卡→逐页→seal顺序采集全部21项。
+以 daily-machine/state.json 为每日唯一执行状态，读取 skill references/daily-state-machine.md。每个浏览器阶段先执行 social_chat_daily_state begin，实际操作并保存证据后 complete --proof；失败执行fail记录真实错误，修复后resume再重试。正确筛选必须readonly，只有不一致才repair；禁止为日志重复点击。新批不得调用旧state.py推进每日状态。
+按skill的分类→基础筛选（含日期）→选择广告主搜索→输入App ID→点击下方正确广告主候选→核对已选唯一App ID/平台及无残留→重新点击最新创意（只回车提交查询不能完成App选择）→逐卡→逐页→seal顺序采集全部21项。
 基础条件：工具、素材，获取{media}。类型控件不选任何选项时即为“图片&视频”：只读检查选项为空及默认显示，有残留类型才清除。每项App/平台只采一次混合列表，共21项；逐卡识别视频/图片，不切换两轮。渠道/地区/文案语言/尺寸均不限。不限条件只读检查，有残留才清除，实际操作保存读回和截图。
 日期控件设置目标日范围；每张卡片另从可见详情核对首次发现。按17号规则，只用详情 YYYY-MM-DD~YYYY-MM-DD 的起点判断目标日期，保存 first_discovered_date、first_discovered_source=detail_date_range_start 及 raw_text；独立首次发现字段仅记录，不参与日期判断或提前截止。缺详情日期范围则阻塞。
 最新创意从新到旧，遇首张详情首次发现早于目标日即停止本App的混合列表并保存截止证据；候选不存在不等于零素材。重投卡片同样先采集，不因重投标签或其旧独立首次发现日期停止。21项全部封账后，按可见独立“重投”标签统一剔除并记录原因/数量，再对剩余素材审核排名；重投保留原始详情证据。全部App登记后，视频下载、运行frames.py、实际查看六帧，仅排除真人口播；图片下载原图、核验解码/格式/尺寸/SHA256并实际查看，多图逐图审查。图片不伪造视频六帧，不适用口播。视频抽帧初筛不宣称完整审听。

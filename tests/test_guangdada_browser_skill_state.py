@@ -86,7 +86,11 @@ class StateTests(unittest.TestCase):
             keys=sorted(selected,key=lambda k:(k!='category',k))
             data.setdefault('ui_checks',{key:self.event('filter.'+key,selected[key]) for key in keys})
         if name in ['app.json','resume-verification.json']:
-            data.setdefault('ui_check',self.event('app',{k:data[k] for k in ['app_name','platform','app_id','selected_app_ids','residual_keywords']}))
+            data.setdefault('search_mode','广告主')
+            data.setdefault('query_ui_check',self.event('app.query',data['app_id'] if data.get('query_type')=='app_id' else data.get('query_full_name')))
+            if 'ui_check' not in data:
+                data['ui_check']=self.event('app.candidate',{k:data[k] for k in ['app_name','platform','app_id','selected_app_ids','residual_keywords','search_mode']})
+                event=fsm.load(root/data['ui_check']);event['interaction']={'action':'click','target':'advertiser_candidate'};fsm.write(root/data['ui_check'],event)
         if name=='sort.json':
             data.setdefault('ui_check',self.event('filter.sort',data['selected']))
         if name.startswith('cards/'):
@@ -354,10 +358,25 @@ class StateTests(unittest.TestCase):
         app=load_json(self.root/'app.json')
         app.update(query_type='app_id',query_app_id='123')
         app.pop('query_full_name',None)
-        fsm.write(self.root/'app.json',app)
+        app.pop('query_ui_check',None);app.pop('ui_check',None)
+        self.put(self.root,'app.json',app)
         self.assertEqual(self.status()['state'],'COMPLETED')
         app['query_app_id']='different-id';fsm.write(self.root/'app.json',app)
         self.assertEqual(self.status()['state'],'APP_PENDING')
+
+    def test_candidate_click_is_required_not_enter_or_query_only(self):
+        app=load_json(self.root/'app.json')
+        fsm.app_click_check(self.root,app,self.fp,'app-ios')
+        candidate=load_json(self.root/app['ui_check'])
+        for interaction in [None,{'action':'press','target':'Enter'},{'action':'click','target':'search_submit'}]:
+            bad=dict(candidate,interaction=interaction);fsm.write(self.root/app['ui_check'],bad)
+            with self.assertRaisesRegex(Exception,'候选'):
+                fsm.app_click_check(self.root,app,self.fp,'app-ios')
+        fsm.write(self.root/app['ui_check'],candidate)
+        query_only=dict(app,ui_check=app['query_ui_check'])
+        with self.assertRaises(Exception):fsm.app_click_check(self.root,query_only,self.fp,'app-ios')
+        for changed in [dict(app,selected_app_ids=['123','other']),dict(app,search_mode='综合'),dict(app,residual_keywords=['123'])]:
+            with self.assertRaises(Exception):fsm.app_click_check(self.root,changed,self.fp,'app-ios')
 
     def test_app_cannot_be_selected_before_base_filters(self):
         app=load_json(self.root/'app.json');event=load_json(self.root/app['ui_check'])

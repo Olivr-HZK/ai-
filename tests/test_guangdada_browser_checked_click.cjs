@@ -32,5 +32,12 @@ const {gddCheckedClick} = require('../skills/guangdada-browser-crawl/scripts/bro
   value='教育';await assert.rejects(gddReadOnlyCheck({...observation,key:'filter.category',expected:'工具',eventId:'wrong-category'}),/Evidence check failed/);
   await assert.rejects(gddReadOnlyCheck({...observation,key:'filter.sort',expected:value,eventId:'readonly-sort'}),/require clicks/);
   await assert.rejects(gddReadOnlyCheck({...observation,key:'app',expected:value,eventId:'readonly-app'}),/require clicks/);
+  const {gddCheckedAppCandidate}=require('../skills/guangdada-browser-crawl/scripts/browser_check.js');
+  let candidateClicks=0;value=false;
+  const chosen=await gddCheckedAppCandidate({...args,eventId:'candidate',expected:true,
+    candidate:{click:async()=>{candidateClicks++;value=true}},click:async()=>{throw Error('must not use Enter callback')}});
+  assert.equal(candidateClicks,1);assert.equal(chosen.event.key,'app.candidate');
+  assert.deepEqual(JSON.parse(files.get('evidence/clicks/candidate.json')).interaction,{action:'click',target:'advertiser_candidate'});
+  await assert.rejects(gddCheckedAppCandidate({...args,candidate:null}),/locator is required/);
   console.log('Checked-click and read-only base-filter cases passed');
 })().catch(e=>{console.error(e);process.exitCode=1});

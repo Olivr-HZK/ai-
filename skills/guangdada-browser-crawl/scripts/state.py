@@ -180,8 +180,15 @@ def filter_checks(root, record_value, scope, task_id, fingerprint, include_sort=
 
 
 def app_click_check(root, value, fingerprint, task_id):
-    expected = {k: value[k] for k in ['app_name', 'platform', 'app_id', 'selected_app_ids', 'residual_keywords']}
-    click_check(root, value.get('ui_check'), fingerprint, task_id, 'app', expected)
+    require(value.get('search_mode') == '广告主', 'App 搜索类型必须为广告主')
+    expected = {k: value[k] for k in ['app_name', 'platform', 'app_id', 'selected_app_ids', 'residual_keywords', 'search_mode']}
+    require(value.get('selected_app_ids') == [value['app_id']] and value.get('residual_keywords') == [], '已选身份必须唯一且无残留关键词')
+    query_value = value['app_id'] if value.get('query_type') == 'app_id' else value.get('query_full_name')
+    query = click_check(root, value.get('query_ui_check'), fingerprint, task_id, 'app.query', query_value)
+    candidate = click_check(root, value.get('ui_check'), fingerprint, task_id, 'app.candidate', expected)
+    require(candidate.get('interaction') == {'action': 'click', 'target': 'advertiser_candidate'}, '必须真实点击下方广告主候选；仅回车提交不能完成选择')
+    require(event_time(candidate) >= event_time(query), '必须在本次搜索后点击正确广告主候选')
+    return candidate
 
 
 def frame_check(root, ref, fingerprint, ad_id):

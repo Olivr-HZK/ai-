@@ -77,3 +77,7 @@ await gddCheckedClick({
 ## 切换 App 的基础筛选复用
 
 每个 App 仍重新检查分类和基础筛选，但正确时只读核对。gddReadOnlyCheck 支持所有非 sort 的 filter.*，要求 before、after 均等于 expected，并分别保存截图及哈希；渠道/地区/语言按集合比较。值不符时检查失败，按可见控件实际修改后重新检查。它拒绝 App、排序、点卡和翻页；这些步骤仍保存真实点击证据。每个 App 使用新的 task_id/event_id，检查时间晚于上一 App 封账，禁止复用旧日志。
+
+## App候选必须真实点击（2026-10-21）
+
+搜索类型为“广告主”，输入完整名或已核实App ID后，先记录app.query；使用gddCheckedAppCandidate({candidate:当前可见的正确候选locator,...})执行候选locator.click()，不能用press Enter回调。read必须从点击后的已选区域读回app_name/platform/app_id/selected_app_ids/residual_keywords/search_mode六项。回车可以辅助提交查询，但不能作为候选点击证据；先读候选身份，再点击，再核对已选身份。失败留在APP_PENDING，不把候选未加载误判零结果。app.json须保留query_ui_check与ui_check两个引用。

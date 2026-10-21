@@ -105,3 +105,18 @@ async function gddCheckedObservation({tab, scopeSha256, taskId, eventId, key,
 async function gddReadOnlyCheck(args){return gddCheckedObservation({...args,card:false});}
 async function gddCheckedCard(args){return gddCheckedObservation({...args,card:true});}
 if (typeof module !== 'undefined') Object.assign(module.exports,{gddReadOnlyCheck,gddCheckedCard});
+
+// The helper invokes the candidate locator's click directly; Enter is not an adapter.
+async function gddCheckedAppCandidate({candidate, ...args}) {
+  if (!candidate || typeof candidate.click !== 'function') throw new Error('A visible advertiser candidate locator is required');
+  const persist = args.persist;
+  const interaction = {action:'click',target:'advertiser_candidate'};
+  const result = await gddCheckedClick({...args,key:'app.candidate',
+    click:async()=>candidate.click(),
+    persist:async(path,bytes)=>{
+      if(path.endsWith('.json')){const event=JSON.parse(bytes);event.interaction=interaction;bytes=JSON.stringify(event,null,2);}
+      return persist(path,bytes);
+    }});
+  result.event.interaction=interaction;return result;
+}
+if (typeof module !== 'undefined') Object.assign(module.exports,{gddCheckedAppCandidate});

@@ -71,3 +71,15 @@ description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广
 浏览器工具异常时，将真实 JSON（stage、app_id、page、card、error_type、message、已有 traceback、evidence_paths）通过 stdin 交给 `.venv/bin/python -m ua_workflows.browser_collection_runtime error --run-dir <本批目录>`。仅保存实际错误；工具不提供堆栈时省略 traceback，不推测接口返回或伪造调用栈。日志落在本批 runtime/，凭据和签名 URL 脱敏，权限600。浏览器步骤的日志依赖执行者记录；Python准备/校验/入表/通知命令由 collection_phase 自动记录异常并释放防睡眠保护。下载/抽帧工具失败同样记录实际工具错误与日志路径。
 
 保护允许锁屏/息屏；不承诺唤醒尚未开始任务的睡眠电脑，也不覆盖手动强制睡眠、合盖或关机。此功能不新增收费请求、不改重试/筛选/群消息规则，不修改历史批次。
+
+## 每日统一状态机（2026-10-21）
+
+新prepare批次必须读取并执行 [每日统一状态与耗时记录](references/daily-state-machine.md)。daily-machine/state.json 是每日唯一推进依据，统一视频与图片；不再用旧视频state.py推进每日状态。按真实证据转换，正确筛选只读，按页批量登记动作耗时和重试。历史批次不自动迁移。
+
+## 选择App必须点击广告主候选（2026-10-21）
+
+搜索类型选择“广告主”→输入完整App名或已核实App ID（每日任务用ID）→读取下方候选的名称/ID/平台→真实点击正确候选→从“已选”区域读回唯一App身份及无残留关键词→再点击最新创意。回车仅可提交查询，不能作为选中完成。保存app.query及后续app.candidate点击/前后截图证据；候选点击使用gddCheckedAppCandidate，不以搜索框文本替代已选身份。找不到候选或身份不符保持APP_PENDING，不能当作零结果。
+
+## 逐卡批量执行与就绪等待（2026-10-21）
+
+每日任务在授权浏览器REPL内使用guangdada-browser-crawl的scripts/browser_batch.js，先读其references/browser-batch.md；一次连续采集同页最多10张，正常卡片不逐张交回模型。实际身份、日期范围、估值、素材类型和媒体来源就绪后立即保存，不固定sleep，不等待视频缓冲/推荐内容。保留逐卡真实点击、全部字段及前后截图/哈希；验证码、身份不符、列表变化或超时立即交回模型处理，按最后耐久断点恢复。PROBE首卡复用，不重复打开。按页批量登记result.operations，最终仍走统一混合校验。

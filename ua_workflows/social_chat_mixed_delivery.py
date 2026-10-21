@@ -206,6 +206,8 @@ def main():
         import fcntl
         with (Path(a.run_dir) / '.mixed-sync.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            print(json.dumps(sync(a.run_dir, daily.load(daily.CONFIG), apply=a.apply), ensure_ascii=False))
+            from ua_workflows.social_chat_daily_state import tracked
+            with tracked(a.run_dir, 'SYNC_PENDING' if a.apply else 'DELIVERY_PENDING'):
+                print(json.dumps(sync(a.run_dir, daily.load(daily.CONFIG), apply=a.apply), ensure_ascii=False))
 
 if __name__ == '__main__': main()

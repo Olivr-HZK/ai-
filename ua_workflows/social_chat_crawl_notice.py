@@ -80,7 +80,9 @@ def main():
     p.add_argument('--run-dir', required=True, type=Path)
     p.add_argument('--test', action='store_true')
     args = p.parse_args()
-    with collection_phase(args.run_dir, 'social_chat_crawl_notice'):
+    from contextlib import nullcontext
+    from ua_workflows.social_chat_daily_state import tracked
+    with (nullcontext() if args.test else tracked(args.run_dir,'START_NOTICE_PENDING')), collection_phase(args.run_dir, 'social_chat_crawl_notice'):
         import fcntl
         args.run_dir.mkdir(parents=True, exist_ok=True)
         with (args.run_dir / '.crawl-notice.lock').open('a') as lock:

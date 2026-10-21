@@ -90,10 +90,10 @@ filters.json 的 selected 为实际观察的基础筛选值，必须与 scope.fi
 app.json：
 
 ```json
-{"scope_sha256":"HASH","query_full_name":"Tipsy Chat: Live Your Story","app_name":"Tipsy Chat: Live Your Story","platform":"iOS","app_id":"6572296119","selected_app_ids":["6572296119"],"residual_keywords":[],"count_basis":"素材","card_count":1,"ui_check":"evidence/clicks/app-001.json","evidence":["evidence/app.txt"]}
+{"scope_sha256":"HASH","query_full_name":"Tipsy Chat: Live Your Story","app_name":"Tipsy Chat: Live Your Story","platform":"iOS","app_id":"6572296119","selected_app_ids":["6572296119"],"residual_keywords":[],"count_basis":"素材","card_count":1,"search_mode":"广告主","query_ui_check":"evidence/clicks/query-001.json","ui_check":"evidence/clicks/candidate-001.json","evidence":["evidence/app.txt"]}
 ```
 
-App 点击日志 key=app，after 对象必须恰好包含 app_name、platform、app_id、selected_app_ids、residual_keywords 五项并与记录一致。card_count 为当前列表模式对应的卡片数；count_basis 必须与 scope.filters.dedupe 相同。广告模式不能误用素材去重后的数，素材模式也不能用原始广告总数。
+先选择搜索类型“广告主”，输入完整名或已核实App ID；query_ui_check引用key=app.query的真实搜索日志。随后必须点击下方正确广告主候选，ui_check引用key=app.candidate的点击日志，并由gddCheckedAppCandidate调用候选locator.click()产生interaction={action:click,target:advertiser_candidate}。候选点击时间不得早于本次搜索；仅按回车、只提交关键词或点击搜索按钮不能替代候选选择。候选after对象必须恰好包含app_name、platform、app_id、selected_app_ids、residual_keywords、search_mode六项，search_mode为“广告主”，已选App唯一且无残留关键词。card_count 为当前列表模式对应的卡片数；count_basis 必须与 scope.filters.dedupe 相同。广告模式不能误用素材去重后的数，素材模式也不能用原始广告总数。
 
 正确选中 App 后明确零结果：card_count=0、empty_result_verified=true，不需要 probe；仍需点击和截图 check。找不到正确候选时保持 APP_PENDING，不能构造虚假 app_id 或零结果。
 

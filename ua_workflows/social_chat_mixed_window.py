@@ -57,7 +57,7 @@ def page_number(event):
     return value if type(value) is int else None
 
 
-def collection(run_dir, config):
+def collection(run_dir, config, task_id=None):
     base = Path(run_dir).resolve()
     scope = daily.load(base / 'scope.json')
     target = scope['target_date']
@@ -71,8 +71,12 @@ def collection(run_dir, config):
     checks = scope['media_collection_checks']
     require(len(checks) == len(scope['tasks']) and {c['task_id'] for c in checks} == {t['id'] for t in scope['tasks']}, 'Missing media checks')
     require(all(c['selected_types'] == [] and c['media_types'] == ['视频', '图片'] for c in checks), 'Media type must remain empty/default')
+    if task_id is not None:
+        require(task_id in {t['id'] for t in scope['tasks']}, 'Unknown task')
     all_cards, checklist = [], []
     for task in scope['tasks']:
+        if task_id is not None and task['id'] != task_id:
+            continue
         root = base / 'tasks' / task['id']
         actual = daily.load(file(root, 'filters-readonly.json'))
         require(actual['scope_sha256'] == fingerprint, 'Filter fingerprint mismatch')
@@ -88,11 +92,16 @@ def collection(run_dir, config):
         query = [click(root, str(p.relative_to(root)), fingerprint, 'app.query', task['app_id']) for p, e in good if e['key'] == 'app.query' and e['after'] == task['app_id']]
         sorts = [click(root, str(p.relative_to(root)), fingerprint, 'filter.sort', '最新创意') for p, e in good if e['key'] == 'filter.sort']
         require(query and sorts and any(s['performed_at'] >= query[-1]['performed_at'] for s in sorts), 'Missing App search followed by fresh latest sort')
+        if (base/'daily-machine/state.json').exists():
+            selected=daily.load(file(root,'app-selection.json'))
+            model=daily.fsm();model.identity(selected,task)
+            candidate=model.app_click_check(root,selected,fingerprint,task['id'])
+            require(any(s['performed_at'] >= candidate['performed_at'] for s in sorts), 'Sort must follow advertiser candidate click')
         seal = daily.load(file(root, 'collection_complete.json'))
         require(all(seal[k] == task[k] for k in ['id', 'app_name', 'platform', 'app_id']), 'Seal identity mismatch')
         require(seal['target_date'] == target and seal['media_mode'] == '图片&视频', 'Seal scope mismatch')
         text = file(root, 'evidence/terminal.txt').read_text()
-        require(sha(file(root, 'evidence/terminal.jpg')) == seal['screenshot_sha256'], 'Terminal screenshot changed')
+        require(sha(file(root, seal.get('screenshot_path', 'evidence/terminal.jpg'))) == seal['screenshot_sha256'], 'Terminal screenshot changed')
         cards = [daily.load(p) for p in sorted((root / 'cards').glob('*.json'))]
         require(len(cards) == seal['checked_cards'], 'Checked-card count mismatch')
         ids, positions = set(), []
@@ -169,7 +178,7 @@ def video_evidence(root, card):
     return manifest
 
 
-def select(run_dir, config):
+def select(run_dir, config, persist=True):
     base, scope, fingerprint, cards, checklist = collection(run_dir, config)
     observations = daily.load(base / 'review_observations.json')
     by_key = {}
@@ -230,6 +239,8 @@ def select(run_dir, config):
     candidates.sort(key=lambda c: (-daily.estimate(c['impressions_estimate']), c['app_name'], c['platform'], c['app_id'], c['ad_id']))
     selected = [{**c, 'global_rank': n} for n, c in enumerate(candidates[:(len(candidates) + 9) // 10], 1)]
     result = {'producer': 'social-chat-mixed-window/v1', 'status': 'ready', 'scope_sha256': fingerprint, 'target_date': scope['target_date'], 'generated_at': datetime.now(timezone.utc).isoformat(), 'run_dir': str(base), 'task_count': len(checklist), 'fraction': '.10', 'rounding': 'ceil', 'counts': {**counts, 'raw': len(cards), 'eligible': len(candidates), 'selected': len(selected)}, 'items': selected}
+    if not persist:
+        return result
     daily.save(base / 'selection.json', result)
     daily.save(base / 'all_candidates.json', all_items)
     daily.save(base / 'out_of_scope_media.json', out_of_scope)
@@ -249,7 +260,9 @@ def main():
             _, _, fingerprint, cards, checklist = collection(args.run_dir, config)
             print(json.dumps({'scope_sha256': fingerprint, 'tasks': len(checklist), 'target_items': len(cards), 'types': dict(Counter(c['media_type'] for c in cards))}, ensure_ascii=False))
         else:
-            result = select(args.run_dir, config)
+            from ua_workflows.social_chat_daily_state import tracked
+            with tracked(args.run_dir, 'RANK_PENDING'):
+                result = select(args.run_dir, config)
             print(json.dumps({k: v for k, v in result.items() if k != 'items'}, ensure_ascii=False))
 
 

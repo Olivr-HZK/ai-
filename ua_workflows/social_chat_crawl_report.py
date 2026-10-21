@@ -147,7 +147,9 @@ def main():
     p.add_argument('--run-dir', required=True, type=Path)
     p.add_argument('--test', action='store_true')
     args = p.parse_args()
-    with collection_phase(args.run_dir, 'social_chat_crawl_report'):
+    from contextlib import nullcontext
+    from ua_workflows.social_chat_daily_state import tracked
+    with (nullcontext() if args.test else tracked(args.run_dir,'REPORT_PENDING')), collection_phase(args.run_dir, 'social_chat_crawl_report'):
         import fcntl
         with (args.run_dir / '.crawl-report.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
