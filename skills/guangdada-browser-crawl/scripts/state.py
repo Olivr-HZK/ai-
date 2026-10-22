@@ -180,6 +180,14 @@ def filter_checks(root, record_value, scope, task_id, fingerprint, include_sort=
 
 
 def app_click_check(root, value, fingerprint, task_id):
+    if value.get('search_mode') == '综合':
+        require(value.get('query_type') == 'app_id' and value.get('query_app_id') == value['app_id'], '综合搜索必须使用本任务App ID')
+        require(value.get('query_terms') == [value['app_id']] and value.get('selected_app_ids') == [] and value.get('residual_keywords') == [], '综合搜索只能保留一个App ID关键词，不能叠加广告主或其他关键词')
+        query = click_check(root, value.get('query_ui_check'), fingerprint, task_id, 'app.query', value['app_id'])
+        require(query.get('interaction') == {'action': 'press', 'target': 'Enter'}, '必须实际回车提交综合查询')
+        actual = query.get('submission', {})
+        require(actual == {'search_mode': '综合', 'query_terms': [value['app_id']], 'selected_app_ids': [], 'residual_keywords': []}, '缺少综合查询提交后的实际UI读回')
+        return query
     require(value.get('search_mode') == '广告主', 'App 搜索类型必须为广告主')
     expected = {k: value[k] for k in ['app_name', 'platform', 'app_id', 'selected_app_ids', 'residual_keywords', 'search_mode']}
     require(value.get('selected_app_ids') == [value['app_id']] and value.get('residual_keywords') == [], '已选身份必须唯一且无残留关键词')
@@ -283,7 +291,7 @@ def check_task(run, scope, task, fingerprint, not_before=None):
         else:
             require(app.get('query_type', 'full_name') == 'full_name', '未知 App 查询方式')
             require(app.get('query_full_name') == task['app_name'], '未使用完整 App 名称查询')
-        require(app.get('selected_app_ids') == [app['app_id']], '存在旧广告主或未真正选中候选')
+        require(app.get('selected_app_ids') == ([] if app.get('search_mode') == '综合' else [app['app_id']]), '存在旧广告主或未真正选中候选')
         require(app.get('residual_keywords') == [], '存在额外关键词，可能制造假空结果')
         app_click_check(root, app, fingerprint, task['id'])
         expected = app.get('card_count')
@@ -523,7 +531,7 @@ def main():
                     event = record(root, ref, digest(scope), evidence=False)
                     require(datetime.fromisoformat(event['performed_at'].replace('Z', '+00:00')) >= held_at, '恢复复用了暂停前的点击证据')
                 identity(verification, task)
-                require(verification.get('selected_app_ids') == [verification['app_id']] and verification.get('residual_keywords') == [], '恢复后广告主条件不符')
+                require(verification.get('selected_app_ids') == ([] if verification.get('search_mode') == '综合' else [verification['app_id']]) and verification.get('residual_keywords') == [], '恢复后广告主条件不符')
                 require(verification['app_id'] == record(root, 'app.json', digest(scope))['app_id'], '恢复后广告主 ID 变化')
                 history = root/'resumes.json';resumes = load(history) if history.exists() else []
                 resumes.append({'hold': hold_doc, 'user_confirmation': args.confirmation, 'verification': args.verification, 'resumed_at': datetime.now(timezone.utc).isoformat()})

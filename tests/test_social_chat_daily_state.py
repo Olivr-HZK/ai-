@@ -154,3 +154,21 @@ def test_daily_app_gate_requires_real_candidate_click_and_selected_identity(tmp_
     else:
         with pytest.raises(ValueError):fsm.finish(tmp_path,proof='tasks/ios-01/selection-proof.json')
         assert fsm.status(tmp_path)['resume_state']=='APP_PENDING'
+
+@pytest.mark.parametrize('mode',['valid','not_enter','extra_keyword','wrong_platform'])
+def test_comprehensive_id_enter_requires_actual_submission(tmp_path,mode):
+    from PIL import Image
+    scope=setup(tmp_path);move(tmp_path,'APP_PENDING');fsm.begin(tmp_path)
+    root=tmp_path/'tasks/ios-01';root.mkdir(parents=True)
+    for name in ('before','after'):Image.new('RGB',(2,2)).save(root/f'{name}.png')
+    submission={'search_mode':'综合','query_terms':['123'],'selected_app_ids':[],'residual_keywords':[]}
+    if mode=='extra_keyword':submission['query_terms'].append('old')
+    path='evidence/clicks/submitted.json'
+    fsm.write(root/path,{'producer':'gdd-checked-click/v1','scope_sha256':fsm.fingerprint(scope),'task_id':'ios-01','event_id':'submitted','key':'app.query','kind':'click','performed_at':fsm.now(),'status':'passed','expected':'123','after':'123','error':None,'images':{n:{'path':f'{n}.png','sha256':window.sha(root/f'{n}.png')} for n in ('before','after')},'interaction':{'action':'press','target':'Enter' if mode!='not_enter' else 'Tab'},'submission':submission})
+    proof={**submission,'app_name':'Example','app_id':'123','platform':'Android' if mode=='wrong_platform' else 'iOS','scope_sha256':fsm.fingerprint(scope),'observed_at':fsm.now(),'query_type':'app_id','query_app_id':'123','query_ui_check':path,'ui_check':path}
+    fsm.write(root/'proof.json',proof)
+    if mode=='valid':
+        fsm.finish(tmp_path,proof='tasks/ios-01/proof.json')
+        assert fsm.status(tmp_path)['state']=='SORT_PENDING'
+    else:
+        with pytest.raises(ValueError):fsm.finish(tmp_path,proof='tasks/ios-01/proof.json')

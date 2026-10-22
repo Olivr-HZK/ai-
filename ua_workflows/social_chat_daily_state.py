@@ -12,14 +12,14 @@ import uuid
 
 from ua_workflows.collection_runtime import configured_secrets, redact
 
-# One graph, with the seven App states repeated in scope order.
+# Scope chooses one direct App gate or the seven legacy App gates, in task order.
 APP_STATES = ('CATEGORY_PENDING', 'FILTERS_PENDING', 'APP_PENDING', 'SORT_PENDING',
-              'PROBE_PENDING', 'COLLECTING', 'COLLECTION_SUMMARY_PENDING')
+              'PROBE_PENDING', 'COLLECTING', 'COLLECTION_SUMMARY_PENDING', 'APP_COLLECTION_PENDING')
 GLOBAL_BEFORE = ('START_NOTICE_PENDING', 'BROWSER_PENDING')
 GLOBAL_AFTER = ('RELAUNCH_PENDING', 'MEDIA_PENDING', 'REVIEW_PENDING', 'RANK_PENDING',
                 'DELIVERY_PENDING', 'SYNC_PENDING', 'REPORT_PENDING')
 CONTROL_STATES = ('WAITING_HUMAN', 'PAUSED', 'RETRY_REQUIRED')
-# 17 executable states including PREPARE; COMPLETED plus 3 control states = 21.
+# Legacy graph has 17 executable state names; direct mode replaces its seven App names with one.
 
 
 def read(p):
@@ -45,7 +45,8 @@ def fingerprint(scope):
 
 def plan(scope):
     steps = [{'state':'PREPARE','task':None}] + [{'state': s, 'task': None} for s in GLOBAL_BEFORE]
-    steps += [{'state': s, 'task': t['id']} for t in scope['tasks'] for s in APP_STATES]
+    app_states = ('APP_COLLECTION_PENDING',) if scope.get('collection_mode')=='direct-browser-v1' else tuple(s for s in APP_STATES if s!='APP_COLLECTION_PENDING')
+    steps += [{'state': s, 'task': t['id']} for t in scope['tasks'] for s in app_states]
     return steps + [{'state': s, 'task': None} for s in GLOBAL_AFTER]
 
 
@@ -147,8 +148,9 @@ def ui_check(base, task, state, proof, scope):
     if e.get('scope_sha256')!=fingerprint(scope) or e.get('task_id')!=task['id']:
         raise ValueError('UI evidence scope/task mismatch')
     # Every stage gets a fresh browser observation made after begin.
-    expected = {'category':scope['filters']['category']} if state=='CATEGORY_PENDING' else {
-        'category':scope['filters']['category'],'dedupe':scope['filters']['dedupe'],
+    category = task.get('category', scope['filters']['category'])
+    expected = {'category':category} if state=='CATEGORY_PENDING' else {
+        'category':category,'dedupe':scope['filters']['dedupe'],
         'date':{'start':scope['target_date'],'end':scope['target_date']},
         'media':'图片&视频','selected_types':[], 'channels':[], 'regions':[], 'languages':[], 'size':''}
     if e.get('expected')!=expected or e.get('after')!=expected:
@@ -180,6 +182,15 @@ def validate(base, step, proof=None):
     if s=='PREPARE':
         if read(base/'run.json')['scope_sha256']!=fingerprint(scope):raise ValueError('Scope mismatch')
         return [base/'scope.json',base/'run.json']
+    if s=='APP_COLLECTION_PENDING':
+        from ua_workflows.social_chat_direct import validate_task
+        cards,seal=validate_task(base,scope,task)
+        first_attempt=min([started]+[a['started_at'] for a in load(base)['attempts'] if a['state']==s and a['task']==task['id']])
+        observed=read(root/'direct/prepare.json')['observed_at']
+        if datetime.fromisoformat(observed.replace('Z','+00:00'))<datetime.fromisoformat(first_attempt):raise ValueError('Stale direct preparation')
+        p=base/'daily-machine/app-seals'/f'{task["id"]}.json'
+        write(p,{'task':task,'scope_sha256':fingerprint(scope),'verified_at':now(),'seal':seal,'target_items':len(cards),'input_sha256':hashlib.sha256((root/'direct/complete.json').read_bytes()).hexdigest()})
+        return [p,root/'direct/complete.json']
     if s in ('CATEGORY_PENDING','FILTERS_PENDING'):
         p=ui_check(base,task,s,proof,scope);fresh(read(p),'observed_at');return [p]
     if s=='BROWSER_PENDING':
@@ -208,7 +219,8 @@ def validate(base, step, proof=None):
             if not queries or max(read(p)['performed_at'] for p in events)<max(max(q['performed_at'] for q in queries),selected['performed_at']):raise ValueError('Sort must follow latest App query and candidate click')
         if s=='APP_PENDING':
             p=evidence(base,proof);d=read(p)
-            if not (d.get('app_id')==task['app_id'] and d.get('platform')==task['platform'] and d.get('selected_app_ids')==[task['app_id']] and d.get('residual_keywords')==[]):
+            selected_ids=[] if d.get('search_mode')=='综合' else [task['app_id']]
+            if not (d.get('app_id')==task['app_id'] and d.get('platform')==task['platform'] and d.get('selected_app_ids')==selected_ids and d.get('residual_keywords')==[]):
                 raise ValueError('App identity/selected filter mismatch')
             model=daily.fsm();model.identity(d,task)
             candidate=model.app_click_check(root,d,fingerprint(scope),task['id'])
@@ -313,10 +325,26 @@ def resume(base, reason, extra_attempts=0, proof=None):
         if not d['control']:raise ValueError('Not suspended')
         if extra_attempts<0 or extra_attempts>3:raise ValueError('Extra attempts must be 0..3')
         step=current(base,d)
-        if d['control'] in ('WAITING_HUMAN','PAUSED') and step['state'] in APP_STATES:
+        if (d['control'] in ('WAITING_HUMAN','PAUSED') and step['state'] in APP_STATES) or step['state']=='APP_COLLECTION_PENDING':
             scope=read(Path(base)/'scope.json');task=next(t for t in scope['tasks'] if t['id']==step['task'])
-            p=ui_check(base,task,'FILTERS_PENDING',proof,scope);v=read(p)
-            if not(v.get('authenticated') is True and v.get('app_id')==task['app_id'] and v.get('platform')==task['platform'] and v.get('selected_app_ids')==[task['app_id']] and v.get('residual_keywords')==[]):raise ValueError('Resume browser/App identity not verified')
+            if step['state']=='APP_COLLECTION_PENDING':
+                from ua_workflows.social_chat_direct import validate_preparation
+                p=evidence(base,proof)
+                v=validate_preparation(Path(base)/'tasks'/task['id'],scope,task,str(p.relative_to(Path(base)/'tasks'/task['id'])))
+                actual=v.get('actual',{})
+                if not(v.get('scope_sha256')==fingerprint(scope) and v.get('task_id')==task['id'] and v.get('authenticated') is True and v.get('settled') is True and actual.get('query_terms')==[task['app_id']] and actual.get('selected_app_ids')==[] and actual.get('date')=={'start':scope['target_date'],'end':scope['target_date']} and actual.get('category')==task.get('category',scope['filters']['category'])):raise ValueError('Direct resume browser/App mismatch')
+                for im in v.get('images',{}).values():
+                    from ua_workflows.social_chat_mixed_window import hashed
+                    hashed(Path(base)/'tasks'/task['id'],im)
+                b=v.get('boundary')
+                if any((Path(base)/'tasks'/task['id']/'cards').glob('*.json')) and not b:raise ValueError('Direct resume boundary proof required')
+                if b:
+                    from ua_workflows.social_chat_mixed_window import hashed
+                    card=read(hashed(Path(base)/'tasks'/task['id'],{'path':b['card_path'],'sha256':b['card_sha256']}))
+                    if b['expected']!=b['observed'] or b['expected']!=card['ad_id']:raise ValueError('Direct resume boundary mismatch')
+            else:
+                p=ui_check(base,task,'FILTERS_PENDING',proof,scope);v=read(p)
+                if not(v.get('authenticated') is True and v.get('app_id')==task['app_id'] and v.get('platform')==task['platform'] and v.get('selected_app_ids')==([] if v.get('search_mode')=='综合' else [task['app_id']]) and v.get('residual_keywords')==[]):raise ValueError('Resume browser/App identity not verified')
             observed=datetime.fromisoformat(v['observed_at'].replace('Z','+00:00'))
             if observed.tzinfo is None or not datetime.fromisoformat(d['held_at'])<=observed<=datetime.now(timezone.utc):raise ValueError('Stale resume observation')
         step=current(base,d);key=step['state']+'/'+str(step['task'])

@@ -66,18 +66,30 @@ def tasks(config):
             item = {'id': f'{platform.lower()}-{i:02d}', 'app_name': name, 'platform': platform}
             if (name, platform) in known:
                 item['app_id'] = known[name, platform]
+            override = config.get('category_overrides', {}).get(item.get('app_id'), {}).get(platform)
+            if override:
+                if override not in ('工具', '游戏'):
+                    raise ValueError('Invalid category override')
+                item['category'] = override
             result.append(item)
     return result
 
 
-def prepare(target, run_dir, config):
+def prepare(target, run_dir, config, execution_origin="manual"):
     import time
     prepared_monotonic=time.monotonic();prepared_started_at=datetime.now(ZoneInfo('UTC')).isoformat()
     date.fromisoformat(target)
+    if execution_origin not in ("manual", "scheduled"):
+        raise ValueError("Unknown execution origin")
     scope = {'filters': {**config['filters'], 'date': {'mode': 'custom', 'start': target, 'end': target}},
              'content_checks': config['content_checks'], 'tasks': tasks(config),
              'date_anchor': {'as_of_date': datetime.now(TZ).date().isoformat(), 'timezone': 'Asia/Shanghai'},
-             'date_semantics': config['date_semantics'], 'target_date': target}
+             'date_semantics': config['date_semantics'], 'target_date': target,
+             'execution_origin': execution_origin}
+    if config.get('collection_mode'):
+        if config['collection_mode'] != 'direct-browser-v1':
+            raise ValueError('Unsupported collection mode')
+        scope['collection_mode'] = config['collection_mode']
     if config.get('media_types'):
         scope['media_types'] = config['media_types']
         scope['media_filter_mode'] = 'default_images_and_videos'
@@ -89,7 +101,7 @@ def prepare(target, run_dir, config):
     run_dir = Path(run_dir)
     if (run_dir / 'scope.json').exists():
         previous = load(run_dir / 'scope.json')
-        if {k: v for k, v in previous.items() if k != 'date_anchor'} != {k: v for k, v in scope.items() if k != 'date_anchor'}:
+        if {k: v for k, v in previous.items() if k not in ('date_anchor','execution_origin')} != {k: v for k, v in scope.items() if k not in ('date_anchor','execution_origin')}:
             raise ValueError('Existing run has a different scope; use a new directory.')
         return {'status': 'resume_existing', 'run_dir': str(run_dir.resolve()), 'tasks': len(scope['tasks'])}
     # The wake guard writes runtime evidence before scope preparation begins.
@@ -110,14 +122,18 @@ def prepare(target, run_dir, config):
 浏览器采集前执行 .venv/bin/python -m ua_workflows.browser_collection_runtime start --run-dir "{run_dir.resolve()}" 并确认 active=true；每页操作前及每5分钟 renew 同一目录并确认 active=true。保护15分钟未续期自动过期；过期则先start核验再继续。验证码/人工等待、暂停、完成或异常停止时执行stop；恢复先start。不要把prepare命令的短暂保护当作整个浏览器采集保护。异常按skill记录实际工具消息、阶段、App/页/卡和证据路径；工具无堆栈不得编造。
 目标日：{target}，Asia/Shanghai。scope.json 已包含完整21项App/平台名单，优先使用已核实App ID搜索；缺ID时先按完整名发现并核对ID，然后再用该ID搜索，不用简称搜索，不调用私有接口或项目爬虫CLI。
 以 daily-machine/state.json 为每日唯一执行状态，读取 skill references/daily-state-machine.md。每个浏览器阶段先执行 social_chat_daily_state begin，实际操作并保存证据后 complete --proof；失败执行fail记录真实错误，修复后resume再重试。正确筛选必须readonly，只有不一致才repair；禁止为日志重复点击。新批不得调用旧state.py推进每日状态。
-按skill的分类→基础筛选（含日期）→选择广告主搜索→输入App ID→点击下方正确广告主候选→核对已选唯一App ID/平台及无残留→重新点击最新创意（只回车提交查询不能完成App选择）→逐卡→逐页→seal顺序采集全部21项。
+按skill的分类→基础筛选（含日期）→选择综合搜索→清除旧关键词/广告主残留→输入App ID并真实回车提交→核对综合查询唯一关键词为本App ID→重新点击最新创意（不等待或点击广告主候选；逐卡详情核对实际App ID及平台）→逐卡→逐页→seal顺序采集全部21项。
+默认采用guangdada-browser-crawl的references/direct-collection.md浏览器直采模式，不依赖插件弹窗：一次组合执行点卡前检查；同页最多10张连续点卡，详情就绪立即保存，正常只返回批次摘要。每页落盘后可将已观察原素材交给同批唯一下载队列，最多3路下载与后续串行点卡并行；不启动重叠队列，成功文件按哈希复用，失败预算跨轮保留。下载预取不提前推进MEDIA/REVIEW关卡。
 基础条件：工具、素材，获取{media}。类型控件不选任何选项时即为“图片&视频”：只读检查选项为空及默认显示，有残留类型才清除。每项App/平台只采一次混合列表，共21项；逐卡识别视频/图片，不切换两轮。渠道/地区/文案语言/尺寸均不限。不限条件只读检查，有残留才清除，实际操作保存读回和截图。
 日期控件设置目标日范围；每张卡片另从可见详情核对首次发现。按17号规则，只用详情 YYYY-MM-DD~YYYY-MM-DD 的起点判断目标日期，保存 first_discovered_date、first_discovered_source=detail_date_range_start 及 raw_text；独立首次发现字段仅记录，不参与日期判断或提前截止。缺详情日期范围则阻塞。
-最新创意从新到旧，遇首张详情首次发现早于目标日即停止本App的混合列表并保存截止证据；候选不存在不等于零素材。重投卡片同样先采集，不因重投标签或其旧独立首次发现日期停止。21项全部封账后，按可见独立“重投”标签统一剔除并记录原因/数量，再对剩余素材审核排名；重投保留原始详情证据。全部App登记后，视频下载、运行frames.py、实际查看六帧，仅排除真人口播；图片下载原图、核验解码/格式/尺寸/SHA256并实际查看，多图逐图审查。图片不伪造视频六帧，不适用口播。视频抽帧初筛不宣称完整审听。
+最新创意从新到旧，遇首张详情首次发现早于目标日即停止本App的混合列表并保存截止证据；候选不存在不等于零素材。重投卡片同样先采集，不因重投标签或其旧独立首次发现日期停止。21项全部封账后，按可见独立“重投”标签统一剔除并记录原因/数量，再对剩余素材审核排名；重投保留原始详情证据。全部App登记并排除重投后，复用预取文件并补齐缺失视频、运行frames.py、实际查看六帧，仅排除真人口播；图片下载原图、核验解码/格式/尺寸/SHA256并实际查看，多图逐图审查。图片不伪造视频六帧，不适用口播。视频抽帧初筛不宣称完整审听。
 按skill的独立目标日混合媒体校验完成后，将视频和图片有效候选合并按展示估值取前10%，向上取整，再写已授权飞书表，读回实际视频/图片附件；旧视频FSM/select不支持图片，不可伪造通过，须完成并验证混合媒体适配再使用。缺失媒体有限重试后按用户要求单列跳过，未全采/身份不明/缺估值/审核不确定不可静默跳过。
-采集开始及核验入表后，分别按config的crawl_start_notice和crawl_completion_report向核实测试群发送一次启动通知及一次完成日报；同批恢复不重发，不发其他群。凭据不输出。验证码/登录失效按skill hold等待人工，不破解。
-本次执行方式为{config.get('execution','manual')}，不得重复创建定时任务。完成报告目标日期、21项App混合列表检查情况、视频/图片分项与合计、前10%入表数及链接。
+采集开始及核验入表后，分别按config的crawl_start_notice和crawl_completion_report向核实测试群发送一次启动通知及一次完成日报；同批恢复不重发，不发其他群。凭据不输出。定时触发批次遇登录失效或其他设备登录先自行正常重新登录，使用已有保存凭据或项目.env，不输出秘密；手动批次先询问。任何验证码立即hold/stop并等待人工，不自动处理。重登后核对登录、筛选、已选App和断点，不重发通知。
+本批实际触发来源execution_origin={execution_origin}（不使用config默认值推断），不得重复创建定时任务。完成报告目标日期、21项App混合列表检查情况、视频/图片分项与合计、前10%入表数及链接。
 '''
+    if scope.get('collection_mode') == 'direct-browser-v1':
+        instruction = instruction.replace('每个浏览器阶段先执行 social_chat_daily_state begin，实际操作并保存证据后 complete --proof；失败执行fail记录真实错误，修复后resume再重试。', '每个App只有APP_COLLECTION_PENDING一次begin和一次直采accept验收，由direct_session.mjs自动执行，不再逐CATEGORY/FILTERS/APP/SORT/PROBE调用CLI；失败保存断点并hold，实际恢复后resume。')
+        instruction += '\n本批collection_mode=direct-browser-v1：在授权浏览器REPL导入guangdada-browser-crawl/scripts/direct_session.mjs的createDirectSession，显式传当前tab/browser/runDir/taskId/projectRoot。依次start()、batch()、page_end时nextPage()，脚本在真实截止/末页/零结果后生成direct/complete.json并调用social_chat_direct accept；不要使用临时direct-complete.json或手改状态。每App实际分类用task.category覆盖默认分类，Heyyyy iOS为游戏。\n下载入口：.venv/bin/python -m ua_workflows.social_chat_direct_media prefetch --run-dir <本批目录> --watch（单队列锁、3并发、15分钟有界watch）；采集结束后再prefetch一次补齐尾部，随后review-media生成现有六帧/原图manifest和真实失败例外，不自动生成审核决定。后续仍走原RELAUNCH/MEDIA/REVIEW/RANK/DELIVERY/SYNC/REPORT。\n'
     (run_dir / 'browser-task.txt').write_text(instruction)
     return {'status': 'prepared', 'target_date': target, 'run_dir': str(run_dir.resolve()), 'tasks': len(scope['tasks']), 'prompt': str((run_dir / 'browser-task.txt').resolve())}
 
@@ -381,6 +397,7 @@ def main():
     parser = argparse.ArgumentParser(description='社交竞品浏览器日采集：手动准备、全局Top10%和飞书同步')
     parser.add_argument('command', choices=['prepare', 'select', 'sync', 'provision'])
     parser.add_argument('--date', default='')
+    parser.add_argument('--execution-origin', choices=['manual','scheduled'], default='manual', help='本次真实触发来源；仅定时触发传scheduled')
     parser.add_argument('--run-dir', type=Path)
     parser.add_argument('--apply', action='store_true', help='实际写飞书；默认只生成本地待写入包')
     args = parser.parse_args()
@@ -389,7 +406,7 @@ def main():
     run_dir = (args.run_dir or ROOT / 'data/social_chat_browser_daily_latest' / target).resolve()
     with collection_phase(run_dir, 'social_chat_browser_daily'):
         if args.command == 'prepare':
-            result = prepare(target, run_dir, config)
+            result = prepare(target, run_dir, config, args.execution_origin)
         elif args.command == 'provision':
             result = provision(config, Feishu()) if args.apply else {'status': 'dry_run', 'url': table_url(config), 'fields': FIELDS}
         else:

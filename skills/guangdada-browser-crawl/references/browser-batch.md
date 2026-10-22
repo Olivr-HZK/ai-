@@ -4,9 +4,11 @@
 
 ## 默认行为
 
-App身份/候选点击/排序通过后，先begin PROBE_PENDING。用同一批量函数maxCards=1验证第一张，保留card JSON和前后截图，完成PROBE。随后begin COLLECTING，从checkpoint.next_position继续；第一张不重新点。首卡已旧于目标日则直接按原始截止证据完成盘点，不再点第二张。零结果仍需显式“暂无数据”证据及原校验，函数不会把空列表当完成。
+综合App ID真实Enter提交/排序通过后，先begin PROBE_PENDING，不选择广告主候选。用同一批量函数maxCards=1验证第一张，保留card JSON和前后截图，完成PROBE。随后begin COLLECTING，从checkpoint.next_position继续；第一张不重新点。首卡已旧于目标日则直接按原始截止证据完成盘点，不再点第二张。零结果仍需显式“暂无数据”证据及原校验，函数不会把空列表当完成。
 
-UI适配确认后，同一页默认一次执行最多10张、总预算45秒；一批内无需模型逐张决定下一步。正常返回只需检查批次统计/断点，继续下一批。同页最后一张返回PAGE_END_VERIFY_NEXT，按既有浏览器工具真实翻页并检查页码/卡片集合改变；不得自动猜测末页。下一App仍按统一状态机核对筛选、点击广告主候选及排序。
+UI适配确认后，同一页默认一次执行最多10张、总预算45秒；一批内无需模型逐张决定下一步。正常返回只需检查批次统计/断点，继续下一批。同页最后一张返回PAGE_END_VERIFY_NEXT，按既有浏览器工具真实翻页并检查页码/卡片集合改变；不得自动猜测末页。下一App仍按统一状态机一次组合核对筛选、综合App ID回车提交及排序，不选择广告主候选。
+
+每页保存后可将已观察的原素材地址交给同批唯一下载队列，最多3并发，与后续串行点卡并行。下载复用和失败预算跨轮持久保存；不重复启动重叠的后台队列。细节见 [direct-collection.md](direct-collection.md)。这不会提前完成MEDIA_PENDING，也不省略六帧/原图实际查看。
 
 正常每批在本地保存逐卡JSON、两张原生截图与SHA256、card.identity日志、逐卡耗时、就绪观察次数和耗时，以及最后耐久checkpoint。动作日志从result.operations按页批量交给social_chat_daily_state operations（作用在run目录）；事件与card文件路径相对task目录，operations.evidence_paths已转换成相对run目录。每个batchId唯一，不覆盖之前批次截图、checkpoint、卡片或日志。
 

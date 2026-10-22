@@ -65,6 +65,8 @@ def collection(run_dir, config, task_id=None):
     require(daily.load(base / 'run.json')['scope_sha256'] == fingerprint, 'Scope changed')
     expected_tasks = daily.tasks(config)
     require([(t['app_name'], t['platform']) for t in scope['tasks']] == [(t['app_name'], t['platform']) for t in expected_tasks], 'Incomplete competitor/platform scope')
+    if scope.get('collection_mode')=='direct-browser-v1':
+        require([(t['id'],t.get('app_id'),t.get('category',scope['filters']['category'])) for t in scope['tasks']]==[(t['id'],t.get('app_id'),t.get('category',config['filters']['category'])) for t in expected_tasks], 'Direct registered identity/category scope mismatch')
     require(scope['filters'] == {**config['filters'], 'date': {'mode': 'custom', 'start': target, 'end': target}}, 'Unexpected filter scope')
     require(scope['content_checks'] == config['content_checks'] and scope['date_semantics'] == config['date_semantics'], 'Unexpected date/content semantics')
     require(scope['media_types'] == ['视频', '图片'] and scope['media_filter_mode'] == 'default_images_and_videos', 'Not one mixed list per App')
@@ -78,10 +80,15 @@ def collection(run_dir, config, task_id=None):
         if task_id is not None and task['id'] != task_id:
             continue
         root = base / 'tasks' / task['id']
+        if scope.get('collection_mode')=='direct-browser-v1':
+            from ua_workflows.social_chat_direct import validate_task
+            cards,seal=validate_task(base,scope,task)
+            all_cards.extend(cards);checklist.append(seal)
+            continue
         actual = daily.load(file(root, 'filters-readonly.json'))
         require(actual['scope_sha256'] == fingerprint, 'Filter fingerprint mismatch')
         f = actual['actual']
-        require(f['category'] == '工具' and f['dedupe'] == '素材' and f['media'] == '图片&视频', 'Base filter mismatch')
+        require(f['category'] == task.get('category', scope['filters']['category']) and f['dedupe'] == '素材' and f['media'] == '图片&视频', 'Base filter mismatch')
         require(f['date'] == {'start': target, 'end': target} and f['query'] == task['app_id'] and f['sort'] is True, 'Date/App/sort mismatch')
         require(all(f[k] == '' for k in ['languages', 'regions', 'size']) and all(c['id'] == 'filter_search_type' for c in f['checked']), 'Unexpected restriction')
         good = []

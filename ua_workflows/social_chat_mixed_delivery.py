@@ -128,7 +128,7 @@ def delivery(base, result, candidates):
         cards.append(f'<article>{media}<h3>{html.escape(c["app_name"])}</h3><p>{c["platform"]} · {c["media_type"]} · 展示估值 {html.escape(str(c["impressions_estimate"]))}</p><p>{html.escape(c["app_id"])}</p><a href="{html.escape(c["detail_url"])}" target="_blank">广大大详情</a></article>')
     counts = result['counts']
     page = '<!doctype html><html lang="zh"><meta charset="utf-8"><title>竞品素材前10%</title><style>body{background:#f4f5f7;color:#20252d;font:16px system-ui;margin:32px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:20px}article{background:white;border-radius:14px;padding:16px;overflow:hidden}img,video{width:100%;height:350px;object-fit:contain;background:#111;border-radius:8px}p{overflow-wrap:anywhere}</style>'
-    page += f'<h1>{result["target_date"]} 竞品素材 · 展示估值前10%</h1><p>21项全部完成；视频 {counts["视频_new"]} 条，图片 {counts["图片_new"]} 条；可用 {counts["eligible"]} 条，入选 {counts["selected"]} 条。重投排除 {counts.get("relaunch", 0)} 条，真人口播排除 {counts["exclude"]} 条，无法获取 {counts["unavailable"]} 条；另{counts.get("out_of_scope_playable", 0)}条试玩不在本次范围。视频为六帧画面初筛，未完整审听。</p><main>' + ''.join(cards) + '</main></html>'
+    page += f'<h1>{result["target_date"]} 竞品素材 · 展示估值前10%</h1><p>21项全部完成；视频 {counts.get("视频_new", 0)} 条，图片 {counts.get("图片_new", 0)} 条；可用 {counts["eligible"]} 条，入选 {counts["selected"]} 条。重投排除 {counts.get("relaunch", 0)} 条，真人口播排除 {counts.get("exclude", 0)} 条，无法获取 {counts.get("unavailable", 0)} 条；另{counts.get("out_of_scope_playable", 0)}条试玩不在本次范围。视频为六帧画面初筛，未完整审听。</p><main>' + ''.join(cards) + '</main></html>'
     (out / 'index.html').write_text(page)
     return out
 

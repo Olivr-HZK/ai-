@@ -52,5 +52,26 @@
   ],
   "media_filter_mode": "default_images_and_videos",
   "date_rule": "detail_date_range_start_only",
-  "relaunch_policy": "collect_all_then_exclude_visible_badge_before_ranking"
+  "relaunch_policy": "collect_all_then_exclude_visible_badge_before_ranking",
+  "login_recovery": {
+    "scheduled": "auto_relogin",
+    "manual": "ask_user",
+    "captcha": "stop_waiting_human",
+    "max_attempts_per_run": 2,
+    "credentials": "existing_saved_browser_or_project_env"
+  },
+  "app_search": {
+    "mode": "综合",
+    "query": "app_id",
+    "submit": "Enter",
+    "select_advertiser_candidate": false,
+    "sort_after_submit": "最新创意",
+    "verify_detail_identity": true
+  },
+  "collection_mode": "direct-browser-v1",
+  "category_overrides": {
+    "6761748236": {
+      "iOS": "游戏"
+    }
+  }
 }

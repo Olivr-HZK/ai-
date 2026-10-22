@@ -5,14 +5,18 @@ description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广
 
 # 社交聊天竞品日采集
 
+## 默认采集模式（2026-10-22）
+
+新prepare固定collection_mode=direct-browser-v1，每App由direct_session.mjs执行并以APP_COLLECTION_PENDING一次验收。采用本轮实测的浏览器直采：不依赖插件弹窗，参考插件逻辑批量读取详情原素材并去重下载。先读 `guangdada-browser-crawl` 的 [直采与并行下载](../guangdada-browser-crawl/references/direct-collection.md)。一次组合核对筛选、综合 App ID回车及最新创意；同页最多10张连续点卡，正常只返回摘要；每页保存后即可交给最多3路下载队列，与后续点卡并行。保持现有统一状态机和校验，不把下载预取当作审核、排名或入表成功。
+
 这是 `ua素材` 项目的业务流程，依赖项目脚本和已安装的 `guangdada-browser-crawl` skill。先定位含 `config/social_chat_browser_daily.json` 的项目目录；从其他目录调用时不能误用旧 VE 日更入口。
 
-当前口径以 `config/social_chat_browser_daily.json` 为准；完整名单在 `config/social_chat_browser_competitors.json`：iOS 10项、Android 11项，按完整 App 名核对身份、分平台采集，已核实ID保存在 `config/social_chat_browser_app_ids.json`。目标日默认北京时间昨天，含义是**首次发现**；工具/素材，视频和图片均采集，渠道、地区、文案语言、尺寸不限，采集后排除重投，视频另排除真人口播。不沿用旧的日韩、9:16、男性角色、女频条件。
+当前口径以 `config/social_chat_browser_daily.json` 为准；完整名单在 `config/social_chat_browser_competitors.json`：iOS 10项、Android 11项，按完整 App 名核对身份、分平台采集，已核实ID保存在 `config/social_chat_browser_app_ids.json`。目标日默认北京时间昨天，含义是**首次发现**；默认工具/素材，已核实分类覆盖写入task.category（Heyyyy iOS为游戏），视频和图片均采集，渠道、地区、文案语言、尺寸不限，采集后排除重投，视频另排除真人口播。不沿用旧的日韩、9:16、男性角色、女频条件。
 
 1. 在项目目录执行 `.venv/bin/python scripts/run_social_chat_browser_daily.py prepare`，读取输出的 `browser-task.txt` 和 `scope.json`。历史日用 `--date YYYY-MM-DD`；断点恢复用相同目录。prepare 仅准备本地任务，不会爬取或写表。
-2. 读取并使用 `$guangdada-browser-crawl`，通过当前环境授权的浏览器工具完成21项。日期设置后，按已核实App ID搜索并选中正确广告主，每次搜索都必须重新点击“最新创意”，即使它已选中。缺ID先用完整名发现核对，再按ID重搜。采集期间不按展示估值排序或阈值截断；全部拿齐后本地按估值排名。所有 App/筛选、逐卡和翻页仍需脚本读回、前后截图、逐 App seal 清单；出现验证码停下等待人工。不可调用项目爬虫 CLI、私有接口或共享登录态。
+2. 读取并使用 `$guangdada-browser-crawl`，通过当前环境授权的浏览器工具完成21项。日期设置后，通过综合搜索输入已核实App ID并回车提交，每次搜索都必须重新点击“最新创意”，即使它已选中。缺ID先用完整名发现核对，再按ID重搜。采集期间不按展示估值排序或阈值截断；全部拿齐后本地按估值排名。新模式使用直采与并行下载引用中的createDirectSession.start()/batch()/nextPage()/resume()。所有 App/筛选、逐卡和翻页仍需脚本读回、前后截图、逐App direct/complete.json及验收清单；出现验证码停下等待人工。不可调用项目爬虫 CLI、私有接口或共享登录态。
 3. 用户确认：**可见详情日期范围的起始日期就是首次发现日期**。仅取详情 `YYYY-MM-DD~YYYY-MM-DD` 的起点（亦支持 `～` / `至`）。保存 `first_discovered_date`、`first_discovered_source=detail_date_range_start` 和原始 `raw_text`。不凭列表筛选日期或旧 `first_seen` 字段推断；缺少详情日期范围时报告阻塞。已有原始详情可按此规则重新解析，不改写原文或伪造标签。
-4. 所有 App 采集封账后，对全部原始视频下载、脚本抽六帧并实际查看，写 reviews。若详情是 YouTube 原始外链而非可直接下载的视频源，主动按 `guangdada-browser-crawl` 的“YouTube 原始外链补全”流程使用 yt-dlp 补全，保存来源/日志/哈希后走同样的抽帧审核；失败保留待补全，不直接剔除或按零估值排名。只有真人口播可因内容排除：`decision=exclude`、`checks.real_person_talking_head=true`；非口播为 keep/false，不确定为 review，需解决后再计算目标日排名。抽帧是画面初筛，不宣称完整审听。
+4. 采集期间按页把已观察原素材加入去重下载队列，不等21项全采完才下载；复用已校验文件、失败预算跨轮保留。所有 App 采集封账并按独立重投标签剔除后，对剩余视频补齐下载、脚本抽六帧并实际查看，写 reviews。若详情是 YouTube 原始外链而非可直接下载的视频源，主动按 `guangdada-browser-crawl` 的“YouTube 原始外链补全”流程使用 yt-dlp 补全，保存来源/日志/哈希后走同样的抽帧审核；失败保留待补全，不直接剔除或按零估值排名。只有真人口播可因内容排除：`decision=exclude`、`checks.real_person_talking_head=true`；非口播为 keep/false，不确定为 review，需解决后再计算目标日排名。抽帧是画面初筛，不宣称完整审听。
 5. 混合目标日窗口批次执行 `.venv/bin/python -m ua_workflows.social_chat_mixed_window select --run-dir <目录>`。它会重新检查状态机、21项完整性、日期、审核及估值，所有竞品/双端合并排序，按有效候选数的10%向上取整。估值缺失或目标日待复核不能按零跳过。
 6. 执行 `.venv/bin/python -m ua_workflows.social_chat_mixed_delivery --run-dir <目录>` 生成本地看板及飞书待写入包，检查后执行同一命令加 `--apply` 写入 config 指定的表。必须带完整脚本路径；sync 会重新检查全部证据，不信任旧 selection.json。唯一键为日期/平台/App ID/广告ID；重跑更新，不重复添加；同日落选的旧记录改为“当前入选=false”，不删除历史。
 
@@ -33,9 +37,9 @@ description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广
 
 ## 每日自动执行的缺失媒体处理
 
-用户要求沿用本轮流程每日执行：媒体有限重试仍无法获取时保存来源、失败原因及数量，单列跳过，在已审核可用素材中计算前10%，报告实际分母。此例外只适用于无法获取的媒体，不适用于未全采、App身份不明、缺估值或内容判断不确定。遇验证码或登录失效暂停请求人工，不能把整项采集失败当成零素材跳过。
+用户要求沿用本轮流程每日执行：媒体有限重试仍无法获取时保存来源、失败原因及数量，单列跳过，在已审核可用素材中计算前10%，报告实际分母。此例外只适用于无法获取的媒体，不适用于未全采、App身份不明、缺估值或内容判断不确定。验证码立即暂停请求人工；登录失效按下述定时/手动恢复规则处理，不能把整项采集失败当成零素材跳过。
 
-飞书“来源”为单选，选项为“广大大”“facebookad libarary”“小红书”“抖音”；本工作流采自广大大，写“广大大”。来源与投放渠道是不同字段；即使媒体来自Facebook/YouTube，采集来源仍为广大大。
+飞书字段按最新约定：平台单选为“广大大”“facebook ad”“小红书”“抖音”，本流程写“广大大”；来源单选为“每日最新”“手动增加”，本流程自动采集写“每日最新”。iOS/Android保留在真实采集身份中，不写入平台选项；即使原媒体来自Facebook/YouTube，本流程平台仍是广大大。每日流程不修改手动增加的记录。
 
 ## 采集启动通知
 
@@ -76,10 +80,24 @@ description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广
 
 新prepare批次必须读取并执行 [每日统一状态与耗时记录](references/daily-state-machine.md)。daily-machine/state.json 是每日唯一推进依据，统一视频与图片；不再用旧视频state.py推进每日状态。按真实证据转换，正确筛选只读，按页批量登记动作耗时和重试。历史批次不自动迁移。
 
-## 选择App必须点击广告主候选（2026-10-21）
+## 综合App ID搜索（2026-10-22 最新规则）
 
-搜索类型选择“广告主”→输入完整App名或已核实App ID（每日任务用ID）→读取下方候选的名称/ID/平台→真实点击正确候选→从“已选”区域读回唯一App身份及无残留关键词→再点击最新创意。回车仅可提交查询，不能作为选中完成。保存app.query及后续app.candidate点击/前后截图证据；候选点击使用gddCheckedAppCandidate，不以搜索框文本替代已选身份。找不到候选或身份不符保持APP_PENDING，不能当作零结果。
+从今天起，选择“综合”→清除旧关键词及广告主残留→输入本任务App ID→真实按Enter提交→读回已提交的唯一关键词为该App ID→每次重新点击“最新创意”→逐卡采集。不要切换广告主搜索，不等待或点击下方广告主候选。App ID是查询关键词，不代表详情身份已经核实：iOS/Android仍分任务，每张详情用实际商店链接或已观察的广告主资料页核对App ID与平台；遇不相关结果保留原因并排除，不能混入目标App。无候选不再构成阻塞；查询后列表明确“暂无数据”且筛选/提交读回正确才可记零。正确基础筛选只读，差异才操作。
+
+APP proof记录search_mode=综合、query_type=app_id、query_app_id、query_terms=[本App ID]、selected_app_ids=[]、residual_keywords=[]；query_ui_check与ui_check均指实际app.query提交证据。事件含interaction={action:press,target:Enter}及实际UI submission读回（search_mode/query_terms/selected_app_ids/residual_keywords），保存真实截图。SORT证据须晚于此回车提交。旧广告主候选日志只用于历史批次复核，不能要求新任务再点击候选。
 
 ## 逐卡批量执行与就绪等待（2026-10-21）
 
-每日任务在授权浏览器REPL内使用guangdada-browser-crawl的scripts/browser_batch.js，先读其references/browser-batch.md；一次连续采集同页最多10张，正常卡片不逐张交回模型。实际身份、日期范围、估值、素材类型和媒体来源就绪后立即保存，不固定sleep，不等待视频缓冲/推荐内容。保留逐卡真实点击、全部字段及前后截图/哈希；验证码、身份不符、列表变化或超时立即交回模型处理，按最后耐久断点恢复。PROBE首卡复用，不重复打开。按页批量登记result.operations，最终仍走统一混合校验。
+仅旧模式每日任务在授权浏览器REPL内使用guangdada-browser-crawl的scripts/browser_batch.js；direct-browser-v1改用scripts/direct_session.mjs，先读其references/browser-batch.md；一次连续采集同页最多10张，正常卡片不逐张交回模型。实际身份、日期范围、估值、素材类型和媒体来源就绪后立即保存，不固定sleep，不等待视频缓冲/推荐内容。保留逐卡真实点击、全部字段及前后截图/哈希；验证码、身份不符、列表变化或超时立即交回模型处理，按最后耐久断点恢复。PROBE首卡复用，不重复打开。按页批量登记result.operations，最终仍走统一混合校验。
+
+## 定时与手动任务的登录恢复（2026-10-21 最新授权）
+
+定时触发的新批次prepare显式传`--execution-origin scheduled`；手动发起默认manual。scope保存本批实际execution_origin，不能用config.execution默认scheduled推断，也不在恢复时改变来源或日期。定时批次遇登录失效/其他设备登录/强制退出，先保存断点，调用`.venv/bin/python -m ua_workflows.social_chat_login_policy decision --run-dir <目录>`；auto_relogin时直接使用当前浏览器已保存凭据或项目.env既有账号正常重新登录，不先询问用户，不输出凭据，不读取/复制cookie，不为恢复登录盲目新开浏览器配置。每批最多2次正常登录尝试；凭据不可用、登录仍失败或预算耗尽则说明具体阻塞，不循环提交。手动任务先询问用户，明确授权后才登录。
+
+任何验证码/安全验证优先级最高：立即停止操作，不点击/拖动/自动破解；保存截图和断点，进入WAITING_HUMAN并stop防睡眠租约，请人工处理。用户确认完成后重新观察页面、核对登录/筛选/唯一已选App/分页位置并恢复，不重复通知或已保存卡片。普通登录失效在定时任务中走RETRY_REQUIRED及自动重登恢复，不直接当作验证码等待人工。
+
+登录每次实际尝试保存时间、authenticated及证据路径JSON，再执行social_chat_login_policy record --outcome success|failed|captcha --proof <相对run路径>。该脚本只记脱敏结果和耗时，不登录、不保存密码。若记录captcha，人工确认并核对页面验证码已消失后，以带scope_sha256/observed_at/captcha_visible=false/evidence_paths的新观察，执行clear-captcha --confirmation <实际用户确认> --proof <观察路径>解除验证码闸口；不能仅因超时自行解除。成功登录后仍须按每日状态机恢复证明校验，不以登录按钮点击代替成功。
+
+## 点卡前合并执行（2026-10-22）
+
+direct-browser-v1由direct_session.mjs组合执行，以APP_COLLECTION_PENDING一次验收；以下分阶段调用仅适用旧模式。旧模式分类、基础筛选、综合App ID查询、回车提交读回及最新创意排序，在同一段授权浏览器REPL脚本连续执行，正常只返回摘要；实际操作使用guangdada-browser-crawl的scripts/browser_prepare_app.mjs，先读其references/browser-prepare-app.md。每日状态仍按CATEGORY/FILTERS/APP/SORT逐阶段begin及证据complete；本地CLI可由REPL文件/进程桥顺序调用，不为每个阶段交回模型。正确筛选只读，差异才修改；不选择广告主候选；保留逐卡身份、截图、回车提交及排序时序校验。输入值被工具脱敏时读可见查询标签，不重复提交。异常停在真实失败阶段，不自动重试或跳过。
