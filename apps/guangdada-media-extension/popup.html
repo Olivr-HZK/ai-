@@ -6,6 +6,8 @@
   <main>
     <div class="types"><label><input id="image" type="checkbox" checked> 图片</label><label><input id="video" type="checkbox" checked> 视频</label><label><input id="playable" type="checkbox" checked> Playable</label></div>
     <p style="color:#526681;font-size:12px">Playable 获取原 HTML；外部依赖未打包，打开可能需要联网。</p>
+    <label class="scroll"><input id="resolve-external" type="checkbox" checked> 自动尝试补全视频外链</label>
+    <p style="color:#526681;font-size:12px">尝试备用原址及外链页面中的视频地址；补全结果写入 MD 报告。</p>
     <div class="range"><label for="mode">采集范围</label><select id="mode"><option value="current">仅当前页全部</option><option value="basket">跨页已选清单</option><option value="pages">自动翻页（每页全部）</option></select></div>
     <div id="page-options" hidden><div class="range"><label for="end">采集终点</label><select id="end"><option value="count">输入采集页数</option><option value="last">一直采到末页</option></select></div><div id="count-row" class="range"><label for="pages">最多采集页数</label><input id="pages" type="number" value="3" min="1" max="1000" step="1" aria-label="最多采集页数"></div></div>
     <button id="select" style="width:100%;margin:12px 0 6px">跨页点选素材</button>
@@ -21,7 +23,7 @@
       <button id="report" style="width:100%;margin:8px 0">查看下载报告.md</button>
       <details><summary>失败详情</summary><ul id="errors"></ul></details>
     </section>
-<footer>v1.8.0 · 一个 ZIP，内含下载报告.md。<br>图片、视频、Playable 均可跨页选择。<br>可输入采集页数或采到末页。<br>关闭弹窗后继续打包；单批媒体上限 512MB。</footer>
+<footer>v1.9.1 · 一个 ZIP，内含下载报告.md。<br>图片、视频、Playable 均可跨页选择。<br>可输入采集页数或采到末页。<br>关闭弹窗后继续打包；单批媒体上限 512MB。</footer>
   </main>
   <script type="module" src="popup.js"></script>
 </body>

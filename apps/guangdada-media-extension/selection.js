@@ -1,3 +1,4 @@
+import {needsDetail} from './detail.js';
 // Cart data is written only by the extension worker after reading real cards.
 export function selectionContext() {
   const active=[...document.querySelectorAll('.ant-pagination-item-active')].filter(el=>el.getClientRects().length);
@@ -28,9 +29,12 @@ export function refreshEntries(entries, scan) {
     const index=scan.cardKeys.indexOf(entry.adId);
     if(index<0)return entry;
     const fresh=selectionEntry(scan,entry.pageNumber,index+1);
+    if(entry.detailSource && needsDetail(fresh))return entry;
     // Keep the original page/slot even when a duplicate appears elsewhere.
     if(!fresh.url)return entry;
     const next={...entry,url:fresh.url,kind:fresh.kind};
+    if(fresh.detailSource)next.detailSource=true;
+    if(fresh.candidateUrls)next.candidateUrls=[...fresh.candidateUrls];else delete next.candidateUrls;
     delete next.reason;delete next.reasonCode;return next;
   });
 }

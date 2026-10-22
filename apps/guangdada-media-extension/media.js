@@ -1,3 +1,4 @@
+import {youtubeUrl} from './external.js';
 export function allowedPage(value) {
   try {
     const u = new URL(value);
@@ -17,9 +18,14 @@ export function normalize(items) {
       // Only a URL positively identified as video may use this legacy CDN alias.
       if (video) u.pathname = u.pathname.replace(/\.webp$/i, ".mp4");
       if (/\.(m3u8|mpd|ts)$/i.test(u.pathname)) continue;
-      const url = u.href;
-      const old = found.get(url);
-      if (!old || (video && old.kind !== 'video')) found.set(url, {...item, url, kind: playable?'playable':video ? "video" : "image"});
+      let url = u.href,invalidYoutube=false;
+      if(video){try{url=youtubeUrl(url)?.url || url;}catch{invalidYoutube=true;}}
+      // A shared truncated YouTube prefix is NOT proof that two ads are the
+      // same creative. Preserve each ad and its own observed backup addresses.
+      const key=invalidYoutube?(item.adId?`${url}\0${item.adId}`:Symbol()):url;
+      const old = found.get(key);
+      if (!old || (video && old.kind !== 'video')) found.set(key, {...item, url, kind: playable?'playable':video ? "video" : "image"});
+      else if(video && (old.candidateUrls || item.candidateUrls))old.candidateUrls=[...new Set([...(old.candidateUrls || []),...(item.candidateUrls || [])])].slice(0,4);
     } catch { /* Ignore malformed page attributes. */ }
   }
   return [...found.values()];

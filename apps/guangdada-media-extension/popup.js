@@ -31,6 +31,8 @@ function updateScope(){
 function render(job){
   latestJob=job;const running=active(job);
   $('select').disabled=busy || !validTab || running;
+  $('resolve-external').disabled=busy || running;
+  if(running)$('resolve-external').checked=job.autoResolveExternal!==false;
   $('mode').disabled=busy || running;$('end').disabled=busy || running;updateScope();
   if(!job)return;
   $('progress').hidden=false;
@@ -48,11 +50,11 @@ function render(job){
     const li=document.createElement('li');li.textContent=`${item.pageNumber?`第${item.pageNumber}页 `:''}第${item.cardIndex}个 · ${item.result}：${item.reason}`;return li;
   }));
   $('retry').disabled=busy || running || !job.zipName || job.collectionIncomplete || !job.items.length;
-  $('stop').disabled=busy || !running;
+  $('stop').disabled=!running;
   $('authorize').hidden=job.phase!=='awaiting-permission';$('authorize').disabled=busy;
-  $('message').textContent=[job.error || phases[job.phase] || '',
+  $('message').textContent=[job.error || job.detailProgress || phases[job.phase] || '',
     job.phase==='collecting'?'请保持列表标签页打开，自动采集期间不要手动翻页或更改筛选。关闭插件弹窗仍会继续。':'',
-    job.phase==='awaiting-permission'?'点击「授权并继续打包」，仅授权本批实际使用的媒体站点。':'',
+    job.phase==='awaiting-permission'?(job.waitingForExternalPermission?'外链解析发现新的素材站点，请点击「授权并继续打包」；已获取文件会保留。':'点击「授权并继续打包」，仅授权本批实际使用的媒体站点。'):'',
     job.stopReason==='last-page'?'已到列表末页。':'',
     job.duplicateCount?`相同素材合并 ${job.duplicateCount} 项。`:'',
     job.missing?.length?`${job.missing.length} 张卡片缺少原素材或不支持，详见下载报告。`:'',
@@ -85,7 +87,8 @@ $('start').onclick=async()=>{
     const source=mode==='basket'?basket.entries:scan.items;
     const items=normalize(source.filter(i=>i.url && kinds.includes(i.kind)));
     const origins=[...new Set(items.map(i=>`${new URL(i.url).origin}/*`))];
-    const message=mode==='basket'?{type:'start-basket',tabId,kinds,expectedRevision:basket.revision}:{type:'start',tabId,kinds,mode,pageCount:count,untilEnd,expectedCardKeys:scan.cardKeys};
+    const autoResolveExternal=$('resolve-external').checked;
+    const message=mode==='basket'?{type:'start-basket',tabId,kinds,autoResolveExternal,expectedRevision:basket.revision}:{type:'start',tabId,kinds,autoResolveExternal,mode,pageCount:count,untilEnd,expectedCardKeys:scan.cardKeys};
     // Persist the job before a native permission prompt can destroy this popup.
     // The permission call still originates directly from the user's click.
     const started=chrome.runtime.sendMessage(message);
@@ -133,4 +136,4 @@ if(validTab){
   await refreshBasket(true).catch(()=>{});
 }
 await request('status').catch(e=>{$('message').textContent=e.message;});
-setInterval(()=>{if(!busy){request('status').catch(()=>{});refreshBasket().catch(()=>{});}},1500);
+setInterval(()=>{request('status').catch(()=>{});if(!busy)refreshBasket().catch(()=>{});},1500);

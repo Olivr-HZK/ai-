@@ -71,8 +71,14 @@ export async function collectMedia(showNumbers = false) {
     // blurred duplicate backgrounds, or recommendations from parent props.
     const cdn = Array.isArray(value.cdn_url)?value.cdn_url:[value.cdn_url];
     const playableUrls = [...resources.map(r=>r?.html_url),value.html_url,...cdn.filter(u=>typeof u==='string' && /\.html?(?:[?#]|$)/i.test(u))].filter(u=>typeof u==='string' && u.trim());
+    const youtubeLink=u=>{try{return ['youtube.com','www.youtube.com','m.youtube.com','youtube-nocookie.com','www.youtube-nocookie.com','youtu.be','www.youtu.be'].includes(new URL(u).hostname);}catch{return false;}};
+    const videos=video?[...resources.map(r=>r?.video_url),value.video_url,
+      ...[...cdn,...resources.flatMap(r=>Array.isArray(r?.cdn_url)?r.cdn_url:[r?.cdn_url]),...resources.map(r=>r?.download_url),value.download_url].filter(u=>typeof u==='string' && (/\.(mp4|webm|mov|m4v)(?:[?#]|$)/i.test(u) || youtubeLink(u))),
+      ...[value.source_url,value.page_url,value.landing_url,value.external_url,...resources.map(r=>r?.source_url)].filter(youtubeLink),
+      ...[...card.querySelectorAll('a[href]')].filter(a=>a.getClientRects().length && youtubeLink(a.href)).map(a=>a.href)
+    ].filter(u=>typeof u==='string' && u.trim()):[];
     const raw = playable ? playableUrls.find(u=>! /\.(mp4|webm|mov|m4v|png|jpg|jpeg|webp|gif)(?:[?#]|$)/i.test(u)) || playableUrls[0] : video
-      ? resources.find(r => r && typeof r.video_url === 'string' && r.video_url)?.video_url || value.video_url
+      ? videos.find(u=>{try{const v=new URL(u);return ['http:','https:'].includes(v.protocol) && !v.username && !v.password && !/\.(m3u8|mpd|ts)$/i.test(v.pathname);}catch{return false;}}) || videos[0]
       : resources.find(r => r && typeof r.image_url === 'string' && r.image_url)?.image_url || value.preview_img_url;
     let url, reasonCode='NO_MEDIA_URL', reason=playable?'Playable 卡片未提供可下载的原 HTML 地址（未用封面或视频代替）':video?'视频卡片未提供可下载视频地址（未用封面代替）':'图片卡片未提供可下载地址';
     try {
@@ -87,7 +93,8 @@ export async function collectMedia(showNumbers = false) {
       missing.push({cardIndex, adId:value.ad_key, kind, reasonCode, reason});
       continue;
     }
-    items.push({url:url.href, kind, cardIndex, adId:value.ad_key});
+    const candidates=video?[...new Set(videos.filter(u=>{try{const v=new URL(u);return ['http:','https:'].includes(v.protocol) && !v.username && !v.password && !/\.(m3u8|mpd|ts)$/i.test(v.pathname);}catch{return false;}}))].slice(0,4):[];
+    items.push({url:url.href, kind, cardIndex, adId:value.ad_key,...(candidates.length>1?{candidateUrls:candidates}:{})});
   }
   if (showNumbers) {
     let toolbar = document.getElementById(toolbarId);

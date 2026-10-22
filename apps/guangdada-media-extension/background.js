@@ -3,6 +3,9 @@ import {collectMedia} from './collector.js';
 import {pageControl} from './pagination.js';
 import {selectionContext,selectionEntry,refreshEntries,cartPages} from './selection.js';
 import {selectionRows} from './report.js';
+import {detailControl,needsDetail} from './detail.js';
+let detailCancelled=false;
+let detailJobs=0;
 let chain = Promise.resolve();
 const locked = fn => { const next = chain.then(fn); chain = next.catch(() => {}); return next; };
 const read = async () => (await chrome.storage.local.get('job')).job;
@@ -26,9 +29,50 @@ async function inspect(tabId, func, args = []) {
   if (result.result.error) throw new Error(result.result.error);
   return result.result;
 }
+const detailReasons={DETAIL_NOT_OPENED:'未能打开对应素材详情，未取得详情原始链接',DETAIL_BUSY:'页面已有其他详情窗口，未读取其他素材的外链',DETAIL_ID_MISMATCH:'详情广告ID与所选卡片不一致，未读取外链',DETAIL_CARD_CHANGED:'卡片身份或排列变化，未读取外链',DETAIL_TIMEOUT:'已打开对应详情，但10秒内未读到明确的原始媒体链接',DETAIL_CLOSE_FAILED:'读取详情后无法确认关闭，请关闭详情再试'};
+async function completeDetails(tabId,scan,numbers,job){
+  const selected=new Set(numbers),targets=[...scan.items,...scan.missing].filter(i=>selected.has(i.cardIndex) && needsDetail(i));
+  if(job)detailJobs++;
+  try{
+  for(const [index,item] of targets.entries()){
+    if(detailCancelled)throw new Error('已停止详情外链补全。');
+    if(job){job.detailProgress=`正在读取第 ${item.cardIndex} 个素材详情外链（${index+1}/${targets.length}）`;await save(job);}
+    const expected={cardIndex:item.cardIndex,adId:item.adId};let result,opened=false,scroll;
+    try{
+      result=await inspect(tabId,detailControl,['open',expected]);opened=!!result.opened;scroll=result.scroll;
+      const started=Date.now(),deadline=started+10000;
+      while(!result.url && !result.failure && Date.now()<deadline){
+        if(detailCancelled)throw new Error('已停止详情外链补全。');
+        await new Promise(resolve=>setTimeout(resolve,200));
+        result=await inspect(tabId,detailControl,['read',expected]);
+        if(!result.url && !result.failure && !result.dialogVisible && !result.identityConfirmed && Date.now()-started>1200)result={failure:'DETAIL_NOT_OPENED'};
+      }
+      if(!result.url && !result.failure)result={failure:'DETAIL_TIMEOUT'};
+    }finally{
+      if(opened && result?.failure!=='DETAIL_ID_MISMATCH'){const closed=await inspect(tabId,detailControl,['close',{...expected,scroll}]);if(closed.failure)throw new Error(detailReasons[closed.failure] || '详情未能安全关闭。');
+        for(let i=0;i<10;i++){if(!(await inspect(tabId,detailControl,['idle',expected])).visible)break;await new Promise(resolve=>setTimeout(resolve,200));if(i===9)throw new Error('详情未能确认关闭，请关闭详情后重新开始。');}}
+    }
+    if(result.url){
+      const fresh={...item,url:result.url,candidateUrls:result.candidateUrls,detailSource:true};delete fresh.reason;delete fresh.reasonCode;
+      scan.items=scan.items.filter(i=>i.cardIndex!==item.cardIndex).concat(fresh);scan.missing=scan.missing.filter(i=>i.cardIndex!==item.cardIndex);
+    }else if(!item.url){item.reasonCode=result.failure;item.reason=`列表未提供可下载视频地址；${detailReasons[result.failure] || '详情未提供可确认的原始视频链接'}（未用封面代替）`;}
+  }
+  if(targets.length){const after=await inspect(tabId,collectMedia);if(!sameKeys(after.cardKeys,scan.cardKeys))throw new Error('读取详情时列表素材已变化，请回到原页重新打包。');}
+  if(job)delete job.detailProgress;
+  return scan;
+  }catch(error){if(job){job.phase='failed';job.collectionIncomplete=true;job.error=error.message;delete job.detailProgress;await save(job);}throw error;}
+  finally{if(job)detailJobs--;}
+}
 async function reconcile(job) {
   if (!job) return job;
-  if(job.phase==='awaiting-permission' && (await chrome.permissions.contains({origins:job.mediaOrigins})))return launch(job);
+  if(job.phase==='awaiting-permission' && (await chrome.permissions.contains({origins:job.mediaOrigins}))){
+    const contexts=job.waitingForExternalPermission?await chrome.runtime.getContexts({contextTypes:['OFFSCREEN_DOCUMENT']}):[];
+    if(contexts.length){
+      job.phase='fetching';delete job.waitingForExternalPermission;await save(job);
+      await chrome.runtime.sendMessage({target:'offscreen',type:'permission-updated'});return job;
+    }
+    return launch(job);
+  }
   if (job.phase === 'collecting') scheduleCollection(job.id);
   else if (job.phase === 'downloading' && job.downloadId !== undefined) {
     const [download] = await chrome.downloads.search({id:job.downloadId});
@@ -41,7 +85,7 @@ async function reconcile(job) {
   }
   await save(job);
   await chrome.action.setBadgeText({text:running(job) ? (job.phase === 'collecting' ? '翻页' : 'ZIP') : job.phase === 'complete' ? '✓' : '!'});
-  if (!running(job) || job.phase === 'awaiting-permission') {
+  if (!running(job) || (job.phase === 'awaiting-permission' && !job.waitingForExternalPermission)) {
     await chrome.alarms.clear('zip-status');
     await closeOffscreen();
   }
@@ -50,7 +94,8 @@ async function reconcile(job) {
 async function launch(job) {
   await closeOffscreen();
   job.phase = 'fetching'; job.error = ''; delete job.downloadId;
-  for (const item of job.items) { item.state = 'pending'; for(const key of ['error','errorCode','httpStatus','suggestion','bytes','playableInfo'])delete item[key]; }
+  delete job.waitingForExternalPermission;
+  for (const item of job.items) { item.state = 'pending'; for(const key of ['error','errorCode','httpStatus','suggestion','bytes','playableInfo','externalInfo','resolvedUrl'])delete item[key]; }
   await save(job);
   try {
     await chrome.offscreen.createDocument({url:'offscreen.html', reasons:['BLOBS'], justification:'将采集的图片视频汇总为一个 ZIP 文件'});
@@ -122,6 +167,7 @@ async function collectStep(id) {
           await inspect(c.tabId,pageControl,['warm',{pageNumber:c.readyPage,cardKeys:c.readyKeys,cardIndex}]);
           c.warmed.push(cardIndex);c.mediaSince=Date.now();
         } else if(Date.now()-c.mediaSince >= (c.snapshot.missing.some(i=>i.kind)?4000:1200)) {
+          if(job.autoResolveExternal && job.requestedKinds.includes('video'))c.snapshot=await completeDetails(c.tabId,c.snapshot,c.snapshot.cardKeys.map((_,i)=>i+1),job);
           appendPage(job,c.snapshot,c.readyPage);
           delete c.snapshot;
           if(!meta.hasNext)return await finishCollection(job,'last-page');
@@ -197,7 +243,11 @@ async function selectionMessage(message,sender,internal){
   if(message.type==='selection-update' && message.action==='hide'){
     cart.active=false;await saveCart(tabId,cart);return {ok:true,active:false};
   }
-  const {scan,pageNumber}=await selectionSnapshot(tabId);
+  let {scan,pageNumber}=await selectionSnapshot(tabId);
+  if(message.type==='selection-update' && ['toggle','all'].includes(message.action)){
+    const numbers=message.action==='all'?scan.cardKeys.map((_,i)=>i+1):cart.entries.some(i=>i.adId===scan.cardKeys[message.cardIndex-1])?[]:[message.cardIndex];
+    detailCancelled=false;scan=await completeDetails(tabId,scan,numbers);
+  }
   const refreshed=refreshEntries(cart.entries,scan);
   let changed=JSON.stringify(refreshed)!==JSON.stringify(cart.entries);cart.entries=refreshed;
   if(message.type==='selection-update'){
@@ -222,6 +272,12 @@ async function selectionMessage(message,sender,internal){
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if(message.target==='offscreen' || sender.id!==chrome.runtime.id)return;
   const internal=!!sender.url?.startsWith(chrome.runtime.getURL(''));
+  if(internal && message.type==='stop')detailCancelled=true;
+  // Read-only popup state must remain available while the serialized collector
+  // is waiting on a detail; otherwise reopening the popup cannot show Stop.
+  if(internal && detailJobs && ['status','get-basket'].includes(message.type)){
+    (message.type==='status'?read().then(job=>({ok:true,job})):getCart(message.tabId).then(basket=>({ok:true,basket}))).then(respond,error=>respond({ok:false,error:error.message}));return true;
+  }
   const pageMessage=['selection-read','selection-update'].includes(message.type) && sender.frameId===0 && allowedPage(sender.tab?.url);
   if(!internal && !pageMessage)return;
   if(['selection-session','get-basket','clear-basket','selection-read','selection-update'].includes(message.type)){
@@ -231,7 +287,17 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     let job = await read();
     if (sender.url === chrome.runtime.getURL('offscreen.html')) {
       if (!job || message.id !== job.id || !running(job)) return job;
-      if (message.type === 'item' && job.items[message.index]) Object.assign(job.items[message.index], {state:message.state,error:message.error || '',errorCode:message.errorCode || '',httpStatus:message.httpStatus || null,suggestion:message.suggestion || '',bytes:message.bytes || 0,playableInfo:message.playableInfo || null});
+      if(message.type==='need-origin'){
+        if(!job.items[message.index] || job.items[message.index].kind!=='video' || job.autoResolveExternal===false)throw new Error('无效外链权限请求');
+        const u=new URL(message.url);if(!['http:','https:'].includes(u.protocol) || u.username || u.password)throw new Error('无效媒体站点');
+        const origin=`${u.origin}/*`,granted=await chrome.permissions.contains({origins:[origin]});
+        if(!granted){job.mediaOrigins=[...new Set([...(job.mediaOrigins || []),origin])];job.waitingForExternalPermission=true;job.phase='awaiting-permission';await save(job);}
+        return {granted};
+      }
+      if (message.type === 'item' && job.items[message.index]) {
+        Object.assign(job.items[message.index], {state:message.state,error:message.error || '',errorCode:message.errorCode || '',httpStatus:message.httpStatus || null,suggestion:message.suggestion || '',bytes:message.bytes || 0,playableInfo:message.playableInfo || null,externalInfo:message.externalInfo || null,resolvedUrl:message.resolvedUrl || null});
+        if(message.filename)job.items[message.index].filename=message.filename;
+      }
       else if (message.type === 'packing') job.phase = 'packing';
       else if (message.type === 'pack-error') { job.phase = 'failed'; job.error = message.error; }
       else if (message.type === 'zip-ready') {
@@ -250,12 +316,17 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       let cart=await getCart(tab.id);
       if(!cart?.entries.length)throw new Error('跨页清单为空，请先点选素材。');
       if(message.expectedRevision!==undefined && message.expectedRevision!==cart.revision)throw new Error('已选清单发生变化，请核对后再次打包。');
-      try{const {scan}=await selectionSnapshot(tab.id);cart.entries=refreshEntries(cart.entries,scan);await saveCart(tab.id,cart);}catch{/* Previously saved choices remain usable during page loading. */}
+      detailCancelled=false;
       const kinds=['image','video','playable'].filter(k=>message.kinds?.includes(k));if(!kinds.length)throw new Error('请至少选择图片、视频或 Playable。');
+      // Refresh the current page, including old choices made before detail
+      // capture existed. Previously captured pages keep their observed links.
+      const {scan:currentScan}=await selectionSnapshot(tab.id);
+      if(message.autoResolveExternal!==false && kinds.includes('video'))await completeDetails(tab.id,currentScan,currentScan.cardKeys.flatMap((id,i)=>cart.entries.some(e=>e.adId===id)?[i+1]:[]));
+      cart.entries=refreshEntries(cart.entries,currentScan);await saveCart(tab.id,cart);
       const raw=cart.entries.filter(i=>i.url && kinds.includes(i.kind));
       const items=mergeCreatives(raw),pages=cartPages(cart.entries),missing=cart.entries.filter(i=>!i.url);
       const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-      job={id:crypto.randomUUID(),createdAt:new Date().toISOString(),zipName:`广大大/广大大媒体_${stamp}.zip`,mode:'selection',phase:'collecting',selections:cart.entries.map(i=>({...i})),items,pages,missing,cardCount:pages.reduce((n,p)=>n+p.cardCount,0),selectedCardCount:cart.entries.length,matchedCards:cart.entries.length,videoCards:cart.entries.filter(i=>i.kind==='video').length,imageCards:cart.entries.filter(i=>i.kind==='image').length,playableCards:cart.entries.filter(i=>i.kind==='playable').length,unsupported:missing.filter(i=>!i.kind).length,duplicateCount:raw.length-items.length,requestedKinds:kinds};
+      job={id:crypto.randomUUID(),createdAt:new Date().toISOString(),zipName:`广大大/广大大媒体_${stamp}.zip`,mode:'selection',autoResolveExternal:message.autoResolveExternal!==false,phase:'collecting',selections:cart.entries.map(i=>({...i})),items,pages,missing,cardCount:pages.reduce((n,p)=>n+p.cardCount,0),selectedCardCount:cart.entries.length,matchedCards:cart.entries.length,videoCards:cart.entries.filter(i=>i.kind==='video').length,imageCards:cart.entries.filter(i=>i.kind==='image').length,playableCards:cart.entries.filter(i=>i.kind==='playable').length,unsupported:missing.filter(i=>!i.kind).length,duplicateCount:raw.length-items.length,requestedKinds:kinds};
       return finishCollection(job,'selected-pages');
     }
     if (message.type === 'start') {
@@ -265,12 +336,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (!allowedPage(tab.url)) throw new Error('请在已登录的 guangdada.net 页面使用。');
       const multi = message.mode === 'pages', untilEnd=multi && message.untilEnd===true;
       const targetPages=untilEnd?null:pageLimit(multi?message.pageCount:1);
-      const scan = await inspect(tab.id,collectMedia);
+      let scan = await inspect(tab.id,collectMedia);
+      detailCancelled=false;
       if (message.expectedCardKeys && !sameKeys(message.expectedCardKeys,scan.cardKeys)) throw new Error('页面素材或排列已变化，请关闭并重新打开插件，核对编号后再下载。');
       const kinds = ['image','video','playable'].filter(k=>message.kinds?.includes(k));
       if (!kinds.length) throw new Error('请至少选择图片、视频或 Playable。');
       const stamp = new Date().toISOString().replace(/[:.]/g,'-');
-      job = {id:crypto.randomUUID(),createdAt:new Date().toISOString(),zipName:`广大大/广大大媒体_${stamp}.zip`,mode:multi?'pages':'current',phase:'collecting',selections:[],items:[],pages:[],missing:[],cardCount:0,matchedCards:0,videoCards:0,imageCards:0,playableCards:0,unsupported:0,selectedCardCount:0,duplicateCount:0,rawCount:0,requestedKinds:kinds};
+      job = {id:crypto.randomUUID(),createdAt:new Date().toISOString(),zipName:`广大大/广大大媒体_${stamp}.zip`,mode:multi?'pages':'current',autoResolveExternal:message.autoResolveExternal!==false,phase:'collecting',selections:[],items:[],pages:[],missing:[],cardCount:0,matchedCards:0,videoCards:0,imageCards:0,playableCards:0,unsupported:0,selectedCardCount:0,duplicateCount:0,rawCount:0,requestedKinds:kinds};
       if (multi) {
         const meta = await inspect(tab.id,pageControl,['read',{cardKeys:scan.cardKeys,pageNumber:(await inspect(tab.id,pageControl)).pageNumber}]);
         if (meta.loading || scan.cardKeys.some(k=>!k)) throw new Error('页面尚未加载完成，请稍后再开始翻页。');
@@ -283,6 +355,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       job.selectedCardNumbers = parseSelection(message.usePageSelection?scan.selectedCardNumbers.join(','):message.selection,scan.cardCount);
       const selected = new Set(job.selectedCardNumbers);
       const {pageNumber}=await inspect(tab.id,selectionContext);
+      // Persist the original choices before opening details so cancellation or
+      // an interrupted read still has an honest per-selection report.
+      job.selections=selectionRows(scan,pageNumber,job.selectedCardNumbers);
+      job.selectedCardCount=selected.size;job.cardCount=scan.cardCount;
+      job.missing=scan.missing.filter(i=>selected.has(i.cardIndex)).map(i=>({...i,pageNumber}));
+      if(job.autoResolveExternal && kinds.includes('video'))scan=await completeDetails(tab.id,scan,job.selectedCardNumbers,job);
       job.selections=selectionRows(scan,pageNumber,job.selectedCardNumbers);
       const raw = scan.items.filter(i=>selected.has(i.cardIndex) && kinds.includes(i.kind)).map(i=>({...i,pageNumber}));
       job.items = normalize(raw);
@@ -307,7 +385,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (message.type === 'retry' && running(job)) throw new Error('请先停止当前任务');
       if (!job.zipName) throw new Error('请创建新版打包任务');
       if (!job.items.length) throw new Error('没有可重新获取的原素材地址，请查看报告并返回原页重新选择。');
-      if (!(await chrome.permissions.contains({origins:originsFor(job.items)}))) throw new Error('请授权本批素材所需的媒体站点。');
+      if (!(await chrome.permissions.contains({origins:job.mediaOrigins || originsFor(job.items)}))) throw new Error('请授权本批素材所需的媒体站点。');
+      if(message.type==='resume' && job.waitingForExternalPermission)return reconcile(job);
       job.id = crypto.randomUUID(); return launch(job);
     }
     return reconcile(job);
