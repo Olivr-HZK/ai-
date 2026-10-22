@@ -75,6 +75,10 @@ def collection(run_dir, config, task_id=None):
     require(all(c['selected_types'] == [] and c['media_types'] == ['视频', '图片'] for c in checks), 'Media type must remain empty/default')
     if task_id is not None:
         require(task_id in {t['id'] for t in scope['tasks']}, 'Unknown task')
+    if (base/'historical-direct-recovery.json').exists():
+        from ua_workflows.social_chat_direct_recovery import collection as recovered
+        cards,seals=recovered(base,scope,task_id)
+        return base,scope,fingerprint,cards,seals
     all_cards, checklist = [], []
     for task in scope['tasks']:
         if task_id is not None and task['id'] != task_id:

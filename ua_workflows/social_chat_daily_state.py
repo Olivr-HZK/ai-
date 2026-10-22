@@ -86,7 +86,7 @@ def load(base):
 
 
 def current(base, doc):
-    steps = plan(read(Path(base)/'scope.json'))
+    steps = doc.get('execution_plan') or plan(read(Path(base)/'scope.json'))
     return steps[doc['cursor']] if doc['cursor'] < len(steps) else {'state':'COMPLETED', 'task':None}
 
 
@@ -111,7 +111,7 @@ def status(base):
     active = doc['active_attempt']
     return {'state': doc['control'] or step['state'], 'resume_state':step['state'],
             'task':step['task'], 'target_date':doc['target_date'], 'cursor':doc['cursor'],
-            'total_steps':len(plan(read(Path(base)/'scope.json'))), 'active_attempt':active,
+            'total_steps':len(doc.get('execution_plan') or plan(read(Path(base)/'scope.json'))), 'active_attempt':active,
             'active_elapsed_seconds':max(0,time.monotonic()-active['monotonic_start']) if active else 0,
             'completed_steps':len(doc['completed']), 'timing':summary,
             'control_reason':doc.get('control_reason'),
@@ -179,6 +179,13 @@ def validate(base, step, proof=None):
         if stamp.tzinfo is None or not datetime.fromisoformat(started)<=stamp<=datetime.now(timezone.utc):raise ValueError('No fresh stage evidence after attempt start')
     s=step['state']; task=next((t for t in scope['tasks'] if t['id']==step['task']),None)
     root=base/'tasks'/task['id'] if task else base
+    if s=='COLLECTION_RECOVERY_PENDING':
+        _,_,_,cards,seals=window.collection(base,config)
+        if len(seals)!=len(scope['tasks']):raise ValueError('Incomplete recovered collection')
+        validate(base,{'state':'START_NOTICE_PENDING','task':None})
+        p=base/'daily-machine/recovered-collection-check.json'
+        write(p,{'scope_sha256':fingerprint(scope),'checked_at':now(),'tasks':len(seals),'target_items':len(cards),'source':'historical-visible-direct-evidence'})
+        return [p,base/'historical-direct-recovery.json']
     if s=='PREPARE':
         if read(base/'run.json')['scope_sha256']!=fingerprint(scope):raise ValueError('Scope mismatch')
         return [base/'scope.json',base/'run.json']
