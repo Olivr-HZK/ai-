@@ -52,16 +52,16 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
             {"results": []},
             3,
             rows=[
-                {"rating": 5, "rating_label": "5星"},
+                {"rating": 3, "rating_label": "3星"},
                 {"rating": 3, "rating_label": "3星"},
                 {"rating": 1, "rating_label": "1星"},
             ],
             force_recalculate=True,
         )
 
-        self.assertIn("5星命中 1/3", text)
-        self.assertIn("平均评分 3.00", text)
-        self.assertIn("5星 1 / 3星 1 / 1星 1", text)
+        self.assertIn("3星命中 2/3", text)
+        self.assertIn("平均评分 2.33", text)
+        self.assertIn("3星 2 / 1星 1", text)
 
     def test_classify_play_kind_uses_matched_history_label(self) -> None:
         self.assertEqual(
@@ -102,9 +102,12 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
                 "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
                 "FEISHU_UA_WEBHOOK": "",
                 "VE_FLOW_REPORT_FEISHU_WEBHOOK": "",
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "",
                 "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "",
             },
-            clear=False,
+            clear=True,
         ):
             self.assertEqual(topn_mod.resolve_webhook(), "")
 
@@ -114,24 +117,30 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
                 "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
                 "FEISHU_UA_WEBHOOK": "https://example.invalid/ua",
                 "VE_FLOW_REPORT_FEISHU_WEBHOOK": "",
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "",
                 "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "",
             },
-            clear=False,
+            clear=True,
         ):
             self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/ua")
 
-    def test_resolve_webhook_prefers_topn_then_flow_report_group(self) -> None:
+    def test_resolve_webhook_prefers_guangdada_check_then_topn_group(self) -> None:
         with patch.dict(
             "os.environ",
             {
                 "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
                 "FEISHU_UA_WEBHOOK": "https://example.invalid/ua",
                 "VE_FLOW_REPORT_FEISHU_WEBHOOK": "https://example.invalid/flow",
-                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "",
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "",
+                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "https://example.invalid/topn",
             },
-            clear=False,
+            clear=True,
         ):
-            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/flow")
+            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/topn")
 
         with patch.dict(
             "os.environ",
@@ -139,11 +148,38 @@ class PushHaopengTopNToFeishuTest(unittest.TestCase):
                 "FEISHU_BOT_WEBHOOK": "https://example.invalid/test-bot",
                 "FEISHU_UA_WEBHOOK": "https://example.invalid/ua",
                 "VE_FLOW_REPORT_FEISHU_WEBHOOK": "https://example.invalid/flow",
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "https://example.invalid/guangdada",
+                "FEISHU_TEST_WEBHOOK": "https://example.invalid/test",
                 "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "https://example.invalid/topn",
             },
-            clear=False,
+            clear=True,
         ):
-            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/topn")
+            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/guangdada")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "GUANGDADA_CHECK_FEISHU_WEBHOOK": "",
+                "FEISHU_GUANGDADA_CHECK_WEBHOOK": "",
+                "FEISHU_TEST_WEBHOOK": "https://example.invalid/test",
+                "VE_HAOPENG_TOPN_FEISHU_WEBHOOK": "https://example.invalid/topn",
+                "FEISHU_UA_WEBHOOK": "https://example.invalid/ua",
+            },
+            clear=True,
+        ):
+            self.assertEqual(topn_mod.resolve_webhook(), "https://example.invalid/test")
+
+    def test_default_chat_id_prefers_guangdada_check_group(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "GUANGDADA_CHECK_FEISHU_CHAT_ID": "oc_guangdada",
+                "FEISHU_GUANGDADA_CHECK_CHAT_ID": "",
+                "FEISHU_DAILY_PUSH_CHAT_ID": "oc_daily",
+            },
+            clear=True,
+        ):
+            self.assertEqual(topn_mod.default_chat_id(), "oc_guangdada")
 
     def test_render_topn_markdown_hides_backtest_fields_by_default(self) -> None:
         report = {

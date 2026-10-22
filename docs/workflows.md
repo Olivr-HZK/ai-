@@ -37,7 +37,7 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **分析入队去重**：封面后进入 LLM 前会做日内 / 跨日素材去重和历史分析复用；重复素材复用 canonical 分析结果，不重复消耗模型。入队报告写 `data/workflow_video_enhancer_{date}_analysis_queue_report.json`，记录每产品封面后素材数、分析前去重、历史缓存复用和实际 LLM 入队数。
 - **全流程报告**：主流程结束或分析低成功率提前停止时，会写 `data/workflow_video_enhancer_{date}_flow_report.json` 与 `reports/workflow_video_enhancer_{date}_flow_report.md`，并默认通过 `VE_FLOW_REPORT_FEISHU_WEBHOOK` 发送飞书卡片；报告按产品串起点卡、抓到、爬取保留、封面后、分析去重、LLM 入队、可用分析、同步候选和主表写入，并汇总每一步筛掉/跳过原因。
 - **验收告警**：全流程报告会把「封面后保留数」和「主表写入数」与近 5 天同产品历史均值比较；默认低于历史均值 50% 且历史均值不低于 3 条时触发飞书告警，并在卡片中给出单产品重试命令，由人工决定是否重跑。可用 `VE_FLOW_REPORT_LOOKBACK_DAYS`、`VE_FLOW_REPORT_LOW_RATIO`、`VE_FLOW_REPORT_MIN_BASELINE` 调整阈值，用 `VE_FLOW_REPORT_FEISHU_ENABLED=0` 临时关推送。
-- **浩鹏 TopN 推送**：主流程保留 `ua_workflows.video_enhancer.haopeng_topn_push` 调用节点，但默认跳过。只有设置 `VE_HAOPENG_TOPN_ENABLED=1` 时，才会在同步后生成目标日二次 AI 筛选 JSON 并推送 TopN；发送方式可用 `VE_HAOPENG_TOPN_SEND_MODE` / `--topn-send-mode` 指定，未指定时有 chat_id 走 IM，否则走 `VE_HAOPENG_TOPN_FEISHU_WEBHOOK`、`VE_FLOW_REPORT_FEISHU_WEBHOOK` 或 `FEISHU_UA_WEBHOOK`。`--no-topn-push` 仍可强制跳过，`--topn-input-json` 可指定旧实验文件。
+- **浩鹏 TopN 推送**：主流程保留 `ua_workflows.video_enhancer.haopeng_topn_push` 调用节点，但默认跳过。只有设置 `VE_HAOPENG_TOPN_ENABLED=1` 时，才会在同步后生成目标日二次 AI 筛选 JSON 并推送 TopN；默认优先推到广大大检测群：IM 走 `GUANGDADA_CHECK_FEISHU_CHAT_ID` / `FEISHU_GUANGDADA_CHECK_CHAT_ID`，webhook 走 `GUANGDADA_CHECK_FEISHU_WEBHOOK` / `FEISHU_GUANGDADA_CHECK_WEBHOOK`，当前兼容 `FEISHU_TEST_WEBHOOK` 作为检测群 fallback。未配置时再回退 `VE_HAOPENG_TOPN_FEISHU_WEBHOOK`、`FEISHU_DAILY_PUSH_CHAT_ID` 或 `FEISHU_UA_WEBHOOK`。`--no-topn-push` 仍可强制跳过，`--topn-input-json` 可指定旧实验文件。
 - **旧渠道回退**：旧素材日报仅在传 `--send-material-card` 或设置 `VIDEO_ENHANCER_MATERIAL_DAILY_CARD_ENABLED=1` 时发送；企业微信和 Google Sheet 仅在传 `--send-wecom` / `--sync-sheet` 时运行。
 - **同步前排除/标记**：一键流程与独立同步都会补跑成人/色情风险拦截、用户上传人物照片特效硬拦截、可选日内玩法重复、可选同产品老玩法拦截、可选玩法 embedding 高置信重复、embedding 重复候选与已投放匹配；玩法去重优先使用 `play_fingerprint`，缺失时回退 `effect_one_liner`。硬拦截项不进主表和方向卡片，候选类信号只写 `素材标签` 供后续校准。
 - **同步前模板去重**：主表同步默认开启 `BITABLE_TEMPLATE_DEDUP_ENABLED=1`，在同产品/同 appid、同玩法桶内合并同模板只换人物、人种、性别或模特的素材；默认使用模板 exact 与同玩法封面 CLIP 相似，阈值 `BITABLE_TEMPLATE_DEDUP_CLIP_THRESHOLD=0.70`。模板文本相似默认关闭，仅设置 `BITABLE_TEMPLATE_DEDUP_TEXT_SIMILARITY_ENABLED=1` 时按 `BITABLE_TEMPLATE_DEDUP_TEXT_SIMILARITY_THRESHOLD=0.78` 参与合并。
@@ -59,9 +59,9 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **定时入口**：`scripts/cron_ve_feedback_training_daily.sh`
 - **数据源**：默认读取审核多维表 `CivwbJ2HkazcKTsKnbGclA5RnWc / tblrZZvVuFcjL0kE / vewJtPixtM`，也可用 `VE_FEEDBACK_BITABLE_URL` 覆盖。
 - **数据库**：独立使用 `data/ve_feedback_training.db`，不读写正常 VE 主库。
-- **训练标签**：优先读取 `浩鹏评分`（`5星=高意向`、`1星=低意向`、`2~4星=中间分留存`）；评分为空时兼容旧 `浩鹏接受情况` / `接受情况`，其中 `采纳` / `接受=5星`、`入素材库=3星`、`不采纳` / `删除` / `拒绝` / `重复抓取=1星`，`待定` / 空值只留存不训练。
+- **训练标签**：优先读取 `浩鹏评分`（`3星=高意向`、`2星=中间参考`、`1星=低意向`）；评分为空时兼容旧 `浩鹏接受情况` / `接受情况`，其中 `采纳` / `接受` / `入素材库=3星`、`不采纳` / `删除` / `拒绝` / `重复抓取=1星`，`待定` / 空值只留存不训练。
 - **特征口径**：只使用素材字段，例如标题、正文、核心卖点、Hook、脚本/口播、玩法资产/变种、玩法指纹、差异点、AI 分析和素材标签；产品、广告主、日期、热度、展示估值、地区等只进审计字段。
-- **产物**：`data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl`、`data/models/ve_feedback_preference_nb_YYYY-MM-DD.json`、`reports/ve_feedback_training_YYYY-MM-DD.md`。JSONL 会包含 `rating`、`rating_label`、评分来源字段和值，现有 baseline 暂以 5 星/1 星继续训练二分类。
+- **产物**：`data/ve_feedback_training_dataset_YYYY-MM-DD.jsonl`、`data/models/ve_feedback_preference_nb_YYYY-MM-DD.json`、`reports/ve_feedback_training_YYYY-MM-DD.md`。JSONL 会包含 `rating`、`rating_label`、评分来源字段和值，现有 baseline 暂以 3 星/1 星继续训练二分类。
 - **完整样本训练**：`--complete-profile core` 可只用核心素材字段齐全的样本训练；`core_play` 会额外要求玩法资产/玩法指纹等字段齐全，历史数据当前负样本过少，仅适合观察覆盖率。
 
 更多说明见 [ve-feedback-training.md](./ve-feedback-training.md)。
@@ -72,8 +72,8 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 - **生成并推送**：`scripts/run_ve_haopeng_topn_push.py --date YYYY-MM-DD --top-n 10`
 - **每日链路**：`scripts/cron_ai_video_enhancer_daily.sh` 只执行 `run_video_enhancer.py`，不在 cron 外层追加 TopN，避免重复推送。TopN 生成与推送保留在主流程内部，但默认关闭，只有 `VE_HAOPENG_TOPN_ENABLED=1` 时才会执行。
 - **数据源**：默认读取 `VIDEO_ENHANCER_BITABLE_URL` 指向的 VE 主表；目标日素材来自「抓取日期」，历史反馈默认从 `2026-05-25` 到目标日前一天。历史偏好优先读 `浩鹏评分`，缺失时兼容旧 `浩鹏接受情况` / `接受情况` 映射；`待定` / 空值不作为正负样本。目标日当天评分不会传给模型，只在报告落盘后用于人工回测。
-- **筛选口径**：模型按浩鹏 1~5 星评分偏好判断，优先推荐与历史 5 星相似但不重复、且具有新模板画面或新片段价值的素材；目标日候选在进入模型前排除 `admob` / `youtube` 渠道。飞书卡片从非排除渠道结果中展示 Top10，不因为模型标记 `hold` 就强制少推。
-- **回测口径**：默认推送隐藏当天实际反馈；显式 `--include-backtest` 时优先展示 `5星命中 / 平均评分 / 评分分布`，没有评分时才兼容旧采纳字段。
+- **筛选口径**：模型按浩鹏 1~3 星评分偏好判断，优先推荐与历史 3 星相似但不重复、且具有新模板画面或新片段价值的素材；目标日候选在进入模型前排除 `admob` / `youtube` 渠道。飞书卡片从非排除渠道结果中展示 Top10，不因为模型标记 `hold` 就强制少推。
+- **回测口径**：默认推送隐藏当天实际反馈；显式 `--include-backtest` 时优先展示 `3星命中 / 平均评分 / 评分分布`，没有评分时才兼容旧采纳字段。
 - **卡片入口**：飞书卡片默认隐藏回测字段；末尾会追加“查看多维表格”按钮，链接到 `VIDEO_ENHANCER_BITABLE_URL` 指向的主表，便于当天直接复核浩鹏反馈。
 - **模型**：默认 `qwen/qwen3.7-max`；可用 `VE_HAOPENG_FILTER_MODEL` 或 `--model` 覆盖。
 - **产物**：`data/haopeng_topn_experiments/{date}_label_prior.json`，字段兼容 TopN 飞书卡片渲染。该链路不写回多维表，也不改变 VE 主流程同步/拦截结果。
@@ -104,6 +104,7 @@ Arrow2 的 `scripts/run_arrow2_latest.py` / `run_arrow2_exposure.py` 在启动�
 
 - **入口**：`scripts/run_ve_weekly_competitor_review_server.sh`，cron 周一 13:10 默认调用。
 - **新竞品候选来源**：脚本先尝试运行 `scripts/run_new_charts_ai_tools.py` 抓广大大 AI 图像 / AI 视频周榜，再把 raw 交给 `run_ve_weekly_competitor_review.py` 生成新竞品候选、低量观察与建议移除老竞品。
+- **推送群**：VE 大盘三榜周榜与竞品周检查默认优先走广大大检测群 webhook：`GUANGDADA_CHECK_FEISHU_WEBHOOK` / `FEISHU_GUANGDADA_CHECK_WEBHOOK`，当前兼容 `FEISHU_TEST_WEBHOOK` 作为检测群 fallback；未配置时再回退各自专用 webhook 或通用 UA webhook。
 - **人机验证中断处理**：周榜采集走 `ua_workflows/shared/guangdada/new_charts_ai_tools.py`，已接入 VE 日更主爬取同款飞书确认闸口。登录后、主站稳定阶段或采集过程中检测到“安全验证 / 请完成验证 / 人机验证”时，会发送飞书 IM 卡片；人工完成页面验证并点击「已完成」后，脚本关闭当前浏览器并重启周榜采集入口，重启次数同样受 `GUANGDADA_HUMAN_CHECK_RESTART_LIMIT` 控制。
 
 ## VE 留存维护（低风险清理）

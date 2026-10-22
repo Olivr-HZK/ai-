@@ -48,6 +48,13 @@ class CronVideoEnhancerDailyTest(unittest.TestCase):
             self.assertIn("ua_workflows.video_enhancer.haopeng_topn_push", cmd)
             self.assertIn("--date", cmd)
 
+        with patch.dict(
+            "os.environ",
+            {"GUANGDADA_CHECK_FEISHU_CHAT_ID": "oc_guangdada"},
+            clear=True,
+        ):
+            self.assertEqual(pipeline._resolve_topn_send_mode(args), "im")
+
     def test_material_daily_card_is_disabled_until_explicitly_enabled(self) -> None:
         from ua_workflows.video_enhancer import pipeline
 

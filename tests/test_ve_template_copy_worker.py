@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class VeTemplateCopyWorkerTest(unittest.TestCase):
@@ -184,6 +185,22 @@ class VeTemplateCopyWorkerTest(unittest.TestCase):
         os.chmod(script, 0o755)
         return script
 
+    def _write_fake_recognition_codex(self, root: Path, payload: dict[str, object]) -> Path:
+        script = root / "fake_recognition_codex.py"
+        marker_payload = json.dumps(payload, ensure_ascii=False)
+        script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "args = sys.argv\n"
+            "out = args[args.index('--output-last-message') + 1]\n"
+            f"message = 'fake recognition complete\\nVE_TEMPLATE_RECOGNITION_RESULT_JSON: {marker_payload}\\n'\n"
+            "open(out, 'w', encoding='utf-8').write(message)\n"
+            "print('fake recognition codex executed')\n",
+            encoding="utf-8",
+        )
+        os.chmod(script, 0o755)
+        return script
+
     def test_execute_prepared_job_marks_completed_from_skill_result(self) -> None:
         from ua_workflows.video_enhancer.template_copy_worker import (
             execute_prepared_template_copy_job,
@@ -260,6 +277,156 @@ class VeTemplateCopyWorkerTest(unittest.TestCase):
         self.assertEqual(updated["status"], "failed")
         self.assertEqual(updated["runner"]["state"], "quality_failed")
         self.assertIn("below 90", updated["runner"]["error"])
+
+    def test_recognition_only_job_creates_reference_artifacts_without_codex(self) -> None:
+        from ua_workflows.video_enhancer.template_copy_worker import run_template_recognition_only
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"fake video")
+            job_path = self._write_job(root, source_url=str(source))
+
+            result = run_template_recognition_only(job_path, work_dir=root / "runs", download=False)
+            updated = json.loads(job_path.read_text(encoding="utf-8"))
+            self.assertTrue(Path(result["reference_screenshots"][0]).exists())
+            self.assertTrue(Path(result["reference_video_segments"][0]).exists())
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["state"], "recognition_completed")
+        self.assertEqual(result["bitable_status"], "已完成")
+        self.assertEqual(result["recognition"]["mode"], "video_template")
+        self.assertEqual(result["recognition"]["template_type"], "视频模板")
+        self.assertTrue(result["reference_screenshots"])
+        self.assertTrue(result["reference_video_segments"])
+        self.assertNotIn("codex_exec", updated["runner"])
+        self.assertEqual(updated["runner"]["state"], "recognition_completed")
+        self.assertEqual(updated["runner"]["recognition"]["template_type"], "视频模板")
+
+    def test_recognition_only_image_source_creates_screenshot_without_video_segment(self) -> None:
+        from ua_workflows.video_enhancer.template_copy_worker import run_template_recognition_only
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.png"
+            source.write_bytes(b"fake image")
+            job_path = self._write_job(root, source_url=str(source))
+
+            result = run_template_recognition_only(job_path, work_dir=root / "runs", download=False)
+
+        self.assertEqual(result["recognition"]["mode"], "image_template")
+        self.assertEqual(result["recognition"]["template_type"], "图片模板")
+        self.assertTrue(result["reference_screenshots"])
+        self.assertEqual(result["reference_video_segments"], [])
+
+    def test_recognition_only_video_source_still_outputs_segment_when_template_is_image(self) -> None:
+        from ua_workflows.video_enhancer import template_copy_worker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"fake video")
+            job_path = self._write_job(root, source_url=str(source))
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+            job["task"]["suggested_template_kind"] = "image_template_candidate"
+            job["task"]["template_reason"] = "静态卡片包装。"
+            job["task"]["script_or_voiceover"] = ""
+            job["task"]["template_fingerprint"] = ""
+            job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+            with patch.object(
+                template_copy_worker,
+                "_extract_reference_frame_at",
+                side_effect=lambda source_path, target_path, *, is_video, timestamp=0.0: target_path,
+            ) as screenshot, patch.object(
+                template_copy_worker,
+                "_extract_reference_video_segment_range",
+                side_effect=lambda source_path, target_path, *, is_video, start_time=0.0, end_time=None: target_path if is_video else None,
+            ) as segment:
+                result = template_copy_worker.run_template_recognition_only(
+                    job_path,
+                    work_dir=root / "runs",
+                    download=False,
+                )
+
+        self.assertEqual(result["recognition"]["mode"], "image_template")
+        self.assertTrue(result["reference_video_segments"])
+        self.assertTrue(screenshot.call_args.kwargs["is_video"])
+        self.assertTrue(segment.call_args.kwargs["is_video"])
+
+    def test_recognition_only_can_use_codex_skill_groups_for_multiple_artifacts(self) -> None:
+        from ua_workflows.video_enhancer import template_copy_worker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"fake video")
+            job_path = self._write_job(root, source_url=str(source))
+            fake_codex = self._write_fake_recognition_codex(
+                root,
+                {
+                    "status": "completed",
+                    "mode": "video_template",
+                    "template_type": "视频模板",
+                    "reason": "发现两个不同的成片结果片段，按 skill 规则分别输出。",
+                    "groups": [
+                        {
+                            "kind": "video",
+                            "label": "视频模板 1",
+                            "timestamp": 1.2,
+                            "start_time": 1.2,
+                            "end_time": 4.8,
+                            "reason": "第一个动态结果片段。",
+                        },
+                        {
+                            "kind": "video",
+                            "label": "视频模板 2",
+                            "timestamp": 6.0,
+                            "start_time": 6.0,
+                            "end_time": 9.5,
+                            "reason": "第二个动态结果片段。",
+                        },
+                    ],
+                },
+            )
+
+            def touch_frame(source_path: Path, target_path: Path, *, is_video: bool, timestamp: float = 0.0) -> Path:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(f"frame at {timestamp}", encoding="utf-8")
+                return target_path
+
+            def touch_segment(
+                source_path: Path,
+                target_path: Path,
+                *,
+                is_video: bool,
+                start_time: float = 0.0,
+                end_time: float | None = None,
+            ) -> Path | None:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(f"segment {start_time}-{end_time}", encoding="utf-8")
+                return target_path if is_video else None
+
+            with patch.object(template_copy_worker, "_extract_reference_frame_at", side_effect=touch_frame), patch.object(
+                template_copy_worker,
+                "_extract_reference_video_segment_range",
+                side_effect=touch_segment,
+            ):
+                result = template_copy_worker.run_template_recognition_only(
+                    job_path,
+                    work_dir=root / "runs",
+                    download=False,
+                    use_codex_skill=True,
+                    codex_bin=str(fake_codex),
+                )
+                updated = json.loads(job_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["recognition"]["template_type"], "视频模板")
+        self.assertEqual(len(result["recognition"]["template_groups"]), 2)
+        self.assertEqual(len(result["reference_screenshots"]), 2)
+        self.assertEqual(len(result["reference_video_segments"]), 2)
+        self.assertIn("recognition_prompt_path", updated["runner"]["artifacts"])
+        self.assertEqual(updated["runner"]["recognition_codex"]["skill_result"]["mode"], "video_template")
 
 
 if __name__ == "__main__":

@@ -23,6 +23,10 @@ DEFAULT_JOB_DIR = DATA_DIR / "ve_template_copy_jobs"
 TRIGGER_LINK_FIELD = "模板复刻触发链接"
 TRIGGER_STATUS_FIELD = "模板复刻状态"
 TRIGGER_JOB_ID_FIELD = "模板复刻任务ID"
+RECOGNITION_TYPE_FIELD = "模板识别类型"
+RECOGNITION_REASON_FIELD = "模板识别理由"
+RECOGNITION_SCREENSHOT_FIELD = "模板参考截图"
+RECOGNITION_VIDEO_SEGMENT_FIELD = "模板参考视频片段"
 
 
 class TemplateTriggerError(RuntimeError):
@@ -462,6 +466,159 @@ def update_template_copy_status(
     return {"updated": True, "record_id": record_id, "fields": fields}
 
 
+def _batch_update_record_fields(
+    *,
+    bitable_url: str,
+    record_id: str,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    ref = parse_bitable_ref(bitable_url)
+    access_token = _tenant_access_token()
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=utf-8"}
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{ref.app_token}/tables/{ref.table_id}/records/batch_update"
+    resp = requests.post(
+        url,
+        headers=headers,
+        json={"records": [{"record_id": record_id, "fields": fields}]},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"update bitable fields failed: {data}")
+    return {"updated": True, "record_id": record_id, "fields": fields}
+
+
+def _extract_file_token(data: dict[str, Any], *, field_name: str, path: Path) -> str:
+    candidates = [
+        data.get("file_token"),
+        (data.get("data") or {}).get("file_token") if isinstance(data.get("data"), dict) else None,
+    ]
+    for token in candidates:
+        token_text = str(token or "").strip()
+        if token_text:
+            return token_text
+    raise RuntimeError(f"upload attachments failed for {field_name}: missing file_token for {path}")
+
+
+def _upload_local_file_to_bitable_media(
+    *,
+    access_token: str,
+    app_token: str,
+    path: Path,
+    field_name: str,
+) -> str:
+    url = "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    with path.open("rb") as file_obj:
+        resp = requests.post(
+            url,
+            headers=headers,
+            data={
+                "file_name": path.name,
+                "parent_type": "bitable_file",
+                "parent_node": app_token,
+                "size": str(path.stat().st_size),
+            },
+            files={"file": (path.name, file_obj)},
+            timeout=120,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"upload attachments failed for {field_name}: {data}")
+    return _extract_file_token(data, field_name=field_name, path=path)
+
+
+def _upload_attachments_to_bitable(
+    *,
+    bitable_url: str,
+    record_id: str,
+    field_name: str,
+    files: list[str],
+) -> dict[str, Any]:
+    file_paths = [Path(path).expanduser().resolve() for path in files if str(path or "").strip()]
+    paths = [str(path) for path in file_paths]
+    if not paths:
+        return {"uploaded": 0, "field": field_name, "files": []}
+    for path in file_paths:
+        if not path.exists() or not path.is_file():
+            raise RuntimeError(f"upload attachments failed for {field_name}: file not found: {path}")
+    ref = parse_bitable_ref(bitable_url)
+    access_token = _tenant_access_token()
+    uploaded_tokens = [
+        _upload_local_file_to_bitable_media(
+            access_token=access_token,
+            app_token=ref.app_token,
+            path=path,
+            field_name=field_name,
+        )
+        for path in file_paths
+    ]
+    update_url = (
+        f"https://open.feishu.cn/open-apis/bitable/v1/apps/{ref.app_token}"
+        f"/tables/{ref.table_id}/records/batch_update"
+    )
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=utf-8"}
+    resp = requests.post(
+        update_url,
+        headers=headers,
+        json={"records": [{"record_id": record_id, "fields": {field_name: [{"file_token": token} for token in uploaded_tokens]}}]},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"update attachments failed for {field_name}: {data}")
+    return {"uploaded": len(paths), "field": field_name, "files": paths, "file_tokens": uploaded_tokens}
+
+
+def update_template_recognition_result(
+    *,
+    bitable_url: str,
+    record_id: str,
+    recognition: dict[str, Any],
+) -> dict[str, Any]:
+    """Write recognition-only result fields and upload reference artifacts to Base."""
+    load_project_env()
+    record_id = str(record_id or "").strip()
+    if not record_id:
+        raise ValueError("record_id is required")
+    info = recognition.get("recognition") if isinstance(recognition.get("recognition"), dict) else {}
+    fields = {
+        RECOGNITION_TYPE_FIELD: str(info.get("template_type") or ""),
+        RECOGNITION_REASON_FIELD: str(info.get("reason") or ""),
+    }
+    field_update = _batch_update_record_fields(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        fields=fields,
+    )
+    screenshots = [str(path) for path in recognition.get("reference_screenshots") or []]
+    video_segments = [str(path) for path in recognition.get("reference_video_segments") or []]
+    screenshot_upload = _upload_attachments_to_bitable(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        field_name=RECOGNITION_SCREENSHOT_FIELD,
+        files=screenshots,
+    )
+    video_upload = _upload_attachments_to_bitable(
+        bitable_url=bitable_url,
+        record_id=record_id,
+        field_name=RECOGNITION_VIDEO_SEGMENT_FIELD,
+        files=video_segments,
+    )
+    return {
+        "updated": True,
+        "record_id": record_id,
+        "fields": field_update["fields"],
+        "attachments": {
+            "screenshots": screenshot_upload.get("uploaded", 0),
+            "video_segments": video_upload.get("uploaded", 0),
+        },
+    }
+
+
 def build_button_workflow_payload(
     *,
     trigger_url: str,
@@ -542,7 +699,7 @@ def build_rating_link_workflow_payload(
     client_token: str = "",
     min_rating: int = 3,
 ) -> dict[str, Any]:
-    """Build a Base Workflow body: rating SetRecordTrigger -> POST /ensure-link."""
+    """Build a Base Workflow body: rating ChangeRecordTrigger -> POST /ensure-link."""
     if not ensure_link_url:
         raise ValueError("ensure_link_url is required")
     if not table_name:
@@ -574,22 +731,24 @@ def build_rating_link_workflow_payload(
         "steps": [
             {
                 "id": "step_rating_trigger",
-                "type": "SetRecordTrigger",
+                "type": "ChangeRecordTrigger",
                 "title": f"{rating_field_name} 达到 {min_rating} 星时触发",
                 "next": "step_ensure_template_link",
                 "data": {
                     "table_name": table_name,
-                    "record_watch_conjunction": "and",
-                    "record_watch_info": [],
-                    "field_watch_info": [
+                    "trigger_control_list": [],
+                    "condition_list": [
                         {
-                            "field_name": rating_field_name,
-                            "operator": "isGreaterEqual",
-                            "value": [{"value_type": "number", "value": min_rating}],
+                            "conjunction": "and",
+                            "conditions": [
+                                {
+                                    "field_name": rating_field_name,
+                                    "operator": "isGreaterEqual",
+                                    "value": [{"value_type": "number", "value": min_rating}],
+                                }
+                            ],
                         }
                     ],
-                    "trigger_control_list": [],
-                    "condition_list": None,
                 },
             },
             {
@@ -611,6 +770,96 @@ def build_rating_link_workflow_payload(
                     "response_type": "json",
                     "response_value": json.dumps(
                         {"success": True, "message": "link_written", "record_id": "example"},
+                        ensure_ascii=False,
+                    ),
+                },
+            },
+        ],
+    }
+
+
+def build_rating_trigger_workflow_payload(
+    *,
+    trigger_url: str,
+    table_name: str,
+    rating_field_name: str = "浩鹏评分",
+    reviewer: str = "haopeng",
+    token: str = "",
+    title: str = "VE 模板识别评分直接触发",
+    client_token: str = "",
+    min_rating: int = 3,
+) -> dict[str, Any]:
+    """Build a Base Workflow body: rating ChangeRecordTrigger -> POST /trigger."""
+    if not trigger_url:
+        raise ValueError("trigger_url is required")
+    if not table_name:
+        raise ValueError("table_name is required")
+    if not rating_field_name:
+        raise ValueError("rating_field_name is required")
+    client_token = client_token or f"ve-template-rating-trigger-{uuid.uuid4().hex}"
+    raw_body: list[dict[str, Any]] = [
+        {"value_type": "text", "value": '{"record_id":"'},
+        {"value_type": "ref", "value": "$.step_rating_trigger.recordId"},
+        {"value_type": "text", "value": '",'},
+        {"value_type": "text", "value": '"source":"lark_base_rating_direct_trigger"'},
+        {"value_type": "text", "value": ',"reviewer":"'},
+        {"value_type": "text", "value": reviewer},
+        {"value_type": "text", "value": '"'},
+    ]
+    if token:
+        raw_body.extend(
+            [
+                {"value_type": "text", "value": ',"token":"'},
+                {"value_type": "text", "value": token},
+                {"value_type": "text", "value": '"'},
+            ]
+        )
+    raw_body.append({"value_type": "text", "value": "}"})
+    return {
+        "client_token": client_token,
+        "title": title,
+        "steps": [
+            {
+                "id": "step_rating_trigger",
+                "type": "ChangeRecordTrigger",
+                "title": f"{rating_field_name} 达到 {min_rating} 星时触发",
+                "next": "step_call_template_trigger",
+                "data": {
+                    "table_name": table_name,
+                    "trigger_control_list": [],
+                    "condition_list": [
+                        {
+                            "conjunction": "and",
+                            "conditions": [
+                                {
+                                    "field_name": rating_field_name,
+                                    "operator": "isGreaterEqual",
+                                    "value": [{"value_type": "number", "value": min_rating}],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "step_call_template_trigger",
+                "type": "HTTPClientAction",
+                "title": "提交 VE 模板识别任务",
+                "next": None,
+                "data": {
+                    "method": "POST",
+                    "url": [{"value_type": "text", "value": trigger_url}],
+                    "headers": [
+                        {
+                            "key": "Content-Type",
+                            "value": [{"value_type": "text", "value": "application/json"}],
+                        }
+                    ],
+                    "body_type": "raw",
+                    "raw_body": raw_body,
+                    "response_type": "json",
+                    "response_value": json.dumps(
+                        {"success": True, "message": "queued", "job_id": "example"},
                         ensure_ascii=False,
                     ),
                 },

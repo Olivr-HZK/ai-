@@ -40,7 +40,7 @@ class VeFeedbackRatingTest(unittest.TestCase):
         from ua_workflows.video_enhancer.feedback_rating import resolve_feedback_rating
 
         result = resolve_feedback_rating(
-            {"浩鹏评分": "6星", "浩鹏接受情况": "采纳"},
+            {"浩鹏评分": "4星", "浩鹏接受情况": "采纳"},
             reviewer="haopeng",
         )
 
@@ -51,18 +51,18 @@ class VeFeedbackRatingTest(unittest.TestCase):
     def test_weilan_field_mapping(self) -> None:
         from ua_workflows.video_enhancer.feedback_rating import resolve_feedback_rating
 
-        result = resolve_feedback_rating({"尉蓝评分": 5}, reviewer="weilan")
+        result = resolve_feedback_rating({"尉蓝评分": 3}, reviewer="weilan")
 
-        self.assertEqual(result.rating, 5)
-        self.assertEqual(result.rating_label, "5星")
+        self.assertEqual(result.rating, 3)
+        self.assertEqual(result.rating_label, "3星")
         self.assertEqual(result.source_field, "尉蓝评分")
 
     def test_numeric_string_and_chinese_star_values(self) -> None:
         from ua_workflows.video_enhancer.feedback_rating import normalize_rating_value
 
         self.assertEqual(normalize_rating_value("三颗星"), 3)
-        self.assertEqual(normalize_rating_value("四星"), 4)
-        self.assertEqual(normalize_rating_value("5 stars"), 5)
+        self.assertIsNone(normalize_rating_value("四星"))
+        self.assertIsNone(normalize_rating_value("5 stars"))
         self.assertEqual(normalize_rating_value("2"), 2)
         self.assertEqual(normalize_rating_value(1), 1)
         self.assertIsNone(normalize_rating_value("六星"))

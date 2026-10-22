@@ -587,7 +587,10 @@ def _resolve_webhook(explicit: str = "") -> str:
     if explicit.strip():
         return explicit.strip()
     return (
-        os.getenv("VE_WEEKLY_COMPETITOR_REVIEW_FEISHU_WEBHOOK")
+        os.getenv("GUANGDADA_CHECK_FEISHU_WEBHOOK")
+        or os.getenv("FEISHU_GUANGDADA_CHECK_WEBHOOK")
+        or os.getenv("FEISHU_TEST_WEBHOOK")
+        or os.getenv("VE_WEEKLY_COMPETITOR_REVIEW_FEISHU_WEBHOOK")
         or os.getenv("FEISHU_BOT_WEBHOOK")
         or os.getenv("FEISHU_UA_WEBHOOK")
         or ""

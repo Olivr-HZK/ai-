@@ -15,9 +15,9 @@ class VeTemplateNormalizationTest(unittest.TestCase):
         self.assertIn("尉蓝评分", fields)
         self.assertIn("接受情况", fields)
         self.assertEqual(fields["浩鹏评分"]["type"], 2)
-        self.assertEqual(fields["浩鹏评分"].get("style"), {"type": "rating", "icon": "star", "min": 1, "max": 5})
+        self.assertEqual(fields["浩鹏评分"].get("style"), {"type": "rating", "icon": "star", "min": 1, "max": 3})
         self.assertEqual(fields["尉蓝评分"]["type"], 2)
-        self.assertEqual(fields["尉蓝评分"].get("style"), {"type": "rating", "icon": "star", "min": 1, "max": 5})
+        self.assertEqual(fields["尉蓝评分"].get("style"), {"type": "rating", "icon": "star", "min": 1, "max": 3})
 
     def test_filter_review_cards_show_first_seen_and_created_at(self) -> None:
         from unittest.mock import patch

@@ -322,7 +322,7 @@ def label_from_accept_status(status: str) -> int | None:
 
 
 def label_from_rating(rating: int | None) -> int | None:
-    if rating == 5:
+    if rating == 3:
         return LABEL_ACCEPTED
     if rating == 1:
         return LABEL_REJECTED
@@ -818,7 +818,7 @@ def write_report(
         "",
         f"- 多维表拉取记录：{pulled_count}",
         f"- 可训练样本：{len(labeled_samples)}",
-        f"- 5星高意向：{label_counts.get(LABEL_ACCEPTED, 0)}",
+        f"- 3星高意向：{label_counts.get(LABEL_ACCEPTED, 0)}",
         f"- 1星低意向：{label_counts.get(LABEL_REJECTED, 0)}",
         f"- 模型状态：{metrics.get('status', 'unknown')}",
     ]

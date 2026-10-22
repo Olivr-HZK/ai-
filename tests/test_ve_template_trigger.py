@@ -91,22 +91,70 @@ class VeTemplateTriggerTest(unittest.TestCase):
         http = steps["step_ensure_template_link"]
 
         self.assertEqual(payload["client_token"], "client-rating")
-        self.assertEqual(trigger["type"], "SetRecordTrigger")
+        self.assertEqual(trigger["type"], "ChangeRecordTrigger")
         self.assertEqual(trigger["data"]["table_name"], "ai工具video photo爬取表 副本")
         self.assertEqual(
-            trigger["data"]["field_watch_info"],
+            trigger["data"]["condition_list"],
             [
                 {
-                    "field_name": "浩鹏评分",
-                    "operator": "isGreaterEqual",
-                    "value": [{"value_type": "number", "value": 3}],
+                    "conjunction": "and",
+                    "conditions": [
+                        {
+                            "field_name": "浩鹏评分",
+                            "operator": "isGreaterEqual",
+                            "value": [{"value_type": "number", "value": 3}],
+                        }
+                    ],
                 }
             ],
         )
+        self.assertEqual(trigger["data"]["trigger_control_list"], [])
         self.assertEqual(http["type"], "HTTPClientAction")
         self.assertEqual(http["data"]["url"], [{"value_type": "text", "value": "https://example.com/ensure-link"}])
         self.assertIn({"value_type": "ref", "value": "$.step_rating_trigger.recordId"}, http["data"]["raw_body"])
         self.assertIn({"value_type": "text", "value": '"source":"lark_base_rating_update"'}, http["data"]["raw_body"])
+        self.assertIn({"value_type": "text", "value": "secret"}, http["data"]["raw_body"])
+
+    def test_build_rating_trigger_workflow_payload_posts_record_id_to_trigger(self) -> None:
+        from ua_workflows.video_enhancer.template_trigger import build_rating_trigger_workflow_payload
+
+        payload = build_rating_trigger_workflow_payload(
+            trigger_url="https://example.com/trigger",
+            table_name="ai工具video photo爬取表 副本",
+            rating_field_name="浩鹏评分",
+            token="secret",
+            client_token="client-rating-direct",
+        )
+        steps = {step["id"]: step for step in payload["steps"]}
+        trigger = steps["step_rating_trigger"]
+        http = steps["step_call_template_trigger"]
+
+        self.assertEqual(payload["client_token"], "client-rating-direct")
+        self.assertEqual(trigger["type"], "ChangeRecordTrigger")
+        self.assertEqual(trigger["data"]["table_name"], "ai工具video photo爬取表 副本")
+        self.assertEqual(
+            trigger["data"]["condition_list"],
+            [
+                {
+                    "conjunction": "and",
+                    "conditions": [
+                        {
+                            "field_name": "浩鹏评分",
+                            "operator": "isGreaterEqual",
+                            "value": [{"value_type": "number", "value": 3}],
+                        }
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(trigger["data"]["trigger_control_list"], [])
+        self.assertEqual(http["type"], "HTTPClientAction")
+        self.assertEqual(http["data"]["url"], [{"value_type": "text", "value": "https://example.com/trigger"}])
+        self.assertIn({"value_type": "ref", "value": "$.step_rating_trigger.recordId"}, http["data"]["raw_body"])
+        self.assertIn(
+            {"value_type": "text", "value": '"source":"lark_base_rating_direct_trigger"'},
+            http["data"]["raw_body"],
+        )
         self.assertIn({"value_type": "text", "value": "secret"}, http["data"]["raw_body"])
 
     def test_build_trigger_link_updates_filters_three_star_or_higher_target_date(self) -> None:
@@ -127,7 +175,7 @@ class VeTemplateTriggerTest(unittest.TestCase):
                 "fields": {
                     "广告ID": "ad2",
                     "抓取日期": "2026-06-15",
-                    "浩鹏评分": "4星",
+                    "浩鹏评分": "3星",
                     "封面图链接": "https://example.com/b.png",
                 },
             },
@@ -136,7 +184,7 @@ class VeTemplateTriggerTest(unittest.TestCase):
                 "fields": {
                     "广告ID": "ad_old",
                     "抓取日期": "2026-06-14",
-                    "浩鹏评分": "5星",
+                    "浩鹏评分": "3星",
                     "封面图链接": "https://example.com/c.png",
                 },
             },
@@ -471,6 +519,163 @@ class VeTemplateTriggerTest(unittest.TestCase):
             job_id="job3",
         )
 
+    def test_server_recognition_only_updates_bitable_fields_and_attachments(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger_server
+
+        handler = object.__new__(template_trigger_server.TemplateTriggerHandler)
+        handler.server = SimpleNamespace(
+            trigger_token="",
+            bitable_url="https://example.feishu.cn/base/app_token?table=tbl123",
+            reviewer="haopeng",
+            include_legacy=False,
+            job_dir=Path("/tmp/jobs"),
+            auto_prepare=True,
+            auto_execute_codex=False,
+            recognition_only=True,
+            codex_bin="",
+            model_ref_dir=Path("/tmp/model_refs"),
+            work_dir=Path("/tmp/runs"),
+        )
+        handler.headers = {}
+
+        job = {"job_id": "job3", "record_id": "rec3"}
+        worker_result = {
+            "status": "completed",
+            "state": "recognition_completed",
+            "bitable_status": "已完成",
+            "recognition": {
+                "template_type": "视频模板",
+                "reason": "素材有动态动作。",
+            },
+            "reference_screenshots": ["/tmp/key.jpg"],
+            "reference_video_segments": ["/tmp/segment.mp4"],
+        }
+        with patch.object(
+            template_trigger_server,
+            "trigger_template_copy_from_bitable",
+            return_value=(job, Path("/tmp/jobs/job3.json")),
+        ), patch.object(
+            template_trigger_server,
+            "run_optional_worker",
+            return_value=worker_result,
+        ), patch.object(
+            template_trigger_server,
+            "update_template_copy_status",
+            return_value={"updated": True},
+        ) as update_status, patch.object(
+            template_trigger_server,
+            "update_template_recognition_result",
+            return_value={"updated": True, "attachments": {"screenshots": 1, "video_segments": 1}},
+        ) as update_result:
+            result, status = handler._trigger({"record_id": "rec3"})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(result["success"])
+        update_status.assert_called_once_with(
+            bitable_url="https://example.feishu.cn/base/app_token?table=tbl123",
+            record_id="rec3",
+            status="已完成",
+            job_id="job3",
+        )
+        update_result.assert_called_once_with(
+            bitable_url="https://example.feishu.cn/base/app_token?table=tbl123",
+            record_id="rec3",
+            recognition=worker_result,
+        )
+        self.assertEqual(result["recognition_update"], {"updated": True, "attachments": {"screenshots": 1, "video_segments": 1}})
+
+    def test_upload_attachments_uses_app_openapi_without_lark_cli(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "refs"
+            parent.mkdir()
+            image_path = parent / "reference.jpg"
+            image_path.write_bytes(b"fake image")
+
+            class FakeUploadResponse:
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict[str, object]:
+                    return {"code": 0, "data": {"file_token": "filetok1"}}
+
+            class FakeBatchUpdateResponse:
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict[str, object]:
+                    return {"code": 0, "data": {}}
+
+            self.assertFalse(hasattr(template_trigger, "subprocess"))
+            with patch.object(template_trigger, "parse_bitable_ref", return_value=SimpleNamespace(app_token="app", table_id="tbl")), patch.object(
+                template_trigger,
+                "_tenant_access_token",
+                return_value="tenant-token",
+            ), patch.object(
+                template_trigger.requests,
+                "post",
+                side_effect=[FakeUploadResponse(), FakeBatchUpdateResponse()],
+            ) as post:
+                result = template_trigger._upload_attachments_to_bitable(
+                    bitable_url="https://example.feishu.cn/base/app?table=tbl",
+                    record_id="rec1",
+                    field_name="模板参考截图",
+                    files=[str(image_path)],
+                )
+
+        upload_call, update_call = post.call_args_list
+        self.assertEqual(upload_call.args[0], "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all")
+        self.assertEqual(upload_call.kwargs["headers"]["Authorization"], "Bearer tenant-token")
+        self.assertEqual(upload_call.kwargs["data"]["file_name"], "reference.jpg")
+        self.assertEqual(upload_call.kwargs["data"]["parent_node"], "app")
+        self.assertEqual(upload_call.kwargs["data"]["parent_type"], "bitable_file")
+        self.assertIn("file", upload_call.kwargs["files"])
+        self.assertEqual(
+            update_call.args[0],
+            "https://open.feishu.cn/open-apis/bitable/v1/apps/app/tables/tbl/records/batch_update",
+        )
+        self.assertEqual(
+            update_call.kwargs["json"],
+            {"records": [{"record_id": "rec1", "fields": {"模板参考截图": [{"file_token": "filetok1"}]}}]},
+        )
+        self.assertEqual(result["uploaded"], 1)
+
+    def test_replace_attachments_overwrites_old_tokens_with_batch_update(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger
+
+        self.assertFalse(hasattr(template_trigger, "subprocess"))
+        with patch.object(template_trigger, "parse_bitable_ref", return_value=SimpleNamespace(app_token="app", table_id="tbl")), patch.object(
+            template_trigger,
+            "_tenant_access_token",
+            return_value="tenant-token",
+        ), patch.object(
+            template_trigger,
+            "_upload_local_file_to_bitable_media",
+            return_value="newtok",
+        ), patch.object(
+            template_trigger.requests, "post", return_value=SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"code": 0})
+        ) as post, tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "new.jpg"
+            path.write_bytes(b"new")
+            result = template_trigger._upload_attachments_to_bitable(
+                bitable_url="https://example.feishu.cn/base/app?table=tbl",
+                record_id="rec1",
+                field_name="模板参考截图",
+                files=[str(path)],
+            )
+
+        self.assertEqual(result["uploaded"], 1)
+        self.assertEqual(
+            post.call_args.args[0],
+            "https://open.feishu.cn/open-apis/bitable/v1/apps/app/tables/tbl/records/batch_update",
+        )
+        self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer tenant-token")
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {"records": [{"record_id": "rec1", "fields": {"模板参考截图": [{"file_token": "newtok"}]}}]},
+        )
+
     def test_server_ensure_link_updates_bitable_without_triggering_job(self) -> None:
         from ua_workflows.video_enhancer import template_trigger_server
 
@@ -505,6 +710,31 @@ class VeTemplateTriggerTest(unittest.TestCase):
             include_legacy=False,
             token="",
         )
+
+    def test_server_appends_request_event_log(self) -> None:
+        from ua_workflows.video_enhancer import template_trigger_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            event_log = Path(tmp) / "trigger_events.jsonl"
+            handler = object.__new__(template_trigger_server.TemplateTriggerHandler)
+            handler.server = SimpleNamespace(event_log_path=event_log)
+            handler.headers = {"X-Forwarded-For": "1.2.3.4", "Host": "example.com"}
+            handler.command = "POST"
+            handler.path = "/trigger"
+            handler.client_address = ("127.0.0.1", 12345)
+
+            handler._append_event_log("request", payload={"record_id": "rec1", "token": "secret"})
+            handler._append_event_log("response", result={"success": True, "job_id": "job1"}, status=200)
+
+            lines = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(lines[0]["event"], "request")
+        self.assertEqual(lines[0]["path"], "/trigger")
+        self.assertEqual(lines[0]["payload"], {"record_id": "rec1", "token": "***"})
+        self.assertEqual(lines[0]["client_ip"], "1.2.3.4")
+        self.assertEqual(lines[1]["event"], "response")
+        self.assertEqual(lines[1]["status"], 200)
+        self.assertEqual(lines[1]["result"]["job_id"], "job1")
 
 
 if __name__ == "__main__":

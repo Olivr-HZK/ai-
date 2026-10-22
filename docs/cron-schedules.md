@@ -67,7 +67,7 @@
 
 1. **睡眠**：合上笔记本或进入睡眠后，`cron` 可能跳过执行；长期无人值守建议接电并调整「防止自动睡眠」，或改用 `launchd` + 唤醒策略。
 2. **并发**：VE 与 Arrow2 均未与同一 cron 分钟内并行，避免多套 Playwright 同时抢广大大会话；同一天内先后顺序为 05:20 → 11:10 → 周一 12:10 → 周一 12:40 → 周一 13:10 → 周三/六 14:20。
-3. **凭证**：依赖项目根 `.env`（广大大、`VIDEO_ENHANCER_*`、飞书、OpenRouter 等）；cron 环境无交互，密钥必须事先配置完备。浩鹏 TopN 默认关闭；如需临时恢复，设置 `VE_HAOPENG_TOPN_ENABLED=1`，发送方式仍读取 `VE_HAOPENG_TOPN_SEND_MODE`、`FEISHU_DAILY_PUSH_CHAT_ID` 或专用 webhook。VE 留存维护默认 dry-run；如需实际写归档标记或删除本地产物，通过 `VE_RETENTION_EXTRA_ARGS="--apply-bitable --apply-local"` 显式打开。
+3. **凭证**：依赖项目根 `.env`（广大大、`VIDEO_ENHANCER_*`、飞书、OpenRouter 等）；cron 环境无交互，密钥必须事先配置完备。浩鹏 TopN 默认关闭；如需临时恢复，设置 `VE_HAOPENG_TOPN_ENABLED=1`。浩鹏 TopN、VE 大盘周榜和 VE 竞品周检查优先推到广大大检测群：IM 配 `GUANGDADA_CHECK_FEISHU_CHAT_ID` / `FEISHU_GUANGDADA_CHECK_CHAT_ID`，webhook 配 `GUANGDADA_CHECK_FEISHU_WEBHOOK` / `FEISHU_GUANGDADA_CHECK_WEBHOOK`；当前兼容 `FEISHU_TEST_WEBHOOK` 作为检测群 fallback，未配置时再回退各自专用 webhook 或 UA webhook。VE 留存维护默认 dry-run；如需实际写归档标记或删除本地产物，通过 `VE_RETENTION_EXTRA_ARGS="--apply-bitable --apply-local"` 显式打开。
 4. **维护**：增减任务时编辑 `crontab -e`，保留或更新 `BEGIN/END` 块；或直接改对应 `scripts/cron_ai_*.sh` 内部命令（例如临时加 `--skip-sync`）。
 5. **VE 竞品来源**：VE 日更启动时默认同步多维表 `竞品list` 到 `config/ai_product.json`；若设置 `VE_COMPETITOR_LIST_SYNC_ENABLED=0` 或同步失败，会沿用本地配置继续跑。周一竞品检查只负责“推荐新增/建议移除/低量观察”的报告和推送，不会自动改正式竞品表。
 6. **人机验证**：VE 日更主爬取和周一竞品周检查的新创意榜采集都已接入广大大安全验证飞书人工闸口；检测到验证时会发飞书 IM 卡片，等待人工完成页面验证并点击「已完成」后重启对应抓取入口。这不是自动破解验证码。

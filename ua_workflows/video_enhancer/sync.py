@@ -36,7 +36,7 @@ from difflib import SequenceMatcher
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List
-from urllib.parse import parse_qs, urlparse, urlunparse
+from urllib.parse import parse_qs, urlparse
 
 import lark_oapi as lark
 import requests
@@ -131,8 +131,8 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     {"field_name": "更新时间", "type": 5},
     {"field_name": "视频时长", "type": 2},
     {"field_name": "接受情况", "type": 3, "options": [{"name": "待定"}, {"name": "删除"}, {"name": "接受"}]},
-    {"field_name": "浩鹏评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 5}},
-    {"field_name": "尉蓝评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 5}},
+    {"field_name": "浩鹏评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 3}},
+    {"field_name": "尉蓝评分", "type": 2, "style": {"type": "rating", "icon": "star", "min": 1, "max": 3}},
     {
         "field_name": "模板复刻状态",
         "type": 3,
@@ -146,6 +146,10 @@ FIELD_DEFS: List[Dict[str, Any]] = [
     },
     {"field_name": "模板复刻任务ID", "type": 1},
     {"field_name": "模板复刻触发链接", "type": 1},
+    {"field_name": "模板识别类型", "type": 1},
+    {"field_name": "模板识别理由", "type": 1},
+    {"field_name": "模板参考截图", "type": 17},
+    {"field_name": "模板参考视频片段", "type": 17},
     {"field_name": "我方产品", "type": 1},
     {"field_name": "广告ID", "type": 1},
     {"field_name": "素材标签", "type": 1},
