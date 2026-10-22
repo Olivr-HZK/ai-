@@ -30,17 +30,18 @@ def test_xhs_timeout_never_retries_and_keeps_diagnostics(tmp_path, monkeypatch):
     m=module('run_xhs_keyword_search.py')
     monkeypatch.setattr(m,'ROOT',tmp_path)
     monkeypatch.setattr(runtime,'keep_awake',noop)
+    monkeypatch.setattr(runtime,'paid_request_power',noop)
     monkeypatch.setattr(config,'project_env_values',lambda:{'EVERYINFRA_API_KEY':'fake-api-key'})
     (tmp_path/'config').mkdir()
     (tmp_path/'config/social_chat_xhs_daily.json').write_text(json.dumps({'api':{'endpoint':'https://api.everyinfra.com/api/v1/social'},'keywords':['乙女向']}))
     session=Mock();session.post.side_effect=requests.ReadTimeout('fake-api-key timeout')
-    monkeypatch.setattr(requests,'Session',lambda:session)
+    monkeypatch.setattr(requests,'post',session.post)
     monkeypatch.setattr(sys,'argv',['search','--run-dir',str(tmp_path/'run')])
     assert m.main()==1
     assert session.post.call_count==1
     summary=json.loads((tmp_path/'run/summary.json').read_text())
     assert summary['status']=='incomplete'
-    diagnostic=json.loads((tmp_path/'run/keywords/01/pages/0001.attempt-1.http.json').read_text())
+    diagnostic=json.loads((tmp_path/'run/keywords/01/pages/0001.job/submit-http.json').read_text())
     assert diagnostic['exception']['type']=='ReadTimeout'
     error=Path(summary['keywords'][0]['diagnostic']).read_text()
     assert 'fake-api-key' not in error and 'traceback' in error
@@ -51,6 +52,7 @@ def test_xhs_detail_timeout_intent_still_blocks_replay(tmp_path, monkeypatch):
     from ua_workflows.shared import config
     monkeypatch.setattr(config,'project_env_values',lambda:{'EVERYINFRA_API_KEY':'fake-api-key'})
     monkeypatch.setattr(runtime,'keep_awake',noop)
+    monkeypatch.setattr(runtime,'paid_request_power',noop)
     post=Mock(side_effect=requests.ReadTimeout('test timeout'));monkeypatch.setattr(requests,'post',post)
     note={'id':'n','url':'https://www.xiaohongshu.com/explore/n'}
     cfg={'api':{'endpoint':'https://api.everyinfra.com/api/v1/social'}}
@@ -62,6 +64,7 @@ def test_xhs_detail_timeout_intent_still_blocks_replay(tmp_path, monkeypatch):
 def test_gdd_stage_failure_is_logged_without_crawling(tmp_path, monkeypatch):
     from ua_workflows import social_chat_browser_daily as daily
     monkeypatch.setattr(runtime,'keep_awake',noop)
+    monkeypatch.setattr(runtime,'paid_request_power',noop)
     monkeypatch.setattr(runtime,'configured_secrets',lambda:['fake-api-key'])
     monkeypatch.setattr(sys,'argv',['gdd','prepare','--run-dir',str(tmp_path)])
     monkeypatch.setattr(daily,'prepare',Mock(side_effect=ValueError('fake-api-key bad scope')))

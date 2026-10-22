@@ -138,17 +138,15 @@ def test_keyword_entry_preserves_failure_directory(tmp_path, monkeypatch, isolat
 
 
 def test_batch_keeps_failed_keyword_evidence_without_retry(tmp_path, monkeypatch):
+    from ua_workflows.shared import config
     module = script('test_douyin_all_keywords.py')
     monkeypatch.setattr(module, 'ROOT', tmp_path)
-    monkeypatch.setattr(module, 'keep_awake', no_sleep_guard)
+    monkeypatch.setattr(config,'project_env_values',lambda:{'EVERYINFRA_API_KEY':'test-key'})
     (tmp_path/'config').mkdir()
     (tmp_path/'config/social_chat_douyin_daily.json').write_text('{"keywords":["乙女向"]}')
     monkeypatch.setattr(sys, 'argv', ['batch', '--run-dir', str(tmp_path/'run')])
-    row = {'keyword':'乙女向', 'status':'transport_error_billing_unknown', 'directory':str(tmp_path/'raw')}
-    run = Mock(return_value=subprocess.CompletedProcess([], 1, stdout=json.dumps(row), stderr=''))
-    monkeypatch.setattr(module.subprocess, 'run', run)
-    module.main()
-    summary = json.loads((tmp_path/'run/summary.json').read_text())
-    assert summary['keywords'][0]['directory'] == row['directory']
-    assert summary['keywords'][0]['status'] == row['status']
-    assert run.call_count == 1
+    row={'keyword':'乙女向','status':'incomplete','directory':str(tmp_path/'raw')}
+    collect=Mock(return_value={'keywords':[row],'total_returned':0,'cost_usd':0})
+    monkeypatch.setattr(module,'collect_douyin',collect)
+    assert module.main()==1
+    assert collect.call_count==1

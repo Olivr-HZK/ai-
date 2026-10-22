@@ -1,5 +1,6 @@
 """XHS keyword search -> global likes top decile -> media -> Bitable -> daily card."""
 from ua_workflows.collection_runtime import collection_phase, post_json, record_failure
+from ua_workflows.social_selection import selection_policy, selection_report
 import argparse
 from datetime import datetime, timedelta
 import hashlib
@@ -234,6 +235,11 @@ def select(base):
         for page in range(1, task['pages'] + 1):
             stem = base / f'keywords/{index:02}/pages/{page:04}'
             req, resp = load(stem.with_suffix('.request.json')), load(stem.with_suffix('.response.json'))
+            if req.get('transport')=='persistent_async_v1':
+                job=stem.with_suffix('.job')
+                receipt=load(job/'submit-response.json');completed=load(job/'result.json')
+                if completed!=resp or completed.get('status')!='succeeded' or completed.get('job_id')!=receipt.get('job_id'):
+                    raise ValueError('Async page job evidence mismatch')
             params = req['body']['params']
             expected = {'keyword': task['keyword'], 'content_type': 'all', 'date_range': 'last_24_hours', 'sort': 'newest'}
             if previous: expected['page_token'] = previous
@@ -266,8 +272,8 @@ def select(base):
     else:
         notes = person_notes
     notes.sort(key=lambda n: (-n['like_count'], -datetime.fromisoformat(n['posted_at'].replace('Z', '+00:00')).timestamp(), n['id']))
-    count = (len(notes)+9)//10
-    result = {'audience_review_rule': AUDIENCE_RULE if config.get('audience_content_filter', {}).get('enabled') else None, 'audience_excluded': person_count-len(notes), 'audience_review_digest': audience_review_digest(base), 'image_review_rule': IMAGE_RULE, 'raw_unique_notes': raw_count, 'image_content_excluded': raw_count-person_count, 'fraction': '0.10', 'rounding': 'ceil', 'denominator': len(notes), 'selected': count,
+    policy = selection_policy(len(notes)); count = policy['selected']
+    result = {**policy, 'audience_review_rule': AUDIENCE_RULE if config.get('audience_content_filter', {}).get('enabled') else None, 'audience_excluded': person_count-len(notes), 'audience_review_digest': audience_review_digest(base), 'image_review_rule': IMAGE_RULE, 'raw_unique_notes': raw_count, 'image_content_excluded': raw_count-person_count, 'denominator': len(notes),
               'tie_policy': 'likes desc, posted_at desc, note_id asc', 'items': notes[:count]}
     save(base / 'selection.json', result)
     return result
@@ -301,98 +307,29 @@ def api_video(note, folder, config):
         response = load(p)
     else:
         if (folder/'video-api-intent.json').exists(): raise ValueError('Previous video API outcome uncertain; inspect before replay')
-        save(folder/'video-api-intent.json', {'note_id': note['id'], 'url': note['url'], 'at': datetime.now(TZ).isoformat()})
         key = project_env_values().get('EVERYINFRA_API_KEY') or os.environ.get('EVERYINFRA_API_KEY')
         if not key: raise ValueError('Missing EVERYINFRA_API_KEY')
-        r, response = post_json(config['api']['endpoint'], key=key,
-                               body={'platform': 'xiaohongshu', 'action': 'video', 'params': {'url': note['url']}},
-                               diagnostic_path=folder/'video-api-http.json')
-        save(p, response)
-        if not r.ok: raise ValueError('Video API failed HTTP '+str(r.status_code))
+        from ua_workflows.collection_runtime import paid_request_power
+        with paid_request_power(folder/'video-api-power.json'):
+            save(folder/'video-api-intent.json', {'note_id': note['id'], 'url': note['url'], 'at': datetime.now(TZ).isoformat()})
+            r, response = post_json(config['api']['endpoint'], key=key,
+                                   body={'platform': 'xiaohongshu', 'action': 'video', 'params': {'url': note['url']}},
+                                   diagnostic_path=folder/'video-api-http.json')
+            save(p, response)
+            if not r.ok: raise ValueError('Video API failed HTTP '+str(r.status_code))
     result = response.get('results')
     if not isinstance(result, dict) or result.get('id') != note['id'] or not result.get('video_url'):
         raise ValueError('Video URL unavailable or note ID mismatch')
     return result['video_url']
 
 
-def media_get(url, *, direct=False, **kwargs):
-    """Only CDN transfers may fall back from the configured proxy to direct."""
-    import requests
-    if not direct:
-        return requests.get(url, **kwargs)
-    session=requests.Session();session.trust_env=False
-    try:
-        response=session.get(url, **kwargs)
-    except Exception:
-        session.close();raise
-    # The response owns the connection; close the session when the response closes.
-    close=response.close
-    def close_all():
-        try:close()
-        finally:session.close()
-    response.close=close_all
-    return response
+from ua_workflows.resumable_media import media_get
 
 
 def download(url, path):
-    import re
-    import requests
-    from urllib.parse import urlsplit
-    parsed = urlsplit(url)
-    if parsed.scheme not in ('https','http') or not parsed.hostname or not any(parsed.hostname==h or parsed.hostname.endswith('.'+h) for h in ('xhscdn.com','rednotecdn.com')):
-        raise ValueError('Unexpected media host')
-    if path.exists(): return
-    partial=path.with_suffix(path.suffix+'.part')
-    if path.suffix=='.mp4':
-        # Some CDN full responses stall while byte ranges work. Keep the observed URL unchanged.
-        for attempt in range(2):
-            try:
-                with media_get(url,direct=bool(attempt),headers={'Range':'bytes=0-0','Accept-Encoding':'identity','Referer':'https://www.xiaohongshu.com/','User-Agent':'Mozilla/5.0'},stream=True,timeout=(8,20)) as probe:
-                    probe.raise_for_status()
-                    match=re.fullmatch(r'bytes 0-0/(\d+)',probe.headers.get('Content-Range',''))
-                    total=int(match[1]) if probe.status_code==206 and match else None
-                break
-            except requests.RequestException:
-                if attempt:raise
-        if total:
-            offset=partial.stat().st_size if partial.exists() else 0
-            if offset>total:raise ValueError('Partial media exceeds actual size')
-            chunk_size=1024*1024
-            while offset<total:
-                end=min(offset+chunk_size-1,total-1)
-                for attempt in range(2):
-                    try:
-                        with media_get(url,direct=bool(attempt),headers={'Accept-Encoding':'identity','Range':f'bytes={offset}-{end}','Referer':'https://www.xiaohongshu.com/','User-Agent':'Mozilla/5.0'},stream=True,timeout=(15,30)) as r:
-                            r.raise_for_status()
-                            if r.status_code!=206 or r.headers.get('Content-Range')!=f'bytes {offset}-{end}/{total}':raise ValueError('CDN returned an unexpected byte range')
-                            data=b''.join(r.iter_content(chunk_size=65536))
-                            if len(data)!=end-offset+1:raise requests.exceptions.ChunkedEncodingError('Incomplete media byte range')
-                        with partial.open('ab') as f:f.write(data)
-                        offset=end+1
-                        break
-                    except requests.RequestException:
-                        if attempt:
-                            # Some CDN paths send headers and ~10KB then stall;
-                            # exact small ranges still work on the original URL.
-                            if chunk_size>8192:
-                                chunk_size=8192
-                                break
-                            raise
-            if partial.stat().st_size!=total:raise ValueError('Downloaded media size mismatch')
-            partial.replace(path);return
-    for attempt in range(2):
-        try:
-            with media_get(url,direct=bool(attempt),headers={'Accept-Encoding':'identity','Referer':'https://www.xiaohongshu.com/','User-Agent':'Mozilla/5.0'},stream=True,timeout=(8,20)) as r:
-                r.raise_for_status()
-                with partial.open('wb') as f:
-                    for chunk in r.iter_content(chunk_size=65536):f.write(chunk)
-            if not partial.stat().st_size:raise ValueError('Empty media')
-            expected=r.headers.get('Content-Length')
-            if expected and not r.headers.get('Content-Encoding') and partial.stat().st_size!=int(expected):
-                raise requests.exceptions.ChunkedEncodingError('Incomplete media response')
-            partial.replace(path);return
-        except requests.RequestException:
-            if attempt:raise
+    from ua_workflows.resumable_media import download as transfer
+    return transfer(url,path,allowed_hosts=('xhscdn.com','rednotecdn.com'),
+                    referer='https://www.xiaohongshu.com/',get=media_get)
 
 
 def media(note, base, config):
@@ -546,7 +483,7 @@ def report(base,selection,config,client,synced,day):
           f"去重笔记：**{summary['unique_notes']} 篇**（视频 {summary['video_notes']}，图文 {summary['image_notes']}）\n\n"
           f"人物图片审核剔除：**{selection.get('image_content_excluded', 0)} 篇**；合格候选：**{selection['denominator']} 篇**\n"
           f"男性主体审核剔除：**{selection.get('audience_excluded',0)} 篇**\n"
-          f"按点赞量合并取前 **10%**，向上取整：**{selection['selected']} 篇**\n"
+          f"{selection_report(selection)}\n"
           f"🎬 视频下载并入表：**{synced['video_success']} 篇**\n🖼️ 图文下载并入表：**{synced['image_success']} 篇**\n"
           f"⚠️ 媒体/同步失败：**{len(synced['failures'])} 篇**，不补位、不改写分母\n"
           f"✅ 实际写表并读回验证：**{synced['verified_rows']} 篇**，附媒体附件\n\n"
@@ -587,8 +524,11 @@ def main():
             day=(now-timedelta(days=1)).date().isoformat()
             save(context,{'target_date':day,'execution_started_at':now.isoformat(),'timezone':'Asia/Shanghai'})
         with collection_phase(base, 'xhs-daily'):
-            if not (base/'run.json').exists():
-                subprocess.run([sys.executable,str(ROOT/'scripts/run_xhs_keyword_search.py'),'--run-dir',str(base)],check=True,cwd=ROOT)
+            if not (base/'summary.json').exists() or load(base/'summary.json').get('status')!='complete':
+                from ua_workflows.social_search import collect_xhs
+                from ua_workflows.shared.config import project_env_values
+                searched=collect_xhs(base,config,key=project_env_values().get('EVERYINFRA_API_KEY'))
+                if searched['status']!='complete':raise ValueError('SEARCH_INCOMPLETE: resume saved async jobs; no paid replay')
             prior=base/'daily-result.json'
             review_status=prepare_image_review(base)
             if review_status['status']!='complete':

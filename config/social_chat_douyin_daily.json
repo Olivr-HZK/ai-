@@ -24,7 +24,15 @@
     "endpoint": "https://api.everyinfra.com/api/v1/social",
     "credential_env": "EVERYINFRA_API_KEY",
     "pagination": null,
-    "search_limit": 50
+    "search_limit": 50,
+    "search_transport": {
+      "mode": "persistent_async_v1",
+      "poll_budget_seconds": 300,
+      "poll_interval_seconds": 5,
+      "unknown_submission": "block_without_resubmission",
+      "resume": "saved_job_id_get_only",
+      "legacy_unknown_requests": "explicit_authorization_required"
+    }
   },
   "date_semantics": "rolling_last_24_hours_at_request_time",
   "ranking": {
@@ -35,7 +43,14 @@
     "ties": "posted_at_desc_note_id_asc",
     "missing_likes": "block",
     "missing_media": "report_without_backfill",
-    "old_posts": "exclude_before_ranking"
+    "old_posts": "exclude_before_ranking",
+    "small_sample": {
+      "candidate_threshold_exclusive": 100,
+      "top_n": 10,
+      "fewer_than_top_n": "take_all",
+      "candidate_scope": "after_existing_eligibility_filters_and_deduplication"
+    },
+    "rule_version": "likes_top10_below100_else_decile_v1"
   },
   "execution": "scheduled",
   "schedule": {
@@ -57,5 +72,19 @@
     "chat_id": "oc_fad698ee80dd1314b531f65cfa6599fc",
     "mention_all": false,
     "event": "after_verified_bitable_sync"
+  },
+  "media_transfer": {
+    "mode": "verified_ranges",
+    "chunk_size": 65536,
+    "minimum_chunk_size": 8192,
+    "proxy_then_direct": true,
+    "resume_requires": "source_and_entity_validator_and_segment_hashes",
+    "max_bytes": 536870912
+  },
+  "power_preflight": {
+    "new_paid_request": "require_ac_and_owned_system_sleep_assertion_on_macos",
+    "existing_job_query": "allowed_without_new_submission",
+    "lock_screen_allowed": true,
+    "changes_system_settings": false
   }
 }

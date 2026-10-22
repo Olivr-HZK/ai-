@@ -27,6 +27,14 @@
       "request_field": "params.page_token",
       "response_field": "next_page_token",
       "page_size": 20
+    },
+    "search_transport": {
+      "mode": "persistent_async_v1",
+      "poll_budget_seconds": 300,
+      "poll_interval_seconds": 5,
+      "unknown_submission": "block_without_resubmission",
+      "resume": "saved_job_id_get_only",
+      "legacy_unknown_requests": "explicit_authorization_required"
     }
   },
   "date_semantics": "rolling_last_24_hours_at_request_time",
@@ -37,7 +45,14 @@
     "rounding": "ceil",
     "ties": "posted_at_desc_note_id_asc",
     "missing_likes": "block",
-    "missing_media": "report_without_backfill"
+    "missing_media": "report_without_backfill",
+    "small_sample": {
+      "candidate_threshold_exclusive": 100,
+      "top_n": 10,
+      "fewer_than_top_n": "take_all",
+      "candidate_scope": "after_existing_eligibility_filters_and_deduplication"
+    },
+    "rule_version": "likes_top10_below100_else_decile_v1"
   },
   "execution": "scheduled",
   "schedule": {
@@ -93,5 +108,19 @@
     "uncertain": "exclude_after_actual_visual_review; missing_review_blocks",
     "mixed_note": "only_male_subject_images_uploaded; exclude_note_if_none",
     "identity_scope": "visible_character_presentation_only_not_real_gender_identity"
+  },
+  "media_transfer": {
+    "mode": "verified_ranges",
+    "chunk_size": 65536,
+    "minimum_chunk_size": 8192,
+    "proxy_then_direct": true,
+    "resume_requires": "source_and_entity_validator_and_segment_hashes",
+    "max_bytes": 536870912
+  },
+  "power_preflight": {
+    "new_paid_request": "require_ac_and_owned_system_sleep_assertion_on_macos",
+    "existing_job_query": "allowed_without_new_submission",
+    "lock_screen_allowed": true,
+    "changes_system_settings": false
   }
 }

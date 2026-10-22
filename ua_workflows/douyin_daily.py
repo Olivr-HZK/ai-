@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from ua_workflows import xhs_daily as common
 from ua_workflows.social_chat_browser_daily import text_field
 from ua_workflows.collection_runtime import keep_awake, post_json
+from ua_workflows.social_selection import selection_policy, selection_report
 
 ROOT=Path(__file__).resolve().parents[1]
 CONFIG=ROOT/'config/social_chat_douyin_daily.json'
@@ -27,6 +28,10 @@ def select(base,config):
         if task.get('status') not in ('search_verified','response_needs_review'):raise ValueError('A keyword search is incomplete')
         folder=Path(task['directory']);request=load(folder/'request.json');response=load(folder/'response.json')
         expected={'platform':'douyin','action':'search','params':{'keyword':task['keyword'],'publish_time':'one_day','sort':'newest','limit':50}}
+        if request['body'].get('mode')=='async':
+            expected['mode']='async'
+            submitted=load(folder/'submit-response.json')
+            if not submitted.get('job_id') or response.get('job_id')!=submitted['job_id'] or response.get('status')!='succeeded':raise ValueError('Async search job evidence mismatch')
         if request['body']!=expected or response.get('platform')!='douyin' or response.get('action')!='search':raise ValueError('Search scope mismatch')
         rows=response.get('results')
         if not isinstance(rows,list) or len(rows)!=task['returned_notes']:raise ValueError('Raw response count mismatch')
@@ -49,8 +54,8 @@ def select(base,config):
             if task['keyword'] not in notes[ident]['matched_keywords']:notes[ident]['matched_keywords'].append(task['keyword'])
     if raw!=summary['total_returned']:raise ValueError('Search total mismatch')
     items=sorted(notes.values(),key=lambda n:(-n['like_count'],-datetime.fromisoformat(n['posted_at'].replace('Z','+00:00')).timestamp(),n['id']))
-    count=(len(items)+9)//10
-    result={'fraction':'0.10','rounding':'ceil','denominator':len(items),'selected':count,'raw_rows':raw,'excluded_old_hits':len(excluded),'excluded_old_unique':len({n['id'] for n in excluded}),
+    policy=selection_policy(len(items));count=policy['selected']
+    result={**policy,'denominator':len(items),'raw_rows':raw,'excluded_old_hits':len(excluded),'excluded_old_unique':len({n['id'] for n in excluded}),
             'scope':'每关键词最近24小时，newest，单次最多50条；供应商未支持分页，不代表全站全量',
             'items':items[:count]}
     save(base/'excluded-old-posts.json',excluded)
@@ -58,20 +63,10 @@ def select(base,config):
 
 
 def download(url,path):
-    import requests
-    host=urlsplit(url).hostname or ''
-    if urlsplit(url).scheme not in ('http','https') or not any(host==s or host.endswith('.'+s) for s in ['douyinstatic.com','douyinvod.com','douyin.com','byteimg.com','ibytedtos.com','bytecdn.cn','pstatp.com','douyinpic.com','douyinmusicpromotion.com','amemv.com']):
-        raise ValueError('Unexpected Douyin media host')
-    if not path.exists():
-        try:
-            r=requests.get(url,timeout=(10,30));r.raise_for_status()
-        except (requests.Timeout, requests.ConnectionError):
-            # Official media CDN can stall through the inherited environment proxy.
-            with requests.Session() as direct:
-                direct.trust_env=False
-                r=direct.get(url,timeout=(10,30));r.raise_for_status()
-        if not r.content:raise ValueError('Empty media')
-        path.write_bytes(r.content)
+    from ua_workflows.resumable_media import download as transfer
+    return transfer(url,path,allowed_hosts=('douyinstatic.com','douyinvod.com','douyin.com','byteimg.com',
+                    'ibytedtos.com','bytecdn.cn','pstatp.com','douyinpic.com','douyinmusicpromotion.com','amemv.com'),
+                    referer='https://www.douyin.com/')
 
 
 def video_file(url,path,base):
@@ -95,13 +90,25 @@ def media(note,base,config):
         if not result['files'] or not all((base/f['path']).is_file() and sha(base/f['path'])==f['sha256'] for f in result['files']):raise ValueError('Media evidence changed')
         return result
     files=[];rejected=[];details={}
-    if note.get('video_url'):
-        try:
-            checked=video_file(note['video_url'],folder/'search-media.bin',base)
-            if checked:files=[checked]
-            else:rejected.append({'field':'search.video_url','reason':'No decodable video stream; may be audio, never uploaded as video'})
-        except (requests.RequestException,ValueError,subprocess.CalledProcessError,subprocess.TimeoutExpired) as exc:
-            rejected.append({'field':'search.video_url','reason':'Search source download/decode failed; try the authorized detail source','error_type':type(exc).__name__})
+    def try_sources(value,label):
+        candidates=[('video_url',value.get('video_url')),('download_url',value.get('download_url'))]
+        candidates += [('video_bitrates.'+str(i),item.get('url')) for i,item in enumerate(value.get('video_bitrates') or []) if isinstance(item,dict)]
+        seen=set()
+        for field,url in candidates:
+            if not url or url in seen:continue
+            seen.add(url)
+            if len(seen)>3:break
+            try:
+                checked=video_file(url,folder/(label+'-'+str(len(seen))+'.bin'),base)
+                if checked:return [checked]
+                rejected.append({'field':label+'.'+field,'reason':'No actual video stream'})
+            except (requests.RequestException,ValueError,subprocess.CalledProcessError,subprocess.TimeoutExpired) as exc:
+                from ua_workflows.collection_runtime import record_failure
+                rejected.append({'field':label+'.'+field,'reason':'Download/decode failed','error_type':type(exc).__name__,
+                                 'diagnostic':record_failure(base,'douyin-media',exc)})
+                save(folder/'rejected-media.json',rejected)
+        return []
+    files=try_sources(note,'search')
     if not files:
         api_response=folder/'detail-response.json'
         if api_response.exists():payload=load(api_response)
@@ -110,19 +117,14 @@ def media(note,base,config):
             key=project_env_values().get('EVERYINFRA_API_KEY') or os.environ.get('EVERYINFRA_API_KEY')
             if not key:raise ValueError('Missing EveryInfra key')
             body={'platform':'douyin','action':'video','params':{'url':note['url']}}
-            save(folder/'detail-intent.json',{'body':body,'at':datetime.now(TZ).isoformat()})
-            response,payload=post_json(config['api']['endpoint'],key=key,body=body,diagnostic_path=folder/'detail-http-diagnostic.json');save(api_response,payload)
-            if not response.ok:raise ValueError('Detail API failed; response preserved')
+            from ua_workflows.collection_runtime import paid_request_power
+            with paid_request_power(folder/'detail-power.json'):
+                save(folder/'detail-intent.json',{'body':body,'at':datetime.now(TZ).isoformat()})
+                response,payload=post_json(config['api']['endpoint'],key=key,body=body,diagnostic_path=folder/'detail-http-diagnostic.json');save(api_response,payload)
+                if not response.ok:raise ValueError('Detail API failed; response preserved')
         details=payload.get('results') or {}
         if details and details.get('id')!=note['id']:raise ValueError('Detail returned another post')
-        url=details.get('video_url')
-        if url and url!=note.get('video_url'):
-            try:
-                checked=video_file(url,folder/'detail-media.bin',base)
-                if checked:files=[checked]
-                else:rejected.append({'field':'detail.video_url','reason':'No video stream'})
-            except (requests.RequestException,ValueError,subprocess.CalledProcessError,subprocess.TimeoutExpired) as exc:
-                rejected.append({'field':'detail.video_url','reason':'Detail media download/decode failed; original image list may still be available','error_type':type(exc).__name__})
+        files=try_sources(details,'detail')
     is_video=bool(files)
     if not files:
         # A cover is not the original image set. Never substitute cover_image_url.
@@ -190,7 +192,8 @@ def sync(base,selection,config,day):
                 lookup[row['唯一键']]=result['records'][0]
             expected.append(row);save(base/'expected-rows.json',expected)
         except Exception as exc:
-            failures.append({'note_id':note['id'],'error_type':type(exc).__name__,'reason':str(exc) if isinstance(exc,ValueError) else 'Media/download/API/upload error; see evidence'})
+            from ua_workflows.collection_runtime import record_failure
+            failures.append({'note_id':note['id'],'error_type':type(exc).__name__,'reason':str(exc) if isinstance(exc,ValueError) else 'Media/download/API/upload error; see evidence','diagnostic':record_failure(base,'douyin-sync',exc)})
         save(base/'media-failures.json',failures)
     remote=client.listing(route+'/records');bykey={text_field(r['fields'].get('唯一键')):r['fields'] for r in remote}
     for row in expected:verify(bykey[row['唯一键']],row)
@@ -212,7 +215,7 @@ def report(base,selection,config,client,synced,day):
     snapshot_note=f"本批搜索快照时间：{min(snapshots)} 至 {max(snapshots)}，各词以各自请求前24小时为准。" if snapshots else ''
     title='抖音素材日报'+('｜部分完成' if synced['status']=='partial' else '')+'｜'+day
     text=(f"**最近24小时 · {len(config['keywords'])} 个关键词 · 最新排序**\n\n📊 搜索命中：**{selection['raw_rows']} 条**\n"
-          f"剔除超24h旧帖：**{selection.get('excluded_old_hits',0)} 条命中**\n24h内去重作品：**{selection['denominator']} 篇**\n按点赞量合并取前 **10%**，向上取整：**{selection['selected']} 篇**\n\n"
+          f"剔除超24h旧帖：**{selection.get('excluded_old_hits',0)} 条命中**\n24h内去重作品：**{selection['denominator']} 篇**\n{selection_report(selection)}\n\n"
           f"🎬 视频下载并入表：**{synced['video_success']} 篇**\n🖼️ 图片下载并入表：**{synced['image_success']} 篇**\n"
           f"⚠️ 媒体/同步失败：**{len(synced['failures'])} 篇**，不补位、不改变分母\n"
           f"✅ 实际写表并读回验证：**{synced['verified_rows']} 篇**\n"
@@ -246,9 +249,11 @@ def main():
         if (base/'daily-result.json').exists() and (base/'report-receipt.json').exists() and load(base/'daily-result.json')['sync']['status']=='complete':
             print(json.dumps({'status':'already_complete','directory':str(base)},ensure_ascii=False));return
         with keep_awake(base/'awake.json'):
-            if not (base/'search-intent.json').exists():
-                save(base/'search-intent.json',{'at':now.isoformat()})
-                subprocess.run([sys.executable,str(ROOT/'scripts/test_douyin_all_keywords.py'),'--run-dir',str(base)],cwd=ROOT,check=True)
+            if not (base/'summary.json').exists() or any(t.get('status') not in ('search_verified','response_needs_review') for t in load(base/'summary.json')['keywords']):
+                if not (base/'search-intent.json').exists():save(base/'search-intent.json',{'at':now.isoformat()})
+                from ua_workflows.shared.config import project_env_values
+                from ua_workflows.social_search import collect_douyin
+                collect_douyin(base,config,key=project_env_values().get('EVERYINFRA_API_KEY'))
             if not (base/'summary.json').exists():raise ValueError('Search incomplete; do not replay paid requests automatically')
             selection=select(base,config);client,synced=sync(base,selection,config,day);sent=report(base,selection,config,client,synced,day)
             save(base/'daily-result.json',{'target_date':day,'sync':synced,'report':sent});print(json.dumps({'directory':str(base),'sync':synced,'report':sent},ensure_ascii=False))

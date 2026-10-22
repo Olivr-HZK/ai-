@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import traceback
+import tempfile
 from urllib.parse import urlsplit
 
 
@@ -20,14 +21,22 @@ def write(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Exclusive permissions also apply when a diagnostic file already exists.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w') as stream:
-        os.fchmod(stream.fileno(), 0o600)
-        json.dump(data, stream, ensure_ascii=False, indent=2)
+    fd, temp = tempfile.mkstemp(prefix='.'+path.name+'.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(data, stream, ensure_ascii=False, indent=2)
+            stream.flush(); os.fsync(stream.fileno())
+        os.replace(temp, path)
+        parent = os.open(path.parent, os.O_RDONLY)
+        try: os.fsync(parent)
+        finally: os.close(parent)
+    finally:
+        if os.path.exists(temp): os.unlink(temp)
 
 
 @contextmanager
-def keep_awake(path=None):
+def keep_awake(path=None, *, require_system_sleep=False):
     """Keep screen locking intact; refuse macOS work if assertion cannot be verified."""
     process = None
     state = {'started_at': stamp(), 'owner_pid': os.getpid(), 'platform': sys.platform}
@@ -42,9 +51,11 @@ def keep_awake(path=None):
                     break
                 result = subprocess.run(['/usr/bin/pmset', '-g', 'assertions'],
                                         capture_output=True, text=True, timeout=3, check=True)
-                verified = any(re.search(r'\bpid\s+' + str(process.pid) + r'\(', line)
-                               and 'PreventUserIdleSystemSleep' in line
-                               for line in result.stdout.splitlines())
+                own = [line for line in result.stdout.splitlines()
+                       if re.search(r'\bpid\s+'+str(process.pid)+r'\(',line)]
+                verified = any('PreventUserIdleSystemSleep' in line for line in own)
+                if require_system_sleep:
+                    verified = verified and any(re.search(r'\bPreventSystemSleep\b',line) for line in own)
                 if verified:
                     break
                 time.sleep(0.1)
@@ -52,6 +63,7 @@ def keep_awake(path=None):
                 raise RuntimeError('Sleep prevention assertion was not verified; collection stopped')
             state['status'] = 'active_verified'
             state['assertion_verified'] = True
+            state['system_sleep_assertion_required'] = require_system_sleep
         else:
             state['status'] = 'unsupported_platform'
         if path:
@@ -155,10 +167,41 @@ def configured_secrets():
             and re.search(r'KEY|TOKEN|SECRET|PASSWORD|PASSWD', k, re.I)]
 
 
+class PowerPreflightError(RuntimeError):
+    pass
+
+
+def power_snapshot():
+    if sys.platform != 'darwin':
+        return {'platform':sys.platform,'ac_power':None,'status':'unsupported_platform'}
+    result=subprocess.run(['/usr/bin/pmset','-g','batt'],capture_output=True,text=True,timeout=3,check=True)
+    return {'platform':'darwin','ac_power':"Now drawing from 'AC Power'" in result.stdout,
+            'checked_at':stamp()}
+
+
+@contextmanager
+def paid_request_power(path):
+    """A new charge requires AC and an owned system-sleep assertion on macOS."""
+    state=power_snapshot(); write(path,state)
+    if state['platform']=='darwin' and state['ac_power'] is not True:
+        raise PowerPreflightError('AC power required before a new paid request; no request sent')
+    with keep_awake(Path(path).with_suffix('.awake.json'),require_system_sleep=state['platform']=='darwin'):
+        # Recheck after acquiring the assertion; a power change must precede no new POST.
+        state=power_snapshot(); write(path,state)
+        if state['platform']=='darwin' and state['ac_power'] is not True:
+            raise PowerPreflightError('Power changed before submission; no request sent')
+        yield state
+
+
 def record_failure(base, stage, exc):
     from uuid import uuid4
     path = Path(base)/'runtime'/('error-' + uuid4().hex + '.json')
-    write(path, {'at': stamp(), 'stage': stage, 'pid': os.getpid(),
+    name=type(exc).__name__
+    category=('review_pending' if str(exc).startswith(('IMAGE_REVIEW_PENDING','AUDIENCE_REVIEW_PENDING')) else
+              'power_blocked' if name=='PowerPreflightError' else 'async_pending' if name=='JobPending' else
+              'proxy_error' if name=='ProxyError' else 'transport_timeout' if 'Timeout' in name else
+              'media_transfer_error' if name in ('ChunkedEncodingError','ConnectionError') else 'runtime_error')
+    write(path, {'at': stamp(), 'stage': stage, 'category':category, 'pid': os.getpid(),
                  'exception': exception_info(exc, configured_secrets())})
     return str(path)
 
@@ -169,7 +212,8 @@ def collection_phase(base, stage):
     from uuid import uuid4
     path = Path(base)/'runtime'/(stage + '-' + uuid4().hex + '.awake.json')
     try:
-        with keep_awake(path):
+        snapshot=power_snapshot();write(path.with_suffix('.power.json'),snapshot)
+        with keep_awake(path,require_system_sleep=snapshot.get('ac_power') is True):
             yield
     except BaseException as exc:
         if not isinstance(exc, SystemExit) or exc.code not in (None, 0):

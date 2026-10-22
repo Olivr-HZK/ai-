@@ -29,8 +29,8 @@ def test_global_dedupe_decile_ties_and_raw_evidence(tmp_path,monkeypatch):
     notes=[note(str(i), 1) for i in range(11)]
     notes[1]=note('1',20,'2026-10-19T09:00:00+00:00');notes[2]=note('2',20)
     run=fixture_run(tmp_path,monkeypatch,notes);result=x.select(run)
-    assert result['denominator']==11 and result['selected']==2
-    assert [n['id'] for n in result['items']]==['2','1']
+    assert result['denominator']==11 and result['selected']==10
+    assert [n['id'] for n in result['items'][:2]]==['2','1']
     merged=x.load(run/'notes.json');merged[0]['like_count']=999;x.save(run/'notes.json',merged)
     with pytest.raises(ValueError,match='raw evidence'):x.select(run)
 
@@ -38,6 +38,24 @@ def test_global_dedupe_decile_ties_and_raw_evidence(tmp_path,monkeypatch):
 def test_missing_likes_blocks_not_zero(tmp_path,monkeypatch):
     run=fixture_run(tmp_path,monkeypatch,[note(likes=None)])
     with pytest.raises(ValueError,match='likes'):x.select(run)
+
+
+@pytest.mark.parametrize('total,expected',[(0,0),(1,1),(7,7),(9,9),(10,10),(11,10),(99,10),(100,10),(101,11),(111,12)])
+def test_candidate_count_rule_after_global_dedupe(tmp_path,monkeypatch,total,expected):
+    run=fixture_run(tmp_path,monkeypatch,[note(str(i),likes=i) for i in range(total)])
+    result=x.select(run)
+    assert result['denominator']==total and result['selected']==expected
+    assert [n['id'] for n in result['items']]==[str(i) for i in range(total-1,total-expected-1,-1)]
+    assert result['selection_mode']==('top_n' if total<100 else 'fraction')
+
+
+def test_count_threshold_uses_content_filtered_candidates(tmp_path,monkeypatch):
+    notes=[note(str(i),likes=i) for i in range(101)]
+    notes[99]['is_video']=False;notes[100]['is_video']=False
+    monkeypatch.setattr(x,'reviewed_images',lambda *a:{'files':[]})
+    result=x.select(fixture_run(tmp_path,monkeypatch,notes))
+    assert result['raw_unique_notes']==101 and result['denominator']==99
+    assert result['selected']==10 and result['selection_mode']=='top_n'
 
 
 def test_unfinished_cursor_blocks(tmp_path,monkeypatch):
@@ -99,7 +117,8 @@ def test_range_download_resumes_and_checks_full_size(tmp_path,monkeypatch):
     dest=tmp_path/'video.mp4';partial=dest.with_suffix('.mp4.part');partial.write_bytes(data[:100])
     x.download('https://sns-video-v4.xhscdn.com/video.mp4',dest)
     assert dest.read_bytes()==data and not partial.exists()
-    assert calls[0]==(0,0) and calls[1][0]==100
+    assert calls[0]==(0,0) and calls[1][0]==0
+    assert any(p.read_bytes()==data[:100] for p in tmp_path.glob('*.part.saved-*'))
 
 
 def test_range_download_rejects_wrong_content_range(tmp_path,monkeypatch):
@@ -107,6 +126,7 @@ def test_range_download_rejects_wrong_content_range(tmp_path,monkeypatch):
     class Response:
         status_code=206
         headers={'Content-Range':'bytes 0-0/100'}
+        def iter_content(self,chunk_size):yield b'x'
         def __enter__(self):return self
         def __exit__(self,*args):return False
         def raise_for_status(self):pass
@@ -167,7 +187,7 @@ def test_text_only_note_excluded_before_decile(tmp_path,monkeypatch):
     n,folder=reviewed_note(tmp_path,['exclude'])
     fixture_run(tmp_path,monkeypatch,[n]+[note(str(i)) for i in range(10)])
     result=x.select(tmp_path)
-    assert result['raw_unique_notes']==11 and result['denominator']==10 and result['selected']==1
+    assert result['raw_unique_notes']==11 and result['denominator']==10 and result['selected']==10
     assert result['image_content_excluded']==1 and all(n['is_video'] for n in result['items'])
 
 
@@ -211,6 +231,7 @@ def test_media_download_transport_fallback_and_length_check(tmp_path,monkeypatch
     import requests
     calls=[]
     class Response:
+        status_code=200
         headers={'Content-Length':'4'}
         def __enter__(self):return self
         def __exit__(self,*a):pass
@@ -229,6 +250,7 @@ def test_media_download_transport_fallback_and_length_check(tmp_path,monkeypatch
 def test_incomplete_full_media_does_not_promote_partial(tmp_path,monkeypatch):
     import requests
     class Response:
+        status_code=200
         headers={'Content-Length':'99'}
         def __enter__(self):return self
         def __exit__(self,*a):pass
@@ -276,4 +298,4 @@ def test_large_stalled_range_falls_back_to_exact_small_ranges(tmp_path,monkeypat
     monkeypatch.setattr(x,'media_get',get)
     p=tmp_path/'video.mp4';x.download('https://a.xhscdn.com/video',p)
     assert p.read_bytes()==payload
-    assert calls[3:]==[(0,8191,False),(8192,16383,False),(16384,19999,False)]
+    assert calls[-3:]==[(0,8191,False),(8192,16383,False),(16384,19999,False)]
