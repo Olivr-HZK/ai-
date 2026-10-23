@@ -20,7 +20,7 @@ macOS发出任何新付费搜索/详情请求前必须接电，并验证该进�
 
 关键词配置：`config/social_chat_xhs_daily.json`。小红书按关键词发现笔记，不使用广大大竞品 App / iOS / Android 任务列表。
 
-当前已登记 7 个关键词：乙女向、女性向、虚拟男友、猫箱、星野、破次元恋人、梦女向。视频和图片均纳入接入范围。
+当前已登记 7 个关键词：乙女向、女性向、虚拟男友、猫箱、星野、破次元恋人、乙女ai视频。视频和图片均纳入接入范围。
 
 接口文档已由用户提供：https://everyinfra.com/xiaohongshu-api/search 。现已配置密钥并启用每天北京时间00:00的独立日任务（自动化ID `24`）。使用 `POST https://api.everyinfra.com/api/v1/social`，Bearer 密钥从项目 `.env` 或环境变量 `EVERYINFRA_API_KEY` 读取，不写入配置和运行产物。每次一页最多20条，通过顶层 `next_page_token` 翻页；每页单独计费。
 
