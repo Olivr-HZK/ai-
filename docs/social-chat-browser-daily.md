@@ -44,3 +44,15 @@
 浏览器工具异常时，将真实 JSON（stage、app_id、page、card、error_type、message、已有 traceback、evidence_paths）通过 stdin 交给 `.venv/bin/python -m ua_workflows.browser_collection_runtime error --run-dir <本批目录>`。仅保存实际错误；工具不提供堆栈时省略 traceback，不推测接口返回或伪造调用栈。日志落在本批 runtime/，凭据和签名 URL 脱敏，权限600。浏览器步骤的日志依赖执行者记录；Python准备/校验/入表/通知命令由 collection_phase 自动记录异常并释放防睡眠保护。下载/抽帧工具失败同样记录实际工具错误与日志路径。
 
 保护允许锁屏/息屏；不承诺唤醒尚未开始任务的睡眠电脑，也不覆盖手动强制睡眠、合盖或关机。此功能不新增收费请求、不改重试/筛选/群消息规则，不修改历史批次。
+
+## 2026-10-23 后续真人出镜规则
+
+新批scope固定content_review_policy版本no-real-person-v1。视频和图片出现任何真人即剔除，包括非口播、剧情/生活/影视、照片、局部手部及混剪中的短暂真人。明显AI/动漫/CG角色保留按画面审核；无法确认则review，不参与排名。reviews记录review_policy=no-real-person-v1及checks.real_person_presence=present/absent/uncertain，旧口播false不能认证新规则。图片也可因真人出镜exclude，仍须原图/多图全检；视频仍实际查看六帧，存疑须进一步复核。
+
+用户本次只授权更新风格试分看板和后续规则；旧scope、审核、排名、入表记录、日报不追溯改写。新prepare固定新版本，恢复旧目录保留原scope及规则，不以更新当前config篡改旧证据。“真人实拍”不再作为保留素材风格选项。
+
+## 2026-10-23 后续统一男性角色主体规则
+
+最新版本为male-character-no-real-person-v1：视频、图片均仅保留未见真人且男性角色为明确主体；任何真人或女性主体exclude，男女混合/无明确男性主体/真人AI不确定review，不进入风格样本、排名或飞书。明显AI/动漫/CG男性不因写实外观自动排除。新review记录real_person_presence与primary_subject，旧无口播或无真人审核不自动通过。内容证据、六帧/原图哈希绑定不变；六帧初筛存疑须补看。规则详见skills/social-chat-browser-daily/references/content-review.md。
+
+旧scope和既有完成批次仍保留原版本，恢复不改原scope/hash；后续新批默认新版。未自动重审历史或改表/发群，调度保持现有暂停/启用状态。

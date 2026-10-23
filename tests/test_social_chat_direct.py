@@ -96,7 +96,30 @@ def test_media_retry_budget_hash_cache_queue_lock_and_review_bridge(collected,mo
             c=daily.load(f)
             if c['first_discovered_date']!='2026-10-21' or c['media_type']=='试玩' or daily.is_relaunch(c):continue
             root=f.parent.parent;kind=c['media_type'];manifest=root/f'evidence/{"images" if kind=="图片" else "frames"}/{c["ad_id"]}/manifest.json';m=daily.load(manifest)
-            observations.append(dict(task=task['id'],ad_id=c['ad_id'],reason='Isolated fixture review',decision='keep',viewed_board='fixture.png',viewed_board_sha256=window.sha(board),media_manifest_sha256=window.sha(manifest),method='original_image' if kind=='图片' else 'sampled_frames',images_inspected=True,image_sha256s=[i['sha256'] for i in m.get('images',[])],frames_inspected=True,checks={'real_person_talking_head':False}))
+            observations.append(dict(task=task['id'],ad_id=c['ad_id'],reason='Isolated fixture review',decision='keep',viewed_board='fixture.png',viewed_board_sha256=window.sha(board),media_manifest_sha256=window.sha(manifest),method='original_image' if kind=='图片' else 'sampled_frames',images_inspected=True,image_sha256s=[i['sha256'] for i in m.get('images',[])],frames_inspected=True,checks={'real_person_talking_head':False,'real_person_presence':'absent','primary_subject':'male'},review_policy='male-character-no-real-person-v1'))
+    # Exercise the actual mixed selector with an image and a non-speaking video.
+    changed=copy.deepcopy(observations)
+    for method in ('original_image','sampled_frames'):
+        row=next(r for r in changed if r['method']==method)
+        row['decision']='exclude';row['checks']['real_person_presence']='present'
+    daily.save(base/'review_observations.json',changed)
+    filtered=window.select(base,cfg,persist=False)
+    assert filtered['counts']['eligible']==16 and filtered['counts']['exclude']==2
+    assert filtered['counts']['selected']==2
+    female=copy.deepcopy(observations)
+    for method in ('original_image','sampled_frames'):
+        row=next(r for r in female if r['method']==method)
+        row['decision']='exclude';row['checks']['primary_subject']='female'
+    daily.save(base/'review_observations.json',female)
+    assert window.select(base,cfg,persist=False)['counts']['eligible']==16
+    female[0]['checks']['primary_subject']='mixed';female[0]['decision']='keep'
+    daily.save(base/'review_observations.json',female)
+    with pytest.raises(ValueError,match='subject'):
+        window.select(base,cfg,persist=False)
+    uncertain=copy.deepcopy(changed);uncertain[0]['checks']['real_person_presence']='uncertain'
+    daily.save(base/'review_observations.json',uncertain)
+    with pytest.raises(ValueError,match='uncertain'):
+        window.select(base,cfg,persist=False)
     daily.save(base/'review_observations.json',observations);state.begin(base);state.finish(base);state.begin(base);state.finish(base)
     selected=daily.load(base/'selection.json');assert selected['counts']['eligible']==18 and selected['counts']['selected']==2
     with state.tracked(base,'DELIVERY_PENDING'):result=delivery.sync(base,cfg,apply=False)

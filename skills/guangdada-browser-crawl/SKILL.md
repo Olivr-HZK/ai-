@@ -8,6 +8,10 @@ metadata:
 
 # 广大大展示广告：浏览器采集与强制检查
 
+## 当前社交竞品业务规则（2026-10-23）
+
+用于social-chat-browser-daily时，执行其[内容审核规则](../social-chat-browser-daily/references/content-review.md)。后续新批为male-character-no-real-person-v1：视频、图片仅保留未见真人且男性角色为明确主体的素材；任何真人或女性主体均排除，男女混合/主体不明/真人AI不确定先待复核。真人包含非口播、剧情/生活/影视、照片、手部和混剪中的短暂真人；明确AI/动漫/CG男性不因写实画风自动排除。新版记录real_person_presence及primary_subject，不能用旧口播字段或风格标签代替审核。“真人实拍”不作为保留素材的风格。该业务条件不扩展到本通用skill其他用户的scope，也不自动修改历史批次/飞书。
+
 ## 默认采集模式（2026-10-22）
 
 按本次实测采用**浏览器直采 + 原素材并行下载**，不依赖插件弹窗，只参考插件的批量读取、原地址下载、去重及失败报告逻辑。新每日scope的 `collection_mode=direct-browser-v1` 真正执行 `scripts/direct_session.mjs`，并由项目 `social_chat_direct` 验收。开始采集前读 [直采与并行下载](references/direct-collection.md)：一次完成筛选读回与综合 App ID 提交/最新创意排序，同页最多10张连续点卡，详情就绪立即保存，按页记录与翻页，最多3路媒体下载与后续点卡并行。验证码、身份、日期、真实截图和后续内容审核要求保留。

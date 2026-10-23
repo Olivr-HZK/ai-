@@ -1,9 +1,15 @@
 ---
 name: social-chat-browser-daily
-description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广大大浏览器逐平台采集昨天首次发现的视频和图片，排除真人口播，合并选展示估值前10%并写入指定飞书多维表。
+description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广大大浏览器逐平台采集昨天首次发现的视频和图片，保留男性角色主体、排除真人和女性主体，合并选展示估值前10%并写入指定飞书多维表。
 ---
 
 # 社交聊天竞品日采集
+
+## 当前内容规则：男性角色主体，排除真人和女性主体
+
+后续统一执行[内容审核规则](references/content-review.md)，新批版本为`male-character-no-real-person-v1`。视频、图片均只保留未见真人且男性角色为明确主体的素材；任何真人（含非口播、剧情、影视/照片、手部、混剪片段）或女性主体均排除。男女混合、无明确男性主体、真人/AI无法判断的先待复核，不进入风格看板、排名或入表。明显AI/动漫/CG男性不因写实画风剔除；角色主体不等同于目标受众性别。删除“真人实拍”风格选项。
+
+新审核记录`review_policy=male-character-no-real-person-v1`、`checks.real_person_presence`及`checks.primary_subject`；旧口播false或无真人标签不能认证男性主体。仅absent+male能keep；校验器拒绝缺字段、不确定及决定不一致。历史版本不自动迁移或改写；新版只用于后续新批，重审旧批须保留原证据并取得明确授权。
 
 ## 默认采集模式（2026-10-22）
 
@@ -11,12 +17,12 @@ description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广
 
 这是 `ua素材` 项目的业务流程，依赖项目脚本和已安装的 `guangdada-browser-crawl` skill。先定位含 `config/social_chat_browser_daily.json` 的项目目录；从其他目录调用时不能误用旧 VE 日更入口。
 
-当前口径以 `config/social_chat_browser_daily.json` 为准；完整名单在 `config/social_chat_browser_competitors.json`：iOS 10项、Android 11项，按完整 App 名核对身份、分平台采集，已核实ID保存在 `config/social_chat_browser_app_ids.json`。目标日默认北京时间昨天，含义是**首次发现**；默认工具/素材，已核实分类覆盖写入task.category（Heyyyy iOS为游戏），视频和图片均采集，渠道、地区、文案语言、尺寸不限，采集后排除重投，视频另排除真人口播。不沿用旧的日韩、9:16、男性角色、女频条件。
+当前口径以 `config/social_chat_browser_daily.json` 为准；完整名单在 `config/social_chat_browser_competitors.json`：iOS 10项、Android 11项，按完整 App 名核对身份、分平台采集，已核实ID保存在 `config/social_chat_browser_app_ids.json`。目标日默认北京时间昨天，含义是**首次发现**；默认工具/素材，已核实分类覆盖写入task.category（Heyyyy iOS为游戏），视频和图片均采集，渠道、地区、文案语言、尺寸不限，采集后排除重投，视频和图片均排除真人和女性主体，仅保留明确男性角色主体。不沿用旧的日韩、9:16或受众女频条件。
 
 1. 在项目目录执行 `.venv/bin/python scripts/run_social_chat_browser_daily.py prepare`，读取输出的 `browser-task.txt` 和 `scope.json`。历史日用 `--date YYYY-MM-DD`；断点恢复用相同目录。prepare 仅准备本地任务，不会爬取或写表。
 2. 读取并使用 `$guangdada-browser-crawl`，通过当前环境授权的浏览器工具完成21项。日期设置后，通过综合搜索输入已核实App ID并回车提交，每次搜索都必须重新点击“最新创意”，即使它已选中。缺ID先用完整名发现核对，再按ID重搜。采集期间不按展示估值排序或阈值截断；全部拿齐后本地按估值排名。新模式使用直采与并行下载引用中的createDirectSession.start()/batch()/nextPage()/resume()。所有 App/筛选、逐卡和翻页仍需脚本读回、前后截图、逐App direct/complete.json及验收清单；出现验证码停下等待人工。不可调用项目爬虫 CLI、私有接口或共享登录态。
 3. 用户确认：**可见详情日期范围的起始日期就是首次发现日期**。仅取详情 `YYYY-MM-DD~YYYY-MM-DD` 的起点（亦支持 `～` / `至`）。保存 `first_discovered_date`、`first_discovered_source=detail_date_range_start` 和原始 `raw_text`。不凭列表筛选日期或旧 `first_seen` 字段推断；缺少详情日期范围时报告阻塞。已有原始详情可按此规则重新解析，不改写原文或伪造标签。
-4. 采集期间按页把已观察原素材加入去重下载队列，不等21项全采完才下载；复用已校验文件、失败预算跨轮保留。所有 App 采集封账并按独立重投标签剔除后，对剩余视频补齐下载、脚本抽六帧并实际查看，写 reviews。若详情是 YouTube 原始外链而非可直接下载的视频源，主动按 `guangdada-browser-crawl` 的“YouTube 原始外链补全”流程使用 yt-dlp 补全，保存来源/日志/哈希后走同样的抽帧审核；失败保留待补全，不直接剔除或按零估值排名。只有真人口播可因内容排除：`decision=exclude`、`checks.real_person_talking_head=true`；非口播为 keep/false，不确定为 review，需解决后再计算目标日排名。抽帧是画面初筛，不宣称完整审听。
+4. 采集期间按页把已观察原素材加入去重下载队列，不等21项全采完才下载；复用已校验文件、失败预算跨轮保留。所有 App 采集封账并按独立重投标签剔除后，对剩余视频补齐下载、脚本抽六帧并实际查看，写 reviews。若详情是 YouTube 原始外链而非可直接下载的视频源，主动按 `guangdada-browser-crawl` 的“YouTube 原始外链补全”流程使用 yt-dlp 补全，保存来源/日志/哈希后走同样的抽帧审核；失败保留待补全，不直接剔除或按零估值排名。新批按[内容审核规则](references/content-review.md)实际判断真人出镜及男性角色主体，写新版审核记录；真人或女性主体排除，混合/不明确待复核，不能仅用旧口播字段通过。抽帧是画面初筛，不宣称完整审听。
 5. 混合目标日窗口批次执行 `.venv/bin/python -m ua_workflows.social_chat_mixed_window select --run-dir <目录>`。它会重新检查状态机、21项完整性、日期、审核及估值，所有竞品/双端合并排序，按有效候选数的10%向上取整。估值缺失或目标日待复核不能按零跳过。
 6. 执行 `.venv/bin/python -m ua_workflows.social_chat_mixed_delivery --run-dir <目录>` 生成本地看板及飞书待写入包，检查后执行同一命令加 `--apply` 写入 config 指定的表。必须带完整脚本路径；sync 会重新检查全部证据，不信任旧 selection.json。唯一键为日期/平台/App ID/广告ID；重跑更新，不重复添加；同日落选的旧记录改为“当前入选=false”，不删除历史。
 
@@ -51,7 +57,7 @@ description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广
 
 ## 视频和图片同时采集（2026-10-19 最新用户要求）
 
-每日任务读取config.media_types（视频、图片），不再用仅视频筛选。类型控件不选任何选项时自动显示“图片&视频”，每项App/平台只跑一次混合列表，共21项。只读检查类型选择为空及默认显示，若残留“视频”或“图片”选项才清除；不得分别勾选或切换两轮。每次App搜索后检查条件并重新点击最新创意，保存混合列表零结果或日期截止证据，逐卡识别实际素材类型。图片不沿用旧视频六帧检查：下载实际原图，验证格式/像素尺寸/解码/SHA256并实际查看；多图素材查看所有可获取图片，图片不能因没有六帧或不适用真人口播而被剔除。视频仍执行六帧及口播筛选；静态图片记录审核方法original_image与真人口播“不适用”。
+每日任务读取config.media_types（视频、图片），不再用仅视频筛选。类型控件不选任何选项时自动显示“图片&视频”，每项App/平台只跑一次混合列表，共21项。只读检查类型选择为空及默认显示，若残留“视频”或“图片”选项才清除；不得分别勾选或切换两轮。每次App搜索后检查条件并重新点击最新创意，保存混合列表零结果或日期截止证据，逐卡识别实际素材类型。图片不沿用旧视频六帧检查：下载实际原图，验证格式/像素尺寸/解码/SHA256并实际查看；多图素材查看所有可获取图片，图片不能因没有六帧或不适用真人口播而被剔除。视频仍执行六帧及真人出镜筛选；静态图片记录审核方法original_image并执行同一真人出镜规则，多图逐图查看。
 
 视频和图片审核可用候选合并按展示估值取前10%，向上取整，不分类型各取10%。原始记录、排名及入表须保留素材类型，图片上传为图片附件和实际链接，视频上传为视频附件；缺附件不冒充成功。旧state.py/select仅有视频六帧关卡，不能直接用它认证图片或混合任务；先补全并验证独立目标日混合媒体校验/入表适配，真实检查上述21项混合列表完成、日期、身份、原图/视频证据后再排名入表，不手改旧FSM通过。
 
@@ -61,7 +67,7 @@ description: 在 ua素材 项目手动执行社交聊天竞品日采集，用广
 
 `social_chat_mixed_window` 独立校验21项实际混合列表、搜索后最新创意、逐卡身份和截图、逐页连续位置、首次发现截止卡，以及绑定实际查看看板的原图/六帧清单哈希；`social_chat_mixed_delivery` 每次重新验证后生成本地HTML，将视频/图片上传各自附件并逐字段读回。缺失媒体写 `missing_media.json`，包含 task_id、ad_id、reason、实际失败记录 failure 与 attempts 日志路径；已有有效媒体清单或待审核内容不能使用缺失例外。详情出现“试玩广告”且实际为HTML iframe、无图片和视频源时记录为范围外，不伪装成图片下载失败。
 
-同一批次的审核看板生成后不覆盖；后续下载成功的素材另建补充看板。`review_observations.json` 逐条记录实际查看的看板及SHA256、媒体manifest SHA256；视频记录 sampled_frames/frames_inspected/checks.real_person_talking_head，图片记录 original_image/images_inspected/全部 image_sha256s。真人情景短剧、仅出镜或AI角色说话本身不等于真人产品口播。
+同一批次的审核看板生成后不覆盖；后续下载成功的素材另建补充看板。`review_observations.json` 逐条记录实际查看的看板及SHA256、媒体manifest SHA256；视频记录 sampled_frames/frames_inspected/checks.real_person_talking_head，图片记录 original_image/images_inspected/全部 image_sha256s。新批即使没有口播，只要真人出镜也排除；明显AI/动漫/CG角色说话不构成真人。新审核还须保存review_policy、real_person_presence及primary_subject，旧口播字段不能充当新版男性主体规则的通过证明。
 
 ## 2026-10-20：按17号规则采集，采集后排除重投
 

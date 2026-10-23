@@ -231,15 +231,18 @@ def select(run_dir, config, persist=True):
         require(sha(file(base, r['viewed_board'])) == r['viewed_board_sha256'], 'Viewed review board changed')
         evidence_dir = 'images' if c['media_type'] == '图片' else 'frames'
         require(sha(file(root, f'evidence/{evidence_dir}/{c["ad_id"]}/manifest.json')) == r['media_manifest_sha256'], 'Reviewed media manifest changed')
+        from ua_workflows.social_chat_content_policy import validate_review
+        no_real_person = validate_review(scope, r)
         if c['media_type'] == '图片':
             originals = image_evidence(root, c)
-            require(r['method'] == 'original_image' and r.get('images_inspected') is True and r['decision'] == 'keep', 'Static image must use original-image review')
+            require(r['method'] == 'original_image' and r.get('images_inspected') is True and (no_real_person or r['decision'] == 'keep'), 'Static image must use original-image review')
             require(sorted(r['image_sha256s']) == sorted(i['sha256'] for i in originals), 'Not all original images viewed')
             c['image_files'] = originals
         else:
             manifest = video_evidence(root, c)
             require(r['method'] == 'sampled_frames' and r.get('frames_inspected') is True, 'Video frames not viewed')
-            require(r['checks']['real_person_talking_head'] is (r['decision'] == 'exclude'), 'Unsupported content exclusion')
+            if not no_real_person:
+                require(r['checks']['real_person_talking_head'] is (r['decision'] == 'exclude'), 'Unsupported content exclusion')
             c.update(source_sha256=manifest['source']['sha256'], local_source=manifest['source']['path'])
         counts[c['media_type'] + '_success'] += 1
         c.update(review=r, decision=r['decision'], review_reason=r['reason'], review_method=r['method'], estimate_number=float(daily.estimate(c['impressions_estimate'])))

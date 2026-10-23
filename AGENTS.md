@@ -1,5 +1,12 @@
 # Agent 工作日志
 
+## 2026-10-23 [社交竞品] Skill统一男性主体与排除真人/女性主体
+
+- 用户明确后续统一男性角色主体、排除真人及女性主体。新批content_review_policy=male-character-no-real-person-v1；仅未见真人且primary_subject=male可keep，真人或female必须exclude，mixed/none/uncertain或真人AI不确定阻止排名。图片和视频均适用，旧无真人/口播记录不能认证男性主体。
+- 更新项目及本机已安装两份skill，新增业务references/content-review.md，明确直接浏览器和插件下载后均执行同一审核；风格标签不代替内容审核，六帧存疑须补看。泛用采集skill其他用户的scope不自动受本业务限制。
+- prepare新批固定新版本并在写scope前拒绝未知规则；恢复旧scope明确返回其原review_policy并保持旧scope字节，不自动追溯改历史排名/飞书或重发群。新增17项组合/缺字段/历史版本隔离测试与未知版本提前拒绝；真实本地混合selector增加女性主体图片/视频排除和mixed拦截，相关86项Python通过。
+- Mac mini按相同规则同步内容审核模块、config、prepare提示、两份skill及引用和测试，保留远端已存在的浏览器修复/其他未提交修改。未重新抓取、改定时任务开关、登录、写飞书或发群。本次提交仅纳入审核规则、配置、两份skill/引用、测试及业务文档，不纳入试分素材产物、插件和其他改动；未推送远端。
+
 ## 2026-10-22 [Git] 合并远端分支后推送准备
 
 - 按用户推送授权，先fetch同名远端分支，合并其14个独立提交，保留本地7个提交；不强推。唯一文本冲突在shared/media/resolve.py注释，保留cover/image说明。同步旧测试的两条五星上限断言为远端已采用的三星上限，未改变评分实现。

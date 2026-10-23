@@ -20,6 +20,12 @@
   "content_checks": {
     "real_person_talking_head": false
   },
+  "content_review_policy": {
+    "version": "male-character-no-real-person-v1",
+    "real_person": "exclude",
+    "uncertain": "review",
+    "subject": "male_primary"
+  },
   "feishu": {
     "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
     "table_id": "tblwhAqPfQoBXK3Q",
