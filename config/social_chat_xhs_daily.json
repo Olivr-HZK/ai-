@@ -41,18 +41,12 @@
   "ranking": {
     "scope": "all_keywords_deduped_after_person_and_male_subject_review",
     "metric": "like_count",
-    "fraction": "0.10",
-    "rounding": "ceil",
     "ties": "posted_at_desc_note_id_asc",
     "missing_likes": "block",
     "missing_media": "report_without_backfill",
-    "small_sample": {
-      "candidate_threshold_exclusive": 100,
-      "top_n": 10,
-      "fewer_than_top_n": "take_all",
-      "candidate_scope": "after_existing_eligibility_filters_and_deduplication"
-    },
-    "rule_version": "likes_top10_below100_else_decile_v1"
+    "rule_version": "likes_top100_v1",
+    "top_n": 100,
+    "fewer_than_top_n": "take_all"
   },
   "execution": "scheduled",
   "schedule": {

@@ -299,3 +299,11 @@ def test_large_stalled_range_falls_back_to_exact_small_ranges(tmp_path,monkeypat
     p=tmp_path/'video.mp4';x.download('https://a.xhscdn.com/video',p)
     assert p.read_bytes()==payload
     assert calls[-3:]==[(0,8191,False),(8192,16383,False),(16384,19999,False)]
+
+
+def test_configured_top100_selects_after_dedupe(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note(str(i),likes=i) for i in range(111)])
+    cfg=x.load(x.CONFIG);cfg['ranking']={'rule_version':'likes_top100_v1'};x.save(x.CONFIG,cfg)
+    selected=x.select(run)
+    assert selected['denominator']==111 and selected['selected']==100
+    assert [n['id'] for n in selected['items']]==[str(i) for i in range(110,10,-1)]

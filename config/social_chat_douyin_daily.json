@@ -3,7 +3,7 @@
   "source": "抖音",
   "discovery_mode": "keyword_search",
   "status": "daily_pipeline_configured",
-  "enabled": true,
+  "enabled": false,
   "timezone": "Asia/Shanghai",
   "keywords": [
     "乙女向",

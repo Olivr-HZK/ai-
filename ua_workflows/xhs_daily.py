@@ -272,7 +272,7 @@ def select(base):
     else:
         notes = person_notes
     notes.sort(key=lambda n: (-n['like_count'], -datetime.fromisoformat(n['posted_at'].replace('Z', '+00:00')).timestamp(), n['id']))
-    policy = selection_policy(len(notes)); count = policy['selected']
+    policy = selection_policy(len(notes), config.get('ranking', {}).get('rule_version', 'likes_top10_below100_else_decile_v1')); count = policy['selected']
     result = {**policy, 'audience_review_rule': AUDIENCE_RULE if config.get('audience_content_filter', {}).get('enabled') else None, 'audience_excluded': person_count-len(notes), 'audience_review_digest': audience_review_digest(base), 'image_review_rule': IMAGE_RULE, 'raw_unique_notes': raw_count, 'image_content_excluded': raw_count-person_count, 'denominator': len(notes),
               'tie_policy': 'likes desc, posted_at desc, note_id asc', 'items': notes[:count]}
     save(base / 'selection.json', result)

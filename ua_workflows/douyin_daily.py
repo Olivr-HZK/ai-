@@ -233,6 +233,8 @@ def report(base,selection,config,client,synced,day):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=['plan','run','provision']);parser.add_argument('--run-dir',type=Path);args=parser.parse_args();config=load(CONFIG)
+    if args.action=='run' and config.get('enabled') is False:
+        print(json.dumps({'status':'disabled','platform':'抖音'},ensure_ascii=False));return
     if args.action=='plan':
         if not args.run_dir:raise ValueError('--run-dir required')
         s=select(args.run_dir,config);print(json.dumps({k:v for k,v in s.items() if k!='items'},ensure_ascii=False));return
