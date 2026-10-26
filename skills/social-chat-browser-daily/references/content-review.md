@@ -1,4 +1,12 @@
-# 内容审核：男性角色主体，排除真人和女性主体
+# 内容审核与风格打标
+
+## 当前默认：插件交接批次（2026-10-26）
+
+版本male-display-female-oriented-no-talking-head-v1：男性角色有意义展示，并有可见女频恋爱/伴侣陪伴诉求；排除真人主持式产品推广口播。女性配角、真人手部及非主持真人恋爱剧情可保留。只出现男性头像、通用冒险或女性AI对象不足以通过；真人/AI、口播性质或女频关联不确定均存疑不纳入。记录checks.male_character_display、female_oriented_appeal为yes/no/uncertain，checks.real_person_talking_head为absent/present/uncertain；三项为yes/yes/absent才可keep，保留理由和原图/六帧实际证据。风格按下文固定版本执行，不能代替内容准入。
+
+## 历史及显式浏览器备用：男性主体、排除所有真人
+
+以下严格规则仅适用于其原scope指定的male-character-no-real-person-v1，不覆盖当前插件交接的明确内容口径。
 
 2026-10-23 用户确认，后续社交竞品素材按本规则。适用于视频、图片、插件下载后审核及直接浏览器获取后的审核。新批固定 `scope.content_review_policy.version=male-character-no-real-person-v1`；采集方式不改变内容条件。
 

@@ -8,6 +8,10 @@ metadata:
 
 # 广大大展示广告：浏览器采集与强制检查
 
+## 社交业务默认入口已变更（2026-10-26）
+
+社交每日最新现为插件下载后由用户交接ZIP，按social-chat-browser-daily主流程做审核和交付；普通ZIP交接不得启动本采集skill、21项App状态机或抓取通知。仅在用户明确要求直接浏览器采集/恢复旧浏览器批次时使用本skill。下面社交内容限制是旧浏览器scope的兼容规则，不能覆盖当前插件批次明确的“男性展示、女频相关、不要真人口播”口径。
+
 ## 当前社交竞品业务规则（2026-10-23）
 
 用于social-chat-browser-daily时，执行其[内容审核规则](../social-chat-browser-daily/references/content-review.md)。后续新批为male-character-no-real-person-v1：视频、图片仅保留未见真人且男性角色为明确主体的素材；任何真人或女性主体均排除，男女混合/主体不明/真人AI不确定先待复核。真人包含非口播、剧情/生活/影视、照片、手部和混剪中的短暂真人；明确AI/动漫/CG男性不因写实画风自动排除。新版记录real_person_presence及primary_subject，不能用旧口播字段或风格标签代替审核。“真人实拍”不作为保留素材的风格。该业务条件不扩展到本通用skill其他用户的scope，也不自动修改历史批次/飞书。

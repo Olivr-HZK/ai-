@@ -39,6 +39,7 @@ def test_old_talking_head_record_cannot_pass_new_policy():
 
 def test_prepare_pins_new_policy_without_rewriting_historical_scope(tmp_path):
     cfg = daily.load(daily.CONFIG)
+    cfg['collection_mode'] = 'direct-browser-v1'
     old = copy.deepcopy(cfg)
     old.pop('content_review_policy', None)
     old_dir = tmp_path / 'old'
@@ -94,6 +95,7 @@ def test_no_real_person_only_review_cannot_certify_male_subject():
 
 def test_resuming_v1_preserves_its_pinned_policy(tmp_path):
     cfg = daily.load(daily.CONFIG)
+    cfg['collection_mode'] = 'direct-browser-v1'
     old = {**cfg, 'content_review_policy': POLICY}
     daily.prepare('2026-10-21', tmp_path, old)
     before = (tmp_path / 'scope.json').read_bytes()
@@ -104,6 +106,7 @@ def test_resuming_v1_preserves_its_pinned_policy(tmp_path):
 
 def test_unsupported_policy_is_rejected_before_scope_is_written(tmp_path):
     cfg = copy.deepcopy(daily.load(daily.CONFIG))
+    cfg['collection_mode'] = 'direct-browser-v1'
     cfg['content_review_policy']['version'] = 'unknown-policy'
     with pytest.raises(ValueError, match='Unsupported'):
         daily.prepare('2026-10-23', tmp_path, cfg)

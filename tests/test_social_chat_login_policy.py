@@ -44,6 +44,8 @@ def test_captcha_latches_until_actual_user_confirmation_and_new_ui_evidence(tmp_
 
 def test_manual_prepare_stays_manual_despite_scheduled_default_config(tmp_path):
     c=daily.load(daily.CONFIG)
+    c['collection_mode']='direct-browser-v1'
+    c['execution']='scheduled'
     daily.prepare('2026-10-20',tmp_path/'manual',c)
     daily.prepare('2026-10-20',tmp_path/'scheduled',c,execution_origin='scheduled')
     assert login.decision(tmp_path/'manual')['action']=='ask_user'

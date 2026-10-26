@@ -43,6 +43,7 @@ def test_excluded_pending_and_historical_scopes():
 
 def test_prepare_pins_style_requirement_without_changing_old_scope(tmp_path):
     cfg = daily.load(daily.CONFIG)
+    cfg['collection_mode'] = 'direct-browser-v1'
     old = copy.deepcopy(cfg)
     old.pop('style_tagging')
     historical = tmp_path / 'old'
@@ -82,6 +83,7 @@ def test_legacy_batch_keeps_original_labels_and_rejects_silent_migration():
 
 def test_prepare_preserves_pinned_v1_scope_when_default_is_v2(tmp_path):
     cfg = daily.load(daily.CONFIG)
+    cfg['collection_mode'] = 'direct-browser-v1'
     legacy_cfg = copy.deepcopy(cfg)
     legacy_cfg['style_tagging'] = style_policy(LEGACY_STYLE_VERSION)
     daily.prepare('2026-10-25', tmp_path, legacy_cfg)
@@ -99,6 +101,7 @@ def test_prepare_preserves_pinned_v1_scope_when_default_is_v2(tmp_path):
 ])
 def test_unknown_or_rewritten_taxonomy_rejected_before_scope_creation(tmp_path, bad_policy):
     cfg = daily.load(daily.CONFIG)
+    cfg['collection_mode'] = 'direct-browser-v1'
     cfg['style_tagging'] = bad_policy
     with pytest.raises(ValueError, match='style tagging policy'):
         daily.prepare('2026-10-26', tmp_path, cfg)

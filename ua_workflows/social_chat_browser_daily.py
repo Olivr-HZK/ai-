@@ -75,7 +75,20 @@ def tasks(config):
     return result
 
 
-def prepare(target, run_dir, config, execution_origin="manual"):
+def prepare(target, run_dir, config, execution_origin="manual", source_zips=()):
+    from ua_workflows.social_chat_plugin_handoff import MODE as HANDOFF_MODE, prepare as handoff_prepare
+    previous = load(Path(run_dir) / 'scope.json') if (Path(run_dir) / 'scope.json').exists() else None
+    mode = previous.get('collection_mode') if previous else config.get('collection_mode')
+    if mode == HANDOFF_MODE:
+        return handoff_prepare(target, run_dir, config, source_zips, execution_origin)
+    if source_zips:
+        raise ValueError('ZIP handoff needs a separate plugin handoff directory')
+    if previous:
+        # The current default must not migrate an old browser scope on resume.
+        config = dict(config)
+        config.pop('collection_mode', None)
+        if mode:
+            config['collection_mode'] = mode
     import time
     prepared_monotonic=time.monotonic();prepared_started_at=datetime.now(ZoneInfo('UTC')).isoformat()
     date.fromisoformat(target)
@@ -455,22 +468,31 @@ def sync(selection, config, client):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='社交竞品浏览器日采集：手动准备、全局Top10%和飞书同步')
+    parser = argparse.ArgumentParser(description='社交竞品每日最新：插件ZIP手动交接；浏览器历史流程仅作备用')
     parser.add_argument('command', choices=['prepare', 'select', 'sync', 'provision'])
     parser.add_argument('--date', default='')
     parser.add_argument('--execution-origin', choices=['manual','scheduled'], default='manual', help='本次真实触发来源；仅定时触发传scheduled')
     parser.add_argument('--run-dir', type=Path)
+    parser.add_argument('--collection-mode', choices=['plugin-handoff-v1', 'direct-browser-v1'], help='仅显式要求浏览器备用流程时选择direct-browser-v1')
+    parser.add_argument('--source-zip', type=Path, action='append', default=[], help='手动交接的插件原始ZIP，可多次传入')
     parser.add_argument('--apply', action='store_true', help='实际写飞书；默认只生成本地待写入包')
     args = parser.parse_args()
     config = load(CONFIG)
+    if args.collection_mode:
+        if args.command != 'prepare':
+            parser.error('--collection-mode only applies to prepare')
+        config['collection_mode'] = args.collection_mode
     target = args.date or yesterday()
-    run_dir = (args.run_dir or ROOT / 'data/social_chat_browser_daily_latest' / target).resolve()
+    default_folder = 'data/social_chat_plugin_handoff' if config.get('collection_mode') == 'plugin-handoff-v1' else 'data/social_chat_browser_daily_latest'
+    run_dir = (args.run_dir or ROOT / default_folder / target).resolve()
     with collection_phase(run_dir, 'social_chat_browser_daily'):
         if args.command == 'prepare':
-            result = prepare(target, run_dir, config, args.execution_origin)
+            result = prepare(target, run_dir, config, args.execution_origin, args.source_zip)
         elif args.command == 'provision':
             result = provision(config, Feishu()) if args.apply else {'status': 'dry_run', 'url': table_url(config), 'fields': FIELDS}
         else:
+            if load(run_dir / 'scope.json').get('collection_mode') == 'plugin-handoff-v1':
+                raise ValueError('Plugin handoff uses reviewed-batch postprocessing; read handoff-task.md, not the browser select/sync path')
             selection = select(run_dir, config)  # Always recompute; never trust stale selection.json.
             if args.command == 'select':
                 result = {k: v for k, v in selection.items() if k != 'items'}

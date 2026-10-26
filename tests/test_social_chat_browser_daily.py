@@ -12,7 +12,9 @@ TARGET = '2026-10-15'
 
 
 def config():
-    return daily.load(daily.CONFIG)
+    cfg = daily.load(daily.CONFIG)
+    cfg['collection_mode'] = 'direct-browser-v1'
+    return cfg
 
 
 def card(n, value=None, first=TARGET, app='Tipsy Chat: Live Your Story', platform='Android'):

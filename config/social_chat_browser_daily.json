@@ -1,7 +1,20 @@
 {
   "competitor_list": "config/social_chat_browser_competitors.json",
   "timezone": "Asia/Shanghai",
-  "execution": "scheduled",
+  "execution": "manual",
+  "plugin_handoff": {
+    "mode": "manual_zip",
+    "content_review_policy": {
+      "version": "male-display-female-oriented-no-talking-head-v1",
+      "male_display": "required",
+      "female_oriented_appeal": "required",
+      "real_person_talking_head": "exclude",
+      "uncertain": "not_admitted"
+    },
+    "auto_browser_collection": false,
+    "auto_retry_downloads": false,
+    "collection_complete_21_apps": false
+  },
   "date_semantics": "first_discovered_on_target_date",
   "ranking": {
     "scope": "all_apps_and_platforms",
@@ -79,7 +92,7 @@
     "sort_after_submit": "最新创意",
     "verify_detail_identity": true
   },
-  "collection_mode": "direct-browser-v1",
+  "collection_mode": "plugin-handoff-v1",
   "category_overrides": {
     "6761748236": {
       "iOS": "游戏"

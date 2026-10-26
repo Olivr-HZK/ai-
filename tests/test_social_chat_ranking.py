@@ -33,6 +33,7 @@ def test_rank_before_limit_and_content_exclusions_do_not_fill_slots():
 
 def test_prepare_pins_new_ranking_but_resumes_old_scope_without_rewrite(tmp_path):
     cfg = daily.load(daily.CONFIG)
+    cfg['collection_mode'] = 'direct-browser-v1'
     assert cfg['ranking']['mode'] == 'top_n' and cfg['ranking']['count'] == 100
     daily.prepare('2026-10-24', tmp_path / 'new', cfg)
     assert daily.load(tmp_path / 'new/scope.json')['ranking'] == TOP100
