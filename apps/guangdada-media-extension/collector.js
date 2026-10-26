@@ -8,7 +8,13 @@ export async function collectMedia(showNumbers = false) {
       return Math.abs(ar.top-br.top)<4 ? ar.left-br.left : ar.top-br.top;
     });
   if (!cards.length) throw new Error('未识别到展示广告素材卡片，请在广大大展示广告列表页使用。');
-  const items = [], missing = [], cardKeys = [];
+  const items = [], missing = [], cardKeys = [], cardDates = [];
+  function visibleDate(card) {
+    const ranges=[...String(card.innerText || '').matchAll(/(?<![\d-])(\d{4}-\d{2}-\d{2})\s*[~～至]\s*(\d{4}-\d{2}-\d{2})(?!\d)/g)];
+    const valid=value=>{const d=new Date(value+'T00:00:00Z');return !isNaN(d) && d.toISOString().slice(0,10)===value;};
+    if(ranges.length!==1 || !valid(ranges[0][1]) || !valid(ranges[0][2]) || ranges[0][1]>ranges[0][2])return null;
+    return {date:ranges[0][1],source:'visible_card_date_range'};
+  }
   const toolbarId = 'gdd-download-selection-toolbar';
   function updateSelection() {
     const label = document.querySelector(`#${toolbarId} [data-gdd-selection-count]`);
@@ -35,6 +41,7 @@ export async function collectMedia(showNumbers = false) {
     const value = boundValue(card);
     const cardIndex = index + 1;
     cardKeys.push(value?.ad_key || null);
+    cardDates.push(visibleDate(card));
     if (showNumbers) {
       let badge = card.querySelector('[data-gdd-download-number]');
       if (!badge) {
@@ -123,5 +130,12 @@ export async function collectMedia(showNumbers = false) {
     const b=card.querySelector('[data-gdd-download-number]');
     return b?.getAttribute('aria-pressed')==='true' && b.dataset.adId === cardKeys[i] ? [i+1] : [];
   });
-  return {items, missing, cardKeys, selectionActive, selectedCardNumbers, cardCount:cards.length, matchedCards, videoCards, imageCards, playableCards, unsupported, limitReached:false};
+  const activePages=[...document.querySelectorAll('.ant-pagination-item-active')].filter(e=>e.getClientRects().length);
+  const number=activePages.length===1?Number(activePages[0].getAttribute('title') || activePages[0].textContent.trim()):activePages.length?null:1;
+  const pageNumber=Number.isInteger(number) && number>0?number:null;
+  const visible=e=>e.getClientRects().length && getComputedStyle(e).visibility!=='hidden';
+  const newest=[...document.querySelectorAll('span,button,[role="tab"]')].filter(e=>visible(e) && e.textContent.trim()==='最新创意' && ![...e.children].some(c=>c.textContent.trim()==='最新创意'));
+  const selected=e=>e?.classList.contains('text-blue-600') || e?.getAttribute('aria-selected')==='true' || e?.getAttribute('aria-pressed')==='true';
+  const newestFirst=newest.length===1 && (selected(newest[0]) || selected(newest[0].parentElement));
+  return {items, missing, cardKeys, cardDates, newestFirst, pageNumber, selectionActive, selectedCardNumbers, cardCount:cards.length, matchedCards, videoCards, imageCards, playableCards, unsupported, limitReached:false};
 }

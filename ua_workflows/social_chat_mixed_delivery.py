@@ -14,7 +14,11 @@ from pathlib import Path
 from ua_workflows import social_chat_browser_daily as daily
 from ua_workflows import social_chat_mixed_window as window
 
-EXTRA_FIELDS = [('素材类型', 3), ('图片链接', 15), ('图片附件', 17), ('视频附件', 17)]
+EXTRA_FIELDS = [('素材类型', 3), ('图片链接', 15), ('图片附件', 17), ('视频附件', 17), ('风格标签', 4)]
+
+
+def extra_fields(selection):
+    return [(n, k) for n, k in EXTRA_FIELDS if n != '风格标签' or selection.get('style_tagging') is not None]
 
 def options(value):
     values = value if isinstance(value, list) else [value]
@@ -43,6 +47,10 @@ def fields(selection, card):
     common['投放地区'] = options(card.get('regions', []))
     common['投放渠道'] = options(card.get('channel', ''))
     common['文案语言'] = options(card.get('language', ''))
+    if selection.get('style_tagging') is not None:
+        from ua_workflows.social_chat_style_tags import validate_style
+        common['风格标签'] = validate_style(selection, card.get('review', {}))
+        common['审核说明'] += '；风格依据：' + card['review']['style_reason']
     if image:
         common['视频链接'] = None
         common['图片链接'] = {'text': '查看原图', 'link': card['image_files'][0]['url']}
@@ -125,11 +133,24 @@ def delivery(base, result, candidates):
             if not poster.exists(): os.link(source_poster, poster)
             window.require(window.sha(poster) == frame['sha256'], 'Delivery poster changed')
             media = f'<video controls preload="none" poster="media/{poster.name}" src="{html.escape(links[0])}"></video>'
-        cards.append(f'<article>{media}<h3>{html.escape(c["app_name"])}</h3><p>{c["platform"]} · {c["media_type"]} · 展示估值 {html.escape(str(c["impressions_estimate"]))}</p><p>{html.escape(c["app_id"])}</p><a href="{html.escape(c["detail_url"])}" target="_blank">广大大详情</a></article>')
+        style_text = ''
+        if result.get('style_tagging') is not None:
+            from ua_workflows.social_chat_style_tags import validate_style
+            tags = validate_style(result, c.get('review', {}))
+            style_text = '<p>风格：' + html.escape('、'.join(tags)) + '</p>'
+        cards.append(f'<article>{media}<h3>{html.escape(c["app_name"])}</h3><p>{c["platform"]} · {c["media_type"]} · 展示估值 {html.escape(str(c["impressions_estimate"]))}</p>{style_text}<p>{html.escape(c["app_id"])}</p><a href="{html.escape(c["detail_url"])}" target="_blank">广大大详情</a></article>')
     counts = result['counts']
-    page = '<!doctype html><html lang="zh"><meta charset="utf-8"><title>竞品素材前10%</title><style>body{background:#f4f5f7;color:#20252d;font:16px system-ui;margin:32px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:20px}article{background:white;border-radius:14px;padding:16px;overflow:hidden}img,video{width:100%;height:350px;object-fit:contain;background:#111;border-radius:8px}p{overflow-wrap:anywhere}</style>'
-    page += f'<h1>{result["target_date"]} 竞品素材 · 展示估值前10%</h1><p>21项全部完成；视频 {counts.get("视频_new", 0)} 条，图片 {counts.get("图片_new", 0)} 条；可用 {counts["eligible"]} 条，入选 {counts["selected"]} 条。重投排除 {counts.get("relaunch", 0)} 条，真人口播排除 {counts.get("exclude", 0)} 条，无法获取 {counts.get("unavailable", 0)} 条；另{counts.get("out_of_scope_playable", 0)}条试玩不在本次范围。视频为六帧画面初筛，未完整审听。</p><main>' + ''.join(cards) + '</main></html>'
+    from ua_workflows.social_chat_ranking import label as ranking_label
+    ranking_text = ranking_label(result.get('ranking'))
+    page = '<!doctype html><html lang="zh"><meta charset="utf-8"><title>竞品素材精选</title><style>body{background:#f4f5f7;color:#20252d;font:16px system-ui;margin:32px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:20px}article{background:white;border-radius:14px;padding:16px;overflow:hidden}img,video{width:100%;height:350px;object-fit:contain;background:#111;border-radius:8px}p{overflow-wrap:anywhere}</style>'
+    page += f'<h1>{result["target_date"]} 竞品素材 · 展示估值{ranking_text}</h1><p>21项全部完成；视频 {counts.get("视频_new", 0)} 条，图片 {counts.get("图片_new", 0)} 条；可用 {counts["eligible"]} 条，入选 {counts["selected"]} 条。重投排除 {counts.get("relaunch", 0)} 条，真人口播排除 {counts.get("exclude", 0)} 条，无法获取 {counts.get("unavailable", 0)} 条；另{counts.get("out_of_scope_playable", 0)}条试玩不在本次范围。视频为六帧画面初筛，未完整审听。</p><main>' + ''.join(cards) + '</main></html>'
     (out / 'index.html').write_text(page)
+    from ua_workflows.social_chat_selected_package import package_selection
+    package = package_selection(base, result, out)
+    if package['status'] == 'packaged':
+        from urllib.parse import quote
+        link = '<p><a download href="' + quote(Path(package['path']).name) + '">下载本日入选素材ZIP（' + str(package['selected']) + '条）</a></p>'
+        (out / 'index.html').write_text(page.replace('<main>', link + '<main>', 1))
     return out
 
 
@@ -146,13 +167,14 @@ def sync(run_dir, config, client=None, apply=False):
     daily.provision(config, client)
     route = daily.table_route(config)
     actual_fields = {x['field_name']: x for x in client.listing(route + '/fields')}
-    for name, kind in EXTRA_FIELDS:
+    required_extra = extra_fields(result)
+    for name, kind in required_extra:
         if name not in actual_fields:
             client.call('POST', route + '/fields', json={'field_name': name, 'type': kind})
         else:
             window.require(actual_fields[name]['type'] == kind, 'Unexpected field type: ' + name)
     confirmed = {x['field_name']: x['type'] for x in client.listing(route + '/fields')}
-    window.require(all(confirmed.get(n) == k for n, k in EXTRA_FIELDS), 'Mixed field readback mismatch')
+    window.require(all(confirmed.get(n) == k for n, k in required_extra), 'Mixed field readback mismatch')
     all_rows = client.listing(route + '/records')
     existing = {}
     for row in all_rows:
@@ -196,7 +218,7 @@ def sync(run_dir, config, client=None, apply=False):
     report = {'status': 'synced', 'created': len(creates), 'updated': len(updates), 'retired': len(retire), 'verified_active': len(active), 'url': daily.table_url(config)}
     daily.save(base / 'feishu-sync.json', report)
     from collections import Counter
-    daily.save(base / 'summary.json', {'producer': result['producer'], 'target_date': result['target_date'], 'feishu_written': True, 'global_top10_computed': True, 'combined_platform_tasks': result['task_count'], 'combined_target_videos': len(candidates), 'combined_counts': dict(Counter(c['decision'] for c in candidates)), 'out_of_scope_playable': result['counts'].get('out_of_scope_playable', 0), 'counts': result['counts'], 'feishu': report})
+    daily.save(base / 'summary.json', {'producer': result['producer'], 'target_date': result['target_date'], 'feishu_written': True, 'ranking_computed': True, 'ranking': result.get('ranking'), 'combined_platform_tasks': result['task_count'], 'combined_target_videos': len(candidates), 'combined_counts': dict(Counter(c['decision'] for c in candidates)), 'out_of_scope_playable': result['counts'].get('out_of_scope_playable', 0), 'counts': result['counts'], 'feishu': report})
     return report
 
 

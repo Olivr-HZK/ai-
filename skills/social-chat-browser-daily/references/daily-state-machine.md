@@ -32,7 +32,7 @@ APP_COLLECTION_PENDING的start在本地begin一次，随后组合筛选/综合�
 | RELAUNCH_PENDING | 重新校验21项并按详情可见重投标签划分 | 写核对统计，进入MEDIA_PENDING；不删除原始卡片 |
 | MEDIA_PENDING | 复用采集期间预取的已校验文件；非重投视频补缺/解码/六帧，图片补缺/解码/尺寸/哈希 | 复用独立混合校验；有实际有限重试证据才允许媒体缺失例外；进入REVIEW_PENDING |
 | REVIEW_PENDING | 实际看视频六帧或全部原图，记录审核理由 | 混合校验器完整审核检查（不生成排名产物）；没有未解决内容复核；进入RANK_PENDING |
-| RANK_PENDING | 执行mixed_window select | 完整重新校验并合并取10%向上取整，生成selection及validation；进入DELIVERY_PENDING |
+| RANK_PENDING | 执行mixed_window select | 完整重新校验并按scope.ranking合并排序：新批取前100条，不足取全部通过项；历史沿用固定规则，生成selection及validation；进入DELIVERY_PENDING |
 | DELIVERY_PENDING | 执行mixed_delivery（不加--apply），制作本地预览及待写表包 | 文件/待写入包存在；仍需实际打开预览检查，不以文件存在宣称播放已验收；进入SYNC_PENDING |
 | SYNC_PENDING | 执行mixed_delivery --apply | 既有同步器幂等写入、业务字段/附件token及大小远端读回通过；进入REPORT_PENDING |
 | REPORT_PENDING | 执行既有完成日报命令 | 正确群、真实发送回执、统计及表链接核对；进入COMPLETED，同批不重复发送 |

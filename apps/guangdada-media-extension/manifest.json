@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "广大大 · 页面媒体下载",
-  "version": "1.9.1",
-  "description": "跨页采集图片、视频与Playable原HTML，自动尝试补全视频外链，汇总为一个 ZIP 并附MD报告。",
+  "version": "1.15.0",
+  "description": "翻页采集可暂停保留断点、恢复原页继续；多任务独立保存地址与ZIP，支持日期截止和下载队列。",
   "minimum_chrome_version": "120",
   "permissions": [
     "activeTab",
     "scripting",
     "downloads",
     "storage",
+    "unlimitedStorage",
     "alarms",
     "offscreen"
   ],

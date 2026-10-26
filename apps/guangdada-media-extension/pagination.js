@@ -1,5 +1,6 @@
 // Runs in MAIN world. Use the rendered pagination controls, never a private API.
 export function pageControl(action = 'read', expected = null) {
+  let diagnostic;
   try {
   const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   const pagers = [...document.querySelectorAll('.ant-pagination')].filter(visible);
@@ -24,23 +25,26 @@ export function pageControl(action = 'read', expected = null) {
     }
     return null;
   });
-  const loading = [...document.querySelectorAll('.ant-spin-spinning, [aria-busy="true"]')].some(visible);
+  const loading = [...document.querySelectorAll('.ant-spin-spinning, .ant-skeleton, [aria-busy="true"]')].some(visible);
+  const firstDifference=expected?.cardKeys?.findIndex((key,i)=>key!==cardKeys[i]);
+  diagnostic={action,expectedPage:expected?.pageNumber ?? null,actualPage:pageNumber,expectedCards:expected?.cardKeys?.length ?? null,actualCards:cardKeys.length,loading,
+    firstDifference:firstDifference>=0?firstDifference+1:null,expectedAdId:firstDifference>=0?expected.cardKeys[firstDifference]:null,actualAdId:firstDifference>=0?cardKeys[firstDifference] ?? null:null};
   if (expected && (expected.pageNumber !== pageNumber || JSON.stringify(expected.cardKeys) !== JSON.stringify(cardKeys))) {
-    throw new Error('页面素材或页码已变化，请重新开始翻页采集。');
+    return {error:expected.pageNumber!==pageNumber?'页面页码暂未与采集位置一致。':'页面卡片暂未与已保存的素材身份一致。',code:expected.pageNumber!==pageNumber?'PAGE_NUMBER_CHANGED':'PAGE_CARDS_CHANGED',diagnostic,notClicked:true};
   }
   if (action === 'warm') {
-    if (loading) throw new Error('页面仍在加载，未滚动素材卡片。');
+    if (loading) return {error:'页面仍在加载，未滚动素材卡片。',code:'PAGE_LOADING',diagnostic,notClicked:true};
     const card = cards[expected?.cardIndex - 1];
     if (!card) throw new Error('待加载的素材卡片已变化。');
     card.scrollIntoView({block:'center',behavior:'instant'});
   }
   if (action === 'next') {
-    if (loading) throw new Error('页面仍在加载，未点击下一页。');
+    if (loading) return {error:'页面仍在加载，未点击下一页。',code:'PAGE_LOADING',diagnostic,notClicked:true};
     if (!hasNext) return {pageNumber, cardKeys, hasNext, loading, clicked:false};
     // Selection badges belong to the previous page; never carry them forward.
     document.querySelectorAll('[data-gdd-download-number], #gdd-download-selection-toolbar').forEach(el=>el.remove());
     (next.querySelector('button, a') || next).click();
   }
   return {pageNumber, cardKeys, hasNext, loading, clicked:action === 'next' && hasNext};
-  } catch (error) { return {error:error.message}; }
+  } catch (error) { return {error:error.message,diagnostic}; }
 }

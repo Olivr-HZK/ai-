@@ -1,7 +1,7 @@
 // Executed in the page: use the site's normal card click and visible detail
 // links. Never query a private API or take a link from another creative.
 export function detailControl(action, expected) {
-  const visible=e=>!!e?.getClientRects().length;
+  const visible=e=>!!e?.getClientRects().length && getComputedStyle(e).visibility!=='hidden' && getComputedStyle(e).display!=='none';
   const links=[...document.querySelectorAll('a[href]')].filter(visible);
   const detailLinks=links.filter(a=>{try{return new URL(a.href).pathname==='/modules/creative/display-ads/detail' && a.textContent.includes('单页打开');}catch{return false;}});
   if(detailLinks.length>1)return {failure:'DETAIL_BUSY'};
@@ -13,7 +13,7 @@ export function detailControl(action, expected) {
     }
   }
   const dialogVisible=!!identity || [...document.querySelectorAll('[role="dialog"],.ant-modal-content,.ant-drawer-content')].some(visible);
-  if(action==='idle')return {visible:dialogVisible};
+  if(action==='idle')return {visible:dialogVisible,adId:id || null};
   if(action==='close'){
     if(root && id===expected.adId){
       const close=[...root.querySelectorAll('button')].find(b=>visible(b) && /^(Close|关闭)$/i.test(b.getAttribute('aria-label') || b.textContent.trim()));
@@ -27,6 +27,14 @@ export function detailControl(action, expected) {
     if(!identity)return {pending:true,dialogVisible};
     if(id!==expected.adId)return {failure:'DETAIL_ID_MISMATCH'};
     if(!root)return {pending:true};
+    const metadataReady=/展示估值\s*[:：]?\s*[\d,]/.test(root.innerText || '');
+    const info={adId:id,identityConfirmed:true,dialogVisible:true,metadataReady};
+    if(expected.readDate){
+      const ranges=[...String(root.innerText || '').matchAll(/(?<![\d-])(\d{4}-\d{2}-\d{2})\s*[~～至]\s*(\d{4}-\d{2}-\d{2})(?!\d)/g)];
+      const valid=value=>{const d=new Date(value+'T00:00:00Z');return !isNaN(d) && d.toISOString().slice(0,10)===value;};
+      if(ranges.length===1 && valid(ranges[0][1]) && valid(ranges[0][2]) && ranges[0][1]<=ranges[0][2])return {...info,firstDiscovered:ranges[0][1],dateSource:'visible_detail_date_range'};
+      return {...info,pending:true};
+    }
     const candidates=[...root.querySelectorAll('a[href]')].filter(visible).filter(a=>{
       const text=a.textContent.trim();let u;try{u=new URL(a.href);}catch{return false;}
       if(!['http:','https:'].includes(u.protocol) || u.username || u.password)return false;
@@ -34,8 +42,8 @@ export function detailControl(action, expected) {
       // YouTube original links are also rendered in the overview section.
       return /官方资源限制.*原始链接/.test(text) || ['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com','youtu.be','www.youtu.be','youtube-nocookie.com','www.youtube-nocookie.com'].includes(u.hostname);
     }).map(a=>a.href);
-    if(!candidates.length)return {pending:true,identityConfirmed:true,dialogVisible:true};
-    return {url:candidates[0],candidateUrls:[...new Set(candidates)].slice(0,4),adId:id};
+    if(!candidates.length)return {...info,pending:true};
+    return {...info,url:candidates[0],candidateUrls:[...new Set(candidates)].slice(0,4)};
   }
   if([...document.querySelectorAll('[role="dialog"],.ant-modal-content,.ant-drawer-content')].some(visible))return {failure:'DETAIL_BUSY'};
   const cards=[...document.querySelectorAll('.shadow-common-light.bg-white')].filter(visible).sort((a,b)=>{
@@ -55,7 +63,7 @@ export function detailControl(action, expected) {
 
 export function needsDetail(item) {
   if(item.kind!=='video')return false;
-  if(!item.url)return item.reasonCode==='NO_MEDIA_URL';
+  if(!item.url)return !['UNSUPPORTED_TYPE','STREAM_MANIFEST','UNSUPPORTED_SCHEME','PLAYABLE_NOT_HTML'].includes(item.reasonCode);
   const incomplete=url=>{try{const u=new URL(url);return /(^|\.)youtube(?:-nocookie)?\.com$|(^|\.)youtu\.be$/.test(u.hostname) && !(u.hostname.endsWith('youtu.be')?u.pathname.slice(1).split('/')[0]:u.pathname==='/watch'?u.searchParams.get('v'):u.pathname.split('/')[2])?.match(/^[\w-]{11}$/);}catch{return true;}};
   return incomplete(item.url) && !(item.candidateUrls || []).some(url=>!incomplete(url));
 }

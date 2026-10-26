@@ -120,8 +120,9 @@ def main():
             assert REQUESTS['/should-not-run.js']==0 and REQUESTS['/cover.png']==0 and REQUESTS['/clip.mp4']==0 and REQUESTS['/photo.png']==0,REQUESTS
             assert 'host_permissions' not in json.loads((SOURCE/'manifest.json').read_text())
             if SAMPLE.exists():
-                evidence={'version':'1.8.0','original_sample_bytes':len(REAL),'original_sample_sha256':hashlib.sha256(REAL).hexdigest(),'verification':'Real CDN HTML sample served unchanged through local fixture; extension ZIP bytes verified. Not a live logged-in Guangdada page acceptance.','modes':{'current':{'selected':11,'success':3,'failed':3},'cross_page':{'selected':5,'success':3,'failed':1},'pagination':{'selected':15,'success':4,'failed':4,'duplicates':1}},'extra_dependency_requests':REQUESTS['/should-not-run.js']}
-                (SAMPLE.parent/'acceptance.json').write_text(json.dumps(evidence,ensure_ascii=False,indent=2))
+                evidence={'version':manifest['version'],'original_sample_bytes':len(REAL),'original_sample_sha256':hashlib.sha256(REAL).hexdigest(),'verification':'Real CDN HTML sample served unchanged through local fixture; extension ZIP bytes verified. Not a live logged-in Guangdada page acceptance.','modes':{'current':{'selected':11,'success':3,'failed':3},'cross_page':{'selected':5,'success':3,'failed':1},'pagination':{'selected':15,'success':4,'failed':4,'duplicates':1}},'extra_dependency_requests':REQUESTS['/should-not-run.js']}
+                evidence_dir=SOURCE.parents[1]/'data/guangdada-metadata-acceptance';evidence_dir.mkdir(exist_ok=True)
+                (evidence_dir/'playable-acceptance.json').write_text(json.dumps(evidence,ensure_ascii=False,indent=2))
                 shutil.copy2(root/'playable-popup.png',SAMPLE.parent/'playable-popup.png')
             context.close()
             print('PASS: actual Playable checkbox; original HTML bytes/ZIP CRC; no script execution or dependency fetch; current-page/cross-page/automatic-last-page; ads_type=7/html_url/cdn fallback; missing/login/non-HTML/403/404 report; filtered media and duplicate handling.')

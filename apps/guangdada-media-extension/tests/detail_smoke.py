@@ -92,8 +92,8 @@ def main():
             page.evaluate("window.scenario='wrong';render()");popup=popup_page();popup.locator('#mode').select_option('current');popup.locator('#start').click();popup.close();wrong=wait_job(stopped['id'],'failed');assert wrong['missing'][0]['reasonCode']=='DETAIL_ID_MISMATCH';assert not wrong.get('downloadId');assert not page.locator('[role=dialog]').count() or page.locator('[role=dialog]').is_visible()
             # A foreign identity must remain open for the user, never closed by us.
             expect(page.locator('[role=dialog]')).to_be_visible();page.get_by_role('button',name='Close',exact=True).click()
-            evidence=SOURCE.parents[1]/'data/guangdada-external-1.9.1-acceptance';evidence.mkdir(exist_ok=True)
-            (evidence/'detail-acceptance.json').write_text(json.dumps({'version':'1.9.1','verification':'isolated Chromium/loopback fixtures, not real YouTube download','current_files':3,'old_cart_repaired':True,'cross_page_detail_files':2,'pagination_files':4,'disabled_no_detail_clicks':True,'stop_during_detail_retains_selection':True,'wrong_ad_id_rejected':True,'zip_crc_and_original_bytes':'passed'},indent=2))
+            evidence=SOURCE.parents[1]/'data/guangdada-metadata-acceptance';evidence.mkdir(exist_ok=True)
+            (evidence/'detail-acceptance.json').write_text(json.dumps({'version':manifest['version'],'verification':'isolated Chromium/loopback fixtures, not real YouTube download','current_files':3,'old_cart_repaired':True,'cross_page_detail_files':2,'pagination_files':4,'disabled_no_detail_clicks':True,'stop_during_detail_retains_selection':True,'wrong_ad_id_rejected':True,'zip_crc_and_original_bytes':'passed'},indent=2))
             context.close();print('PASS: detail-only original link; old-cart repair; current/cross-page/pagination; opt-out; wrong-ID rejection; preserve foreign dialog; MD provenance; one ZIP and original video bytes.')
     finally:server.shutdown()
 

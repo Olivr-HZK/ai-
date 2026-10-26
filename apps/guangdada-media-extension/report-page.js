@@ -1,8 +1,12 @@
 import {buildReport,reportMarkdown} from './report.js';
 let markdown='',stamp='';
+let taskId=new URL(location.href).searchParams.get('task');
 const refresh=async()=>{
-  const {job}=await chrome.storage.local.get('job');
+  const saved=await chrome.storage.local.get(taskId?'mediaTask:'+taskId:'job');
+  const job=taskId?saved['mediaTask:'+taskId]:saved.job;
+  if(job && !taskId){taskId=job.id;history.replaceState(null,'','?task='+encodeURIComponent(taskId));}
   markdown=job?reportMarkdown(buildReport(job)):'';stamp=job?.createdAt || '最近一批';
+  document.getElementById('status').textContent=job?(job.taskName || '原任务')+' · 此任务报告随进度更新':'暂无任务';
   document.getElementById('report').textContent=markdown || '暂无下载任务。提交下载后，这里会逐项记录所选内容和结果。';
   document.getElementById('save').disabled=!job;
 };
@@ -14,5 +18,5 @@ document.getElementById('save').onclick=async()=>{
     setTimeout(()=>URL.revokeObjectURL(url),60000);
   }catch(error){URL.revokeObjectURL(url);document.getElementById('status').textContent=error.message;}
 };
-chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local' && changes.job)void refresh();});
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local' && (taskId?changes['mediaTask:'+taskId]:changes.job))void refresh();});
 await refresh();

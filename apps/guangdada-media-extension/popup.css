@@ -2,3 +2,6 @@
 [hidden]{display:none!important}.range{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0}.range select,.range input{font:inherit;border:1px solid #d6dfef;border-radius:7px;padding:7px;color:#233c60;background:white}.range input{width:70px}#counts{white-space:pre-line}
 #cart{margin:10px 0;padding:12px;background:#eaf0fc;border-radius:9px}#cart-pages{padding-left:18px;max-height:130px;overflow:auto}#cart-pages li{color:#526681;font-size:12px}#cart strong{font-size:13px}
 .types label{display:flex;align-items:center;gap:4px;padding:8px 6px;white-space:nowrap}.types label:last-child{flex:1.4}
+#date-since{width:155px;min-width:0}#date-row label{font-size:12px}
+.task-panel{background:#eaf0fc;padding:12px;border-radius:10px;margin-bottom:14px}.task-panel label{font-weight:650}.task-panel select{width:100%;margin-top:6px;padding:8px;border:1px solid #ccd8ee;border-radius:6px;font:inherit}.task-panel p{font-size:12px;color:#526681;margin:6px 0 0}#task-name{width:205px;min-width:0}
+#collection-controls{background:#fff4dc;padding:12px;border-radius:8px;margin:10px 0}#collection-controls button{width:100%;margin:4px 0}#collection-checkpoint{font-size:12px;white-space:pre-line;color:#745221;margin:6px 0}

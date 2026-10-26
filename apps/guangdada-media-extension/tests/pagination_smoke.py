@@ -101,6 +101,10 @@ def main():
                 raise AssertionError({'job':state,'page':details})
 
             def download_count():return len(worker.evaluate('async()=>chrome.downloads.search({})'))
+            def finish_partial():
+                paused=wait_phase('collection-paused');assert not paused.get('downloadId')
+                answer=popup.evaluate('async id=>chrome.runtime.sendMessage({type:"download-collected",id})',paused['id']);assert answer['ok'],answer
+                return wait_phase('complete')
             def start(popup,count=3):
                 return popup.evaluate("""async p=>chrome.runtime.sendMessage({type:'start',tabId:p.tabId,mode:'pages',pageCount:p.count,kinds:['image','video']})""",{'tabId':tab_id,'count':count})
 
@@ -158,29 +162,34 @@ def main():
             assert popup.evaluate("async()=>chrome.runtime.sendMessage({type:'stop'})")['ok']
             wait_phase('stopped');page.wait_for_timeout(1200)
             assert download_count()==3 and page.evaluate('window.nextClicks')==1
-            assert not popup.evaluate("async()=>chrome.runtime.sendMessage({type:'retry'})")['ok']
+            assert (worker.evaluate('async()=>(await chrome.storage.local.get("job")).job'))['items']
 
             # A frozen button is a failure, never a fabricated last page.
             page.reload();page.evaluate('window.freeze=true')
             assert start(popup,3)['ok'];page.wait_for_function('window.nextClicks===1')
-            # Move the persisted clock forward instead of wasting 30 real seconds.
-            worker.evaluate("async()=>{const {job}=await chrome.storage.local.get('job');job.collection.waitSince=Date.now()-31000;await chrome.storage.local.set({job});}")
-            failed=wait_phase('failed')
-            assert '超时' in failed['error'] and failed['collectionIncomplete'] and download_count()==3,failed
-            assert not popup.evaluate("async()=>chrome.runtime.sendMessage({type:'retry'})")['ok']
+            # Advance only this isolated worker's clock; task state is now
+            # owned by the durable per-task store, not the legacy job mirror.
+            worker.evaluate("()=>{globalThis.testRealNow=Date.now;Date.now=()=>testRealNow()+31000;}")
+            partial=finish_partial()
+            worker.evaluate('Date.now=globalThis.testRealNow')
+            assert '超时' in partial['collectionError'] and partial['collectionIncomplete'] and download_count()==4,partial
+            assert partial['addressStage']=='interrupted' and len(partial['pages'])==1
+            assert popup.evaluate("async()=>chrome.runtime.sendMessage({type:'retry'})")['ok']
+            wait_phase('complete');assert download_count()==5
 
             # Reject jumps and unknown pagination instead of silently harvesting.
             page.reload();page.evaluate('window.freeze=true')
             assert start(popup,3)['ok'];page.wait_for_function('window.nextClicks===1')
             page.evaluate("document.querySelector('.ant-pagination-item-active').title='10'")
-            assert '顺序' in wait_phase('failed')['error'] and download_count()==3
+            jumped=finish_partial();assert '顺序' in jumped['collectionError'] and download_count()==6 and len(jumped['pages'])==1
             page.reload();page.locator('.ant-pagination').evaluate('(el)=>el.remove()')
-            rejected=start(popup,2);assert not rejected['ok'] and '分页' in rejected['error'],rejected
-            assert download_count()==3
+            partial=start(popup,2);assert not partial['ok'] and '分页' in partial['error'],partial
+            assert worker.evaluate('async()=>(await chrome.storage.local.get("job")).job.id')==jumped['id']
+            assert download_count()==6
             for count in (0,1001,1.5):
                 rejected=start(popup,count);assert not rejected['ok'] and '1-1000' in rejected['error'],rejected
             context.close()
-            print('PASS: actual popup form; three async pages starting at 4 -> one ZIP, CRC/media decode; cross-page dedupe/missing report; EOF/page limit; repackage; new-origin permission pause; cancel; timeout/jump/unknown-pager failures; invalid limits.')
+            print('PASS: actual popup form; three async pages starting at 4 -> one ZIP, CRC/media decode; cross-page dedupe/missing report; EOF/page limit; repackage; new-origin permission pause; cancel; timeout/jump/unknown-pager partial downloads from saved addresses; invalid limits.')
     finally:
         server.shutdown()
 

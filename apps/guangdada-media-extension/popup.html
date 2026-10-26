@@ -4,13 +4,21 @@
 <body>
   <header><span>GDD / MEDIA</span><h1>把灵感带走。</h1><p>图片、视频与 Playable，汇总成一个 ZIP</p></header>
   <main>
+    <section class="task-panel"><label for="task-list">下载任务</label><select id="task-list" aria-label="下载任务"></select><p id="task-hint">每批独立保存地址、ZIP 和报告；下载按队列执行。</p></section>
+    <div class="range"><label for="task-name">新任务名称</label><input id="task-name" type="text" maxlength="60" placeholder="可选，如 zeta 10月22日"></div>
     <div class="types"><label><input id="image" type="checkbox" checked> 图片</label><label><input id="video" type="checkbox" checked> 视频</label><label><input id="playable" type="checkbox" checked> Playable</label></div>
     <p style="color:#526681;font-size:12px">Playable 获取原 HTML；外部依赖未打包，打开可能需要联网。</p>
     <label class="scroll"><input id="resolve-external" type="checkbox" checked> 自动尝试补全视频外链</label>
     <p style="color:#526681;font-size:12px">尝试备用原址及外链页面中的视频地址；补全结果写入 MD 报告。</p>
+    <p style="color:#526681;font-size:12px">自动保存列表中的 App 归属、展示估值和重投标签到 MD 报告，无需逐张打开详情。</p>
     <div class="range"><label for="mode">采集范围</label><select id="mode"><option value="current">仅当前页全部</option><option value="basket">跨页已选清单</option><option value="pages">自动翻页（每页全部）</option></select></div>
-    <div id="page-options" hidden><div class="range"><label for="end">采集终点</label><select id="end"><option value="count">输入采集页数</option><option value="last">一直采到末页</option></select></div><div id="count-row" class="range"><label for="pages">最多采集页数</label><input id="pages" type="number" value="3" min="1" max="1000" step="1" aria-label="最多采集页数"></div></div>
+    <div id="page-options" hidden><div class="range"><label for="end">采集终点</label><select id="end"><option value="count">输入采集页数</option><option value="last">一直采到末页</option></select></div><div id="count-row" class="range"><label for="pages">最多采集页数</label><input id="pages" type="number" value="3" min="1" max="1000" step="1" aria-label="最多采集页数"></div>
+      <label class="scroll"><input id="date-enabled" type="checkbox"> 按首次发现日期自动停止</label>
+      <div id="date-row" class="range" hidden><label for="date-since">最早日期（含当天）</label><input id="date-since" type="date" aria-label="最早首次发现日期"></div>
+      <p id="date-hint" hidden style="color:#526681;font-size:12px">请先在网页选择「最新创意」。遇到早于该日的第一张素材即停止，不下载该素材及后续位置；日期按可见日期范围起始日核验。页数、末页或日期截止，先到的生效。</p>
+    </div>
     <button id="select" style="width:100%;margin:12px 0 6px">跨页点选素材</button>
+    <button id="new-selection" style="width:100%;margin-bottom:6px">清空清单并选择下一批</button>
     <section id="cart" hidden><strong id="cart-count"></strong><ul id="cart-pages"></ul><button id="clear-cart">清空跨页清单</button></section>
     <p id="scope" style="color:#526681">从左到右、从上到下编号；点击卡片左上角勾选。</p>
     <button id="start" class="primary">一键打包 ZIP</button>
@@ -18,12 +26,19 @@
     <section id="progress" hidden>
       <progress id="bar" max="1" value="0"></progress>
       <p id="counts"></p><p id="folder"></p>
+      <section id="collection-controls" hidden>
+        <button id="pause-collection">暂停采集，保留断点</button>
+        <button id="resume-collection" class="primary" hidden>继续采集</button>
+        <p id="collection-checkpoint"></p>
+        <button id="download-collected" hidden>结束采集并下载已有地址</button>
+      </section>
       <button id="authorize" class="primary" hidden>授权并继续打包 ZIP</button>
-      <div class="actions"><button id="retry">重新打包</button><button id="stop">停止打包</button><button id="downloads">查看下载</button></div>
+      <div class="actions"><button id="retry">重新下载已存地址</button><button id="stop">停止任务</button><button id="downloads">查看下载</button></div>
+      <button id="retry-failed" style="width:100%;margin-top:8px">补下载失败项</button>
       <button id="report" style="width:100%;margin:8px 0">查看下载报告.md</button>
       <details><summary>失败详情</summary><ul id="errors"></ul></details>
     </section>
-<footer>v1.9.1 · 一个 ZIP，内含下载报告.md。<br>图片、视频、Playable 均可跨页选择。<br>可输入采集页数或采到末页。<br>关闭弹窗后继续打包；单批媒体上限 512MB。</footer>
+<footer>v1.14.1 · 每个任务一个 ZIP 和下载报告.md。<br>采址结束后即可继续选择下一批。<br>下载按队列执行，停止和重试只影响所选任务。<br>详情关闭确认与短暂读取异常会有限等待。<br>自动翻页支持首次发现日期截止。</footer>
   </main>
   <script type="module" src="popup.js"></script>
 </body>

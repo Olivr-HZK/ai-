@@ -8,6 +8,10 @@ export function crc32(bytes) {
   for (const byte of bytes) crc = table[(crc ^ byte) & 255] ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
 }
+export function crc32Accumulator() {
+  let value=0xffffffff;
+  return {update(bytes){for(const byte of bytes)value=table[(value^byte)&255]^(value>>>8);},digest(){return (value^0xffffffff)>>>0;}};
+}
 export function makeZip(entries) {
   if (entries.length > 65535) throw new Error('ZIP 文件数量超过上限');
   const parts = [], directory = [];

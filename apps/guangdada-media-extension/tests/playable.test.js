@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {normalize,fileName} from '../media.js';
-import {inspectPlayable} from '../playable.js';
+import {inspectPlayable,inspectPlayableFile} from '../playable.js';
 import {buildReport,reportMarkdown} from '../report.js';
 const bytes=text=>new TextEncoder().encode(text);
+const chunksFile=(text,size=17)=>({stream:()=>new ReadableStream({start(c){const data=bytes(text);for(let i=0;i<data.length;i+=size)c.enqueue(data.subarray(i,i+size));c.close();}})});
+test('disk Playable inspection recognizes split UTF8/tags, rejects login/error content, caps dependency metadata',async()=>{
+  const html='<html><canvas>测试</canvas><script>throw Error("NEVER_EXECUTE")</script><script src="/a.js"></script><img src="/b.png">'+('x'.repeat(200000))+'</html>';
+  const result=await inspectPlayableFile(chunksFile(html,4093),'https://cdn.test/game.html');
+  assert.equal(result.externalReferences,2);assert.equal(result.externalReferencesCapped,false);
+  assert.equal((await inspectPlayableFile(chunksFile('<html><script></script><input type="password"></html>'),'https://cdn.test/a')).errorCode,'PLAYABLE_LOGIN_PAGE');
+  assert.equal((await inspectPlayableFile(chunksFile('<html><body>404</body></html>'),'https://cdn.test/a')).errorCode,'PLAYABLE_NOT_HTML');
+  const large='<html><canvas></canvas>'+Array.from({length:4200},(_,i)=>`<img src="/${i}.png">`).join('')+'</html>';
+  const capped=await inspectPlayableFile(chunksFile(large,8192),'https://cdn.test/a');assert.equal(capped.externalReferences,4096);assert.equal(capped.externalReferencesCapped,true);assert.match(capped.note,/至少/);
+  const controller=new AbortController();controller.abort(new Error('stopped'));await assert.rejects(inspectPlayableFile(chunksFile(html),'https://cdn.test/a',controller.signal),/stopped/);
+});
 test('Playable retains its own kind, original URL and HTML extension instead of becoming an image or video',()=>{
   for(const url of ['https://cdn.test/game.html?signature=secret','https://cdn.test/game.htm','https://cdn.test/entry']){
     const [item]=normalize([{url,kind:'playable',pageNumber:4,cardIndex:2}]);

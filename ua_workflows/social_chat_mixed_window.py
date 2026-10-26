@@ -233,6 +233,8 @@ def select(run_dir, config, persist=True):
         require(sha(file(root, f'evidence/{evidence_dir}/{c["ad_id"]}/manifest.json')) == r['media_manifest_sha256'], 'Reviewed media manifest changed')
         from ua_workflows.social_chat_content_policy import validate_review
         no_real_person = validate_review(scope, r)
+        from ua_workflows.social_chat_style_tags import validate_style
+        tags = validate_style(scope, r)
         if c['media_type'] == '图片':
             originals = image_evidence(root, c)
             require(r['method'] == 'original_image' and r.get('images_inspected') is True and (no_real_person or r['decision'] == 'keep'), 'Static image must use original-image review')
@@ -246,13 +248,19 @@ def select(run_dir, config, persist=True):
             c.update(source_sha256=manifest['source']['sha256'], local_source=manifest['source']['path'])
         counts[c['media_type'] + '_success'] += 1
         c.update(review=r, decision=r['decision'], review_reason=r['reason'], review_method=r['method'], estimate_number=float(daily.estimate(c['impressions_estimate'])))
+        if tags is not None:
+            c.update(style_tags=tags, style_reason=r.get('style_reason', ''), style_tagging_version=r.get('style_tagging_version'))
         all_items.append(c)
         counts[r['decision']] += 1
         if r['decision'] == 'keep':
             candidates.append(c)
     candidates.sort(key=lambda c: (-daily.estimate(c['impressions_estimate']), c['app_name'], c['platform'], c['app_id'], c['ad_id']))
-    selected = [{**c, 'global_rank': n} for n, c in enumerate(candidates[:(len(candidates) + 9) // 10], 1)]
-    result = {'producer': 'social-chat-mixed-window/v1', 'status': 'ready', 'scope_sha256': fingerprint, 'target_date': scope['target_date'], 'generated_at': datetime.now(timezone.utc).isoformat(), 'run_dir': str(base), 'task_count': len(checklist), 'fraction': '.10', 'rounding': 'ceil', 'counts': {**counts, 'raw': len(cards), 'eligible': len(candidates), 'selected': len(selected)}, 'items': selected}
+    from ua_workflows.social_chat_ranking import count as selection_count, rule as ranking_rule
+    ranking = ranking_rule(scope.get('ranking'))
+    selected = [{**c, 'global_rank': n} for n, c in enumerate(candidates[:selection_count(len(candidates), ranking)], 1)]
+    result = {'producer': 'social-chat-mixed-window/v1', 'status': 'ready', 'scope_sha256': fingerprint, 'target_date': scope['target_date'], 'generated_at': datetime.now(timezone.utc).isoformat(), 'run_dir': str(base), 'task_count': len(checklist), 'ranking': ranking, 'counts': {**counts, 'raw': len(cards), 'eligible': len(candidates), 'selected': len(selected)}, 'items': selected}
+    if scope.get('style_tagging') is not None:
+        result['style_tagging'] = scope['style_tagging']
     if not persist:
         return result
     daily.save(base / 'selection.json', result)

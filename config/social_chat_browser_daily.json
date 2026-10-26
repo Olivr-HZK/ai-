@@ -5,8 +5,8 @@
   "date_semantics": "first_discovered_on_target_date",
   "ranking": {
     "scope": "all_apps_and_platforms",
-    "fraction": "0.10",
-    "rounding": "ceil",
+    "mode": "top_n",
+    "count": 100,
     "ties": "stable_app_platform_ad_id"
   },
   "filters": {
@@ -25,6 +25,11 @@
     "real_person": "exclude",
     "uncertain": "review",
     "subject": "male_primary"
+  },
+  "style_tagging": {
+    "version": "character-style-v2",
+    "tags": ["日式漫画", "韩式漫画", "欧美写实", "东亚写实", "中式漫画", "欧美卡通", "数字插画", "3D角色", "混合风格", "待确认"],
+    "required_for_keep": true
   },
   "feishu": {
     "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",

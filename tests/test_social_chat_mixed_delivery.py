@@ -30,6 +30,19 @@ def test_payload_uses_real_image_fields_and_individual_options():
     assert video['图片附件']==[] and video['图片链接'] is None
 
 
+def test_payload_carries_reviewed_style_labels_and_visual_reason():
+    from ua_workflows.social_chat_style_tags import STYLE_VERSION, style_policy
+    selection={'target_date':'2026-10-23','scope_sha256':'scope','generated_at':'now','style_tagging':style_policy()}
+    card=sample();card['review']={'decision':'keep','style_tagging_version':STYLE_VERSION,
+                               'style_tags':['日式漫画','韩式漫画'],'style_reason':'实际画面中两位男性分别使用动画平涂与漫画线稿'}
+    result=delivery.fields(selection,card)
+    assert result['风格标签']==['日式漫画','韩式漫画']
+    assert card['review']['style_reason'] in result['审核说明']
+    card['review']['style_tags']=[]
+    with pytest.raises(ValueError,match='style tags'):
+        delivery.fields(selection,card)
+
+
 def test_readback_checks_attachment_tokens_sizes_and_media_type():
     desired={'唯一键':'key','素材类型':'图片','图片附件':[{'file_token':'img'}], '视频附件':[],
              '图片链接':{'link':'https://example.com/img'},'视频链接':None,'展示估值':10}

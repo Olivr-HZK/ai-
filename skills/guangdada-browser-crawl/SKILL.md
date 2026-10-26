@@ -12,6 +12,8 @@ metadata:
 
 用于social-chat-browser-daily时，执行其[内容审核规则](../social-chat-browser-daily/references/content-review.md)。后续新批为male-character-no-real-person-v1：视频、图片仅保留未见真人且男性角色为明确主体的素材；任何真人或女性主体均排除，男女混合/主体不明/真人AI不确定先待复核。真人包含非口播、剧情/生活/影视、照片、手部和混剪中的短暂真人；明确AI/动漫/CG男性不因写实画风自动排除。新版记录real_person_presence及primary_subject，不能用旧口播字段或风格标签代替审核。“真人实拍”不作为保留素材的风格。该业务条件不扩展到本通用skill其他用户的scope，也不自动修改历史批次/飞书。
 
+社交业务内容通过后，同次实际看图打风格标签，记录style_tagging_version=本批scope固定版本（新批character-style-v2）、style_tags数组和style_reason；按上述业务内容审核引用的固定选项执行，不按产品/投放地区/语言猜风格。缺标不能进入正式排名/交付，排除或内容待复核不打正式风格标签。
+
 ## 默认采集模式（2026-10-22）
 
 按本次实测采用**浏览器直采 + 原素材并行下载**，不依赖插件弹窗，只参考插件的批量读取、原地址下载、去重及失败报告逻辑。新每日scope的 `collection_mode=direct-browser-v1` 真正执行 `scripts/direct_session.mjs`，并由项目 `social_chat_direct` 验收。开始采集前读 [直采与并行下载](references/direct-collection.md)：一次完成筛选读回与综合 App ID 提交/最新创意排序，同页最多10张连续点卡，详情就绪立即保存，按页记录与翻页，最多3路媒体下载与后续点卡并行。验证码、身份、日期、真实截图和后续内容审核要求保留。
@@ -183,3 +185,7 @@ APP proof记录search_mode=综合、query_type=app_id、query_app_id、query_ter
 ## 点卡前合并执行（2026-10-22）
 
 direct-browser-v1的组合准备由direct_session.mjs.start()完成，单App验收取代以下旧模式分阶段调用。旧模式的分类、基础筛选、综合App ID查询、回车提交读回及最新创意排序，在同一段授权浏览器REPL脚本连续执行，正常只返回摘要；实际操作使用guangdada-browser-crawl的scripts/browser_prepare_app.mjs，先读其references/browser-prepare-app.md。每日状态仍按CATEGORY/FILTERS/APP/SORT逐阶段begin及证据complete；本地CLI可由REPL文件/进程桥顺序调用，不为每个阶段交回模型。正确筛选只读，差异才修改；不选择广告主候选；保留逐卡身份、截图、回车提交及排序时序校验。输入值被工具脱敏时读可见查询标签，不重复提交。异常停在真实失败阶段，不自动重试或跳过。
+
+## 社交竞品每日排名数量（2026-10-26）
+
+仅本项目社交竞品业务：新批审核合格的全部竞品/双端/媒体类型合并按展示估值降序取前100条，不足100条取全部通过项，不降低审核标准补数。以scope.ranking固定值为准，覆盖上文旧前10%业务说明；历史scope不自动重排。通用采集不默认限制100条。

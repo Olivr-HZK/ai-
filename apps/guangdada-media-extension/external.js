@@ -116,24 +116,25 @@ export async function fetchExternalVideo(item,{request,read,discard,signal}) {
       trace.host=new URL(url).hostname;attempts.push(trace);
       if(/\.(m3u8|mpd|ts)$/i.test(new URL(url).pathname))throw externalError('EXTERNAL_SEPARATE_STREAMS');
       const response=await request(url,next.method!=='卡片原地址' || !!youtubeUrl(url));
-      if(!response.ok)throw externalError(`HTTP_${response.status}`,response.status);
+      if(!response.ok){await response.body?.cancel();throw externalError(`HTTP_${response.status}`,response.status);}
       if(/application\/json/i.test(response.headers.get('content-type') || '')){await response.body?.cancel();throw externalError('NOT_MEDIA');}
       bytes=await read(response);
       if(!bytes.length)throw externalError('EMPTY_RESPONSE');
-      if(isHtml(bytes,response.headers.get('content-type') || '')){
-        attempted=true;discard(bytes.length);const text=new TextDecoder().decode(bytes);bytes=null;
+      if(isHtml(bytes.prefix || bytes,response.headers.get('content-type') || '')){
+        attempted=true;const text=bytes.text?await bytes.text():new TextDecoder().decode(bytes);await discard(bytes.length);bytes=null;
         if(++pages>3 || next.depth>=2)throw externalError('EXTERNAL_DEPTH_LIMIT');
         const parsed=extractVideoLinks(text,response.url || url);trace.code=parsed.errorCode || 'PARSED';
         queue.unshift(...parsed.candidates.map(c=>({...c,depth:next.depth+1})));
         if(parsed.errorCode)last=externalError(parsed.errorCode);
         continue;
       }
-      const extension=videoExtension(bytes);
+      const extension=videoExtension(bytes.prefix || bytes);
       if(!extension)throw externalError('NOT_MEDIA');
       trace.code='OK';if(attempts.length>1)attempted=true;
       return {bytes,extension,resolvedUrl:response.url || url,externalInfo:attempted?{attempted:true,resolved:true,attempts}:null};
     }catch(error){
-      if(bytes)discard(bytes.length);
+      if(bytes)await discard(bytes.length);
+      if(String(error.code || '').startsWith('DISK_'))throw error;
       if(signal.aborted)throw signal.reason;
       if(!attempts.includes(trace))attempts.push(trace);
       trace.code=error.code || error.detail?.code || 'NETWORK';trace.httpStatus=error.httpStatus || null;

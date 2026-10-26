@@ -18,8 +18,9 @@ def build_card(stats, url, test=False):
         raise ValueError('Media-success count mismatch')
     if stats.get('video_new', stats['new']) + stats.get('image_new', 0) != stats['new']:
         raise ValueError('Media-type count mismatch')
-    if stats['selected'] != (stats['eligible'] + 9) // 10:
-        raise ValueError('Top-decile count mismatch')
+    from ua_workflows.social_chat_ranking import count as selection_count, label as ranking_label
+    if stats['selected'] != selection_count(stats['eligible'], stats.get('ranking')):
+        raise ValueError('Selected count differs from pinned ranking rule')
     title = ('【测试】' if test else '') + '广大大竞品素材日报｜' + stats['report_date']
     text = (f"**素材首次发现日期：{stats['target_date']}（北京时间）**\n"
             f"监测范围：{stats['tasks']} 项 App / 平台（iOS、Android 分开统计）\n\n"
@@ -32,7 +33,7 @@ def build_card(stats, url, test=False):
             f"🚫 真人口播排除：**{stats['excluded']} 条**\n"
             f"⚠️ 素材无法获取：**{stats['missing']} 条**（已记录原因后跳过）\n"
             f"📁 审核可用：**{stats['eligible']} 条**\n\n"
-            f"按展示估值合并取前 **10%**，向上取整，**{stats['selected']} 条已导入多维表格并附素材附件**。\n"
+            f"按展示估值合并降序取{ranking_label(stats.get('ranking'))}，**{stats['selected']} 条已导入多维表格并附素材附件**。\n"
             "点击下方多维表格链接查看。\n\n"
             "上新数指当前账号、监测名单和筛选条件下可见的目标日素材，不代表平台广告全集。")
     if stats.get('out_of_scope_playable'):
@@ -61,7 +62,7 @@ def report(run_dir, config, client, test=False):
         return previous
     summary = load(run_dir / 'summary.json')
     validation = load(run_dir / 'validation.json')
-    if not (summary['feishu_written'] and summary['global_top10_computed'] and
+    if not (summary['feishu_written'] and (summary.get('ranking_computed') or summary.get('global_top10_computed')) and
             validation['collection_evidence_verified'] and validation['frame_and_delivery_hashes_verified']):
         raise ValueError('Collection/import evidence is not complete')
     candidates = load(run_dir / 'delivery/all_candidates.json')
@@ -126,7 +127,8 @@ def report(run_dir, config, client, test=False):
              'video_success': sum(not is_image(c) and c['decision'] not in ('review', 'unavailable', 'relaunch') for c in candidates),
              'image_success': sum(is_image(c) and c['decision'] not in ('review', 'unavailable', 'relaunch') for c in candidates), 'eligible': counts['keep'],
              'excluded': counts['exclude'], 'relaunch': counts['relaunch'], 'missing': missing_count, 'selected': len(rows),
-             'out_of_scope_playable': summary.get('out_of_scope_playable', 0)}
+             'out_of_scope_playable': summary.get('out_of_scope_playable', 0),
+             'ranking': selection.get('ranking')}
     card = build_card(stats, table_url(config), test)
     save(run_dir / 'crawl-report-payload.json', {'stats': stats, 'card': card})
     seed = target + '|' + chat_id + '|complete|' + str(test)

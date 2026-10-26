@@ -1,4 +1,5 @@
 import {needsDetail} from './detail.js';
+import {mergeMetadata} from './metadata.js';
 // Cart data is written only by the extension worker after reading real cards.
 export function selectionContext() {
   const active=[...document.querySelectorAll('.ant-pagination-item-active')].filter(el=>el.getClientRects().length);
@@ -29,10 +30,12 @@ export function refreshEntries(entries, scan) {
     const index=scan.cardKeys.indexOf(entry.adId);
     if(index<0)return entry;
     const fresh=selectionEntry(scan,entry.pageNumber,index+1);
-    if(entry.detailSource && needsDetail(fresh))return entry;
+    const metadata=mergeMetadata(entry.metadata,fresh.metadata);
+    if(entry.detailSource && needsDetail(fresh))return metadata?{...entry,metadata}:entry;
     // Keep the original page/slot even when a duplicate appears elsewhere.
-    if(!fresh.url)return entry;
-    const next={...entry,url:fresh.url,kind:fresh.kind};
+    if(!fresh.url)return entry.url?{...entry,metadata}:{...entry,metadata,kind:fresh.kind,reason:fresh.reason,reasonCode:fresh.reasonCode};
+    const next={...entry,metadata,url:fresh.url,kind:fresh.kind};
+    if(entry.url!==fresh.url)next.addressCapturedAt=new Date().toISOString();
     if(fresh.detailSource)next.detailSource=true;
     if(fresh.candidateUrls)next.candidateUrls=[...fresh.candidateUrls];else delete next.candidateUrls;
     delete next.reason;delete next.reasonCode;return next;

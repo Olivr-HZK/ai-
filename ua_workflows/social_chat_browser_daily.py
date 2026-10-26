@@ -86,8 +86,12 @@ def prepare(target, run_dir, config, execution_origin="manual"):
              'date_anchor': {'as_of_date': datetime.now(TZ).date().isoformat(), 'timezone': 'Asia/Shanghai'},
              'date_semantics': config['date_semantics'], 'target_date': target,
              'execution_origin': execution_origin}
+    from ua_workflows.social_chat_ranking import rule as ranking_rule, label as ranking_label
+    scope['ranking'] = ranking_rule(config.get('ranking'))
     if config.get('content_review_policy') is not None:
         scope['content_review_policy'] = config['content_review_policy']
+    if config.get('style_tagging') is not None:
+        scope['style_tagging'] = config['style_tagging']
     if config.get('collection_mode'):
         if config['collection_mode'] != 'direct-browser-v1':
             raise ValueError('Unsupported collection mode')
@@ -103,11 +107,20 @@ def prepare(target, run_dir, config, execution_origin="manual"):
     run_dir = Path(run_dir)
     if (run_dir / 'scope.json').exists():
         previous = load(run_dir / 'scope.json')
+        # Existing evidence retains its original ranking rule and scope hash.
+        if 'ranking' in previous:
+            scope['ranking'] = previous['ranking']
+        else:
+            scope.pop('ranking', None)
         # An old scope remains pinned to its original review policy on resume.
         if 'content_review_policy' not in previous:
             scope.pop('content_review_policy', None)
         else:
             scope['content_review_policy'] = previous['content_review_policy']
+        if 'style_tagging' not in previous:
+            scope.pop('style_tagging', None)
+        else:
+            scope['style_tagging'] = previous['style_tagging']
         if {k: v for k, v in previous.items() if k not in ('date_anchor','execution_origin')} != {k: v for k, v in scope.items() if k not in ('date_anchor','execution_origin')}:
             raise ValueError('Existing run has a different scope; use a new directory.')
         return {'status': 'resume_existing', 'run_dir': str(run_dir.resolve()), 'tasks': len(scope['tasks']),
@@ -119,6 +132,9 @@ def prepare(target, run_dir, config, execution_origin="manual"):
     policy = scope.get('content_review_policy')
     if policy is not None and policy != policy_for(policy.get('version')):
         raise ValueError('Unsupported content review policy')
+    from ua_workflows.social_chat_style_tags import validate_style_policy
+    if scope.get('style_tagging') is not None:
+        validate_style_policy(scope['style_tagging'])
     module.write(run_dir / 'scope.json', scope)
     module.write(run_dir / 'run.json', {'scope_sha256': module.digest(scope)})
     for task in scope['tasks']:
@@ -146,8 +162,21 @@ def prepare(target, run_dir, config, execution_origin="manual"):
                         '审核记录review_policy=no-real-person-v1及checks.real_person_presence=present/absent/uncertain。')
     else:
         content_rule = '按本批原规则排除真人口播。'
+    style = scope.get('style_tagging')
+    style_naming = ('仅使用一个风格标签字段，地域审美与画面风格组合命名；古装是题材，写入style_reason，不作风格选项。'
+                    '地域审美无法判断但画法明确时可用数字插画或3D角色，不强行猜国家。厚涂旧标签须实际复核后区分，不批量映射。'
+                    if style and style['version'] == 'character-style-v2'
+                    else '本批沿用固定的旧版风格选项，不自动改名或迁移。')
+    style_rule = (f"内容审核通过后，同次实际查看画面并写style_tagging_version={style['version']}、style_tags（多选）、style_reason（画面依据）。"
+                  f"选项：{'、'.join(style['tags'])}。"
+                  f'{style_naming}'
+                  '不按App/投放地区/语言猜风格；风格无法细分时仅填待确认，不影响已经明确通过的内容审核。'
+                  '排除/内容待复核不打正式风格标签。标签随排名结果、交付看板和下次飞书同步携带，风格标签为多选字段。'
+                  if style else '本历史批次未要求风格标签，不自动补标。')
+    ranking_text = ranking_label(scope.get('ranking'))
     instruction = f'''使用 $social-chat-browser-daily 和 $guangdada-browser-crawl 最新规则完成此日采集任务，run目录：{run_dir.resolve()}
 本批固定内容规则：{content_rule}
+本批风格打标规则：{style_rule}
 浏览器采集前执行 .venv/bin/python -m ua_workflows.browser_collection_runtime start --run-dir "{run_dir.resolve()}" 并确认 active=true；每页操作前及每5分钟 renew 同一目录并确认 active=true。保护15分钟未续期自动过期；过期则先start核验再继续。验证码/人工等待、暂停、完成或异常停止时执行stop；恢复先start。不要把prepare命令的短暂保护当作整个浏览器采集保护。异常按skill记录实际工具消息、阶段、App/页/卡和证据路径；工具无堆栈不得编造。
 目标日：{target}，Asia/Shanghai。scope.json 已包含完整21项App/平台名单，优先使用已核实App ID搜索；缺ID时先按完整名发现并核对ID，然后再用该ID搜索，不用简称搜索，不调用私有接口或项目爬虫CLI。
 以 daily-machine/state.json 为每日唯一执行状态，读取 skill references/daily-state-machine.md。每个浏览器阶段先执行 social_chat_daily_state begin，实际操作并保存证据后 complete --proof；失败执行fail记录真实错误，修复后resume再重试。正确筛选必须readonly，只有不一致才repair；禁止为日志重复点击。新批不得调用旧state.py推进每日状态。
@@ -156,9 +185,10 @@ def prepare(target, run_dir, config, execution_origin="manual"):
 基础条件：工具、素材，获取{media}。类型控件不选任何选项时即为“图片&视频”：只读检查选项为空及默认显示，有残留类型才清除。每项App/平台只采一次混合列表，共21项；逐卡识别视频/图片，不切换两轮。渠道/地区/文案语言/尺寸均不限。不限条件只读检查，有残留才清除，实际操作保存读回和截图。
 日期控件设置目标日范围；每张卡片另从可见详情核对首次发现。按17号规则，只用详情 YYYY-MM-DD~YYYY-MM-DD 的起点判断目标日期，保存 first_discovered_date、first_discovered_source=detail_date_range_start 及 raw_text；独立首次发现字段仅记录，不参与日期判断或提前截止。缺详情日期范围则阻塞。
 最新创意从新到旧，遇首张详情首次发现早于目标日即停止本App的混合列表并保存截止证据；候选不存在不等于零素材。重投卡片同样先采集，不因重投标签或其旧独立首次发现日期停止。21项全部封账后，按可见独立“重投”标签统一剔除并记录原因/数量，再对剩余素材审核排名；重投保留原始详情证据。全部App登记并排除重投后，复用预取文件并补齐缺失视频、运行frames.py、实际查看六帧，执行本批固定内容规则；图片下载原图、核验解码/格式/尺寸/SHA256并实际查看，多图逐图审查。图片不伪造视频六帧，同样执行本批固定内容规则。视频抽帧初筛不宣称完整审听。
-按skill的独立目标日混合媒体校验完成后，将视频和图片有效候选合并按展示估值取前10%，向上取整，再写已授权飞书表，读回实际视频/图片附件；旧视频FSM/select不支持图片，不可伪造通过，须完成并验证混合媒体适配再使用。缺失媒体有限重试后按用户要求单列跳过，未全采/身份不明/缺估值/审核不确定不可静默跳过。
+按skill的独立目标日混合媒体校验完成后，将视频和图片有效候选合并按展示估值降序取{ranking_text}，不降低审核标准补数，再写已授权飞书表，读回实际视频/图片附件；旧视频FSM/select不支持图片，不可伪造通过，须完成并验证混合媒体适配再使用。缺失媒体有限重试后按用户要求单列跳过，未全采/身份不明/缺估值/审核不确定不可静默跳过。
+审核及排名后的delivery步骤自动将实际入选媒体单独打包为Afizzy_竞品精选_YYYY-MM-DD_N条.zip，目标日期和数量均按本批实际值；附排名、估值、风格、审核说明CSV和SHA256。核对delivery/package-receipt.json的数量与CRC/媒体哈希结果后提供ZIP链接。不要将打包当成飞书入表或日报成功。
 采集开始及核验入表后，分别按config的crawl_start_notice和crawl_completion_report向核实测试群发送一次启动通知及一次完成日报；同批恢复不重发，不发其他群。凭据不输出。定时触发批次遇登录失效或其他设备登录先自行正常重新登录，使用已有保存凭据或项目.env，不输出秘密；手动批次先询问。任何验证码立即hold/stop并等待人工，不自动处理。重登后核对登录、筛选、已选App和断点，不重发通知。
-本批实际触发来源execution_origin={execution_origin}（不使用config默认值推断），不得重复创建定时任务。完成报告目标日期、21项App混合列表检查情况、视频/图片分项与合计、前10%入表数及链接。
+本批实际触发来源execution_origin={execution_origin}（不使用config默认值推断），不得重复创建定时任务。完成报告目标日期、21项App混合列表检查情况、视频/图片分项与合计、按{ranking_text}的实际入表数及链接。
 '''
     if scope.get('collection_mode') == 'direct-browser-v1':
         instruction = instruction.replace('每个浏览器阶段先执行 social_chat_daily_state begin，实际操作并保存证据后 complete --proof；失败执行fail记录真实错误，修复后resume再重试。', '每个App只有APP_COLLECTION_PENDING一次begin和一次直采accept验收，由direct_session.mjs自动执行，不再逐CATEGORY/FILTERS/APP/SORT/PROBE调用CLI；失败保存断点并hold，实际恢复后resume。')
@@ -204,7 +234,7 @@ def is_relaunch(card):
     return bool(re.search(r'(?m)^\s*重投\s*$', card.get('raw_text', '')))
 
 
-def rank(cards, reviews, target):
+def rank(cards, reviews, target, ranking=None):
     candidates, counts = [], {'raw': len(cards), 'other_date': 0, 'talking_head': 0, 'relaunch': 0}
     identities = set()
     for card in cards:
@@ -231,11 +261,12 @@ def rank(cards, reviews, target):
                            'review_reason': review['reason'], 'review_method': review['method'],
                            '_estimate': val})
     candidates.sort(key=lambda c: (-c['_estimate'], c['app_name'], c['platform'], c['app_id'], c['ad_id']))
-    count = (len(candidates) + 9) // 10
+    from ua_workflows.social_chat_ranking import count as selection_count, rule as ranking_rule
+    count = selection_count(len(candidates), ranking)
     for c in candidates:
         del c['_estimate']
     return {'target_date': target, 'counts': {**counts, 'eligible': len(candidates), 'selected': count},
-            'rounding': 'ceil', 'fraction': '0.10', 'tie_policy': 'app_name/platform/app_id/ad_id',
+            'ranking': ranking_rule(ranking), 'tie_policy': 'app_name/platform/app_id/ad_id',
             'items': [{**c, 'global_rank': i} for i, c in enumerate(candidates[:count], 1)]}
 
 
@@ -261,7 +292,7 @@ def select(run_dir, config):
         for card in task_cards:
             cards.append(card)
             reviews[(card['platform'], card['app_id'], card['ad_id'])] = by_id[card['ad_id']]
-    result = rank(cards, reviews, target)
+    result = rank(cards, reviews, target, scope.get('ranking'))
     result.update({'scope_sha256': state['scope_sha256'], 'generated_at': datetime.now(TZ).isoformat(), 'run_dir': str(run_dir), 'task_count': len(expected), 'status': 'ready'})
     save(run_dir / 'selection.json', result)
     return result
