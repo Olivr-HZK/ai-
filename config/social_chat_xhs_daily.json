@@ -58,7 +58,8 @@
   },
   "feishu": {
     "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
-    "table_id": "tblwhAqPfQoBXK3Q",
+    "table_id": "tblgJwoOT0G3naT0",
+    "view_id": "vewJHxyWE5",
     "base_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c",
     "expected_app_id": "cli_a906892c9c8c1cb3"
   },

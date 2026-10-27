@@ -3,6 +3,37 @@ import pytest
 from ua_workflows import xhs_link_bot as b
 
 S={'allowed_chat_id':'group','max_links_per_message':5}
+
+
+def test_mixed_message_routes_each_platform_and_links_to_actual_targets(tmp_path,monkeypatch):
+    xhs_config=tmp_path/'xhs.json';douyin_config=tmp_path/'douyin.json'
+    b.x.save(xhs_config,{'feishu':{'app_token':'base','table_id':'new-xhs','view_id':'new-view','base_url':'https://example.invalid/base/base'}})
+    b.x.save(douyin_config,{'feishu':{'app_token':'base','table_id':'original-douyin','base_url':'https://example.invalid/base/base'}})
+    monkeypatch.setattr(b.x,'CONFIG',xhs_config);monkeypatch.setattr(b.d,'CONFIG',douyin_config)
+    links=['https://xhslink.com/first','https://v.douyin.com/second','https://www.xiaohongshu.com/explore/'+'a'*24]
+    b.x.save(tmp_path/'jobs/om_mixed.json',{'message_id':'om_mixed','links':links,'status':'queued'})
+    destinations=[];replies=[]
+    def importer(url,root,client,config):
+        destinations.append((url,config['feishu']['table_id']))
+        return {'status':'verified'}
+    monkeypatch.setattr(b,'import_link',importer)
+    class Client:
+        def call(self,method,route,**kwargs):
+            replies.append(json.loads(kwargs['json']['content'])['text'])
+            return {'message_id':'reply'}
+    monkeypatch.setattr(b.x,'authorized_client',lambda config:Client())
+    class StopWorker(Exception):pass
+    def stop(_):raise StopWorker()
+    monkeypatch.setattr(b.time,'sleep',stop)
+    with pytest.raises(StopWorker):b.work(tmp_path,S)
+    assert destinations==[(links[0],'new-xhs'),(links[1],'original-douyin'),(links[2],'new-xhs')]
+    assert b.x.load(tmp_path/'jobs/om_mixed.json')['status']=='complete'
+    assert replies[0].splitlines()[1:]==[
+        'https://example.invalid/base/base?table=new-xhs&view=new-view',
+        'https://example.invalid/base/base?table=original-douyin',
+    ]
+
+
 def event(text,mention='bot',chat='group'):
  return {'sender':{'sender_type':'user'},'message':{'chat_id':chat,'chat_type':'group','message_type':'text','message_id':'om_test','mentions':[{'id':{'open_id':mention}}],'content':json.dumps({'text':text})}}
 

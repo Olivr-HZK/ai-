@@ -286,6 +286,14 @@ def authorized_client(config):
     return Feishu()
 
 
+def bitable_url(config):
+    target = config['feishu']
+    url = target['base_url'] + '?table=' + target['table_id']
+    if target.get('view_id'):
+        url += '&view=' + target['view_id']
+    return url
+
+
 def provision(client, config):
     route = f"bitable/v1/apps/{config['feishu']['app_token']}/tables/{config['feishu']['table_id']}"
     existing = {f['field_name']: f for f in client.listing(route+'/fields')}
@@ -476,7 +484,7 @@ def report(base,selection,config,client,synced,day):
     if receipt.exists():return load(receipt)
     setting=config['crawl_completion_report'];chat=client.call('GET','im/v1/chats/'+setting['chat_id'])
     if chat.get('name')!=setting['chat_name'] or chat.get('chat_mode')!='group':raise ValueError('Group identity mismatch')
-    summary=load(base/'summary.json');start=load(base/'run.json')['started_at'];url=config['feishu']['base_url']+'?table='+config['feishu']['table_id']
+    summary=load(base/'summary.json');start=load(base/'run.json')['started_at'];url=bitable_url(config)
     title=('小红书素材日报' if synced['status']=='complete' else '小红书素材日报｜部分完成')+'｜'+day
     text=(f"**采集口径：最近24小时，7个关键词，最新排序**\n执行开始：{start}\n\n"
           f"📊 搜索命中：**{summary['raw_rows']} 条**，共 **{summary['pages']} 页**，全部关键词已到接口末页\n"

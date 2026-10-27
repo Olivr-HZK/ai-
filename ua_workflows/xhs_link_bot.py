@@ -212,9 +212,14 @@ def work(root,setting):
             if job['status'] not in ('queued','processing'):continue
             try:
                 config=x.load(x.CONFIG);client=x.authorized_client(config);job['status']='processing';x.save(path,job)
-                results=[import_link(url,root,client,config) for url in job['links']]
+                results=[];targets=[]
+                for url in job['links']:
+                    config=x.load(d.CONFIG if urlsplit(url).hostname in DOUYIN_HOSTS else x.CONFIG)
+                    results.append(import_link(url,root,client,config))
+                    target=x.bitable_url(config)
+                    if target not in targets:targets.append(target)
                 job.update(status='complete',results=results)
-                text=f"素材链接手动收录完成：{len(results)}篇，信息和媒体附件已核验。\nhttps://scnmrtumk0zm.feishu.cn/base/{config['feishu']['app_token']}?table={config['feishu']['table_id']}&view=vewTbxTE4Z"
+                text=f"素材链接手动收录完成：{len(results)}篇，信息和媒体附件已核验。\n"+'\n'.join(targets)
             except Exception as exc:
                 job.update(status='blocked',error_type=type(exc).__name__)
                 import traceback
