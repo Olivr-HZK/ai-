@@ -157,7 +157,7 @@ def import_link(url,root,client,config):
     remote=client.listing(route+'/records');existing=next((r for r in remote if x.text_field(r['fields'].get('唯一键'))==key),None)
     receipt=folder/'import-receipt.json'
     if receipt.exists() and existing:
-        expected=x.load(folder/'expected-row.json');x.verify_row(existing['fields'],expected)
+        expected=x.load(folder/'expected-row.json');x.verify_row(existing['fields'],expected,config)
         return {'note_id':note_id,'status':'already_imported','record_id':existing['record_id']}
     note=fetch_douyin_note(url,note_id,root,config) if is_douyin else fetch_note(url,note_id,folder,config)
     manifest=d.media(note,root,config) if is_douyin else x.media(note,root,config)
@@ -172,13 +172,13 @@ def import_link(url,root,client,config):
         if digest not in uploads:
             uploads[digest]=x.upload_attachment(client,config,path,path.name);x.save(root/'uploads.json',uploads)
         tokens.append({'file_token':uploads[digest]})
-    fields['视频附件' if note['is_video'] else '图片附件']=tokens
+    fields[x.attachment_field(config,note['is_video'])]=tokens
     x.save(folder/'expected-row.json',fields)
     if existing:
         record_id=existing['record_id'];client.call('PUT',route+'/records/'+record_id,json={'fields':fields})
     else:
         result=client.call('POST',route+'/records/batch_create',params={'client_token':x.stable_uuid(key)},json={'records':[{'fields':fields}]});record_id=result['records'][0]['record_id']
-    actual=client.call('GET',route+'/records/'+record_id)['record'];x.verify_row(actual['fields'],fields)
+    actual=client.call('GET',route+'/records/'+record_id)['record'];x.verify_row(actual['fields'],fields,config)
     result={'status':'verified','note_id':note_id,'record_id':record_id,'attachments':len(tokens)};x.save(receipt,result);return result
 
 

@@ -4,6 +4,8 @@
 
 后续小红书日采集与群内手动链接收录统一写入[社媒创作者与招募](https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c?table=tblgJwoOT0G3naT0&view=vewJHxyWE5)。目标表和视图分别为 `tblgJwoOT0G3naT0`、`vewJHxyWE5`，以 `config/social_chat_xhs_daily.json` 为准，日报链接同样读取该配置。已有采集、审核、排名和回执保持原记录；调度开关不变。
 
+附件统一写入配置的 `feishu.attachment_field=竞品素材（图片/视频/Playable）去除男频`。图片和视频按已核验媒体类型填写“素材类型”，通过原审核的全部附件均写入这一列；新上传不再分别写入图片附件/视频附件，已有两列内容保留。字段初始化与远端附件读回使用同一配置；未配置统一列的历史调用仍保留原分列行为。
+
 ## 2026-10-22：持久化异步搜索、媒体续传和电源预检
 
 日采集搜索统一使用 `mode=async`，每个关键词/页先落盘提交意图，再只提交一次。小红书证据位于 `keywords/序号/pages/页码.job/`；抖音新批位于 `search/序号/`。`job-intent.json` 绑定业务参数、实际提交时间和地址指纹；`submit-response.json` 保留原始 job_id/费用；`job-state.json`、逐次 `poll-*.json` 和 `result.json` 保留真实状态与结果。JSON采用600权限、fsync和原子替换，批次/单job文件锁防并发重复提交。成功结果缓存直接复用，pending、网络中断或进程重启后只对已保存job_id做免费GET查询；没有确定提交回执时停止，不自动重发POST，明确未收费503也不会被无限重试。

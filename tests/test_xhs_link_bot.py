@@ -70,9 +70,12 @@ def test_uncertain_supplier_request_never_replays(tmp_path):
  b.x.save(tmp_path/'note-intent.json',{'note_id':'a'})
  with pytest.raises(ValueError,match='不确定'):b.fetch_note('https://www.xiaohongshu.com/explore/'+'a'*24,'a',tmp_path,{'api':{'endpoint':'https://unused'}})
 
-def test_manual_import_uses_own_key_and_verifies_readback(tmp_path,monkeypatch):
+@pytest.mark.parametrize('is_video',[False,True])
+@pytest.mark.parametrize('unified',[None,'竞品素材（图片/视频/Playable）去除男频'])
+def test_manual_import_uses_own_key_and_verifies_readback(tmp_path,monkeypatch,is_video,unified):
  note_id='a'*24;url='https://www.xiaohongshu.com/explore/'+note_id
- note={'id':note_id,'url':url,'is_video':False,'posted_at':'2026-10-19T00:00:00Z','matched_keywords':[],'title':'fixture'}
+ note={'id':note_id,'url':url,'is_video':is_video,'posted_at':'2026-10-19T00:00:00Z','matched_keywords':[],'title':'fixture'}
+ target=unified or ('视频附件' if is_video else '图片附件')
  manifest={'files':[{'path':'image.png','sha256':'digest','width':10,'height':10,'url':'https://a.xhscdn.com/img'}]}
  (tmp_path/'image.png').write_bytes(b'image')
  monkeypatch.setattr(b,'fetch_note',lambda *args:note)
@@ -84,13 +87,16 @@ def test_manual_import_uses_own_key_and_verifies_readback(tmp_path,monkeypatch):
   def call(self,method,route,**kw):
    if route.endswith('batch_create'):
     self.created+=1;self.rows=[{'record_id':'record','fields':kw['json']['records'][0]['fields']}]
-    self.rows[0]['fields']['图片附件'][0]['size']=5
+    self.rows[0]['fields'][target][0]['size']=5
     return {'records':self.rows}
    if method=='GET':return {'record':self.rows[0]}
    raise AssertionError('Unexpected update/retirement')
  client=Client();config={'feishu':{'app_token':'app','table_id':'table'}}
+ if unified:config['feishu']['attachment_field']=unified
  assert b.import_link(url,tmp_path,client,config)['status']=='verified'
  assert client.rows[0]['fields']['唯一键']=='小红书|手动|'+note_id
+ assert target in client.rows[0]['fields']
+ if unified:assert not {'图片附件','视频附件'} & client.rows[0]['fields'].keys()
  assert b.import_link(url,tmp_path,client,config)['status']=='already_imported'
  assert client.created==1
 

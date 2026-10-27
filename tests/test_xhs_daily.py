@@ -12,6 +12,49 @@ def note(i='a', likes=5, posted='2026-10-19T10:00:00+00:00'):
             'is_video':True,'matched_keywords':['乙女向']}
 
 
+def test_daily_images_and_videos_share_configured_attachment_column(tmp_path,monkeypatch):
+    import copy
+    unified='竞品素材（图片/视频/Playable）去除男频'
+    config={'feishu':{'app_token':'app','table_id':'table','attachment_field':unified}}
+    images={**note('image'),'is_video':False};video=note('video');manifests={}
+    for n,filename in [(images,'image.png'),(video,'video.mp4')]:
+        path=tmp_path/filename;path.write_bytes(b'video01' if n['is_video'] else b'image01')
+        manifests[n['id']]={'files':[{'path':filename,'sha256':x.sha(path),'size':7,'width':10,'height':10,'url':'https://cdn.invalid/'+filename}]}
+    x.save(tmp_path/'run.json',{'started_at':'2026-10-27T10:00:00+08:00'})
+    monkeypatch.setattr(x,'media',lambda n,*a:manifests[n['id']])
+    monkeypatch.setattr(x,'reviewed_images',lambda n,*a:manifests[n['id']])
+    uploads=[]
+    def upload(client,config,path,name):
+        uploads.append(name);return 'token-'+name
+    monkeypatch.setattr(x,'upload_attachment',upload)
+    class Client:
+        def __init__(self):self.schema=[];self.rows=[]
+        def listing(self,route):return self.schema if route.endswith('/fields') else self.rows
+        def call(self,method,route,**kwargs):
+            if method=='POST' and route.endswith('/fields'):
+                self.schema.append(copy.deepcopy(kwargs['json']));return {}
+            if method=='POST' and route.endswith('/records/batch_create'):
+                records=[]
+                for item in kwargs['json']['records']:
+                    fields=copy.deepcopy(item['fields'])
+                    for attachment in fields[unified]:attachment['size']=7
+                    record={'record_id':'record-'+str(len(self.rows)),'fields':fields}
+                    self.rows.append(record);records.append(record)
+                return {'records':records}
+            raise AssertionError((method,route))
+    client=Client();monkeypatch.setattr(x,'authorized_client',lambda config:client)
+    selection={'selected':2,'items':[images,video]}
+    for _ in range(2):
+        _,result=x.sync(tmp_path,selection,config,'2026-10-27')
+        assert result['status']=='complete' and result['video_success']==result['image_success']==1
+    assert len(client.rows)==2 and uploads==['image.png','video.mp4']
+    assert {f['field_name']:f['type'] for f in client.schema}[unified]==17
+    assert not {'图片附件','视频附件'} & {f['field_name'] for f in client.schema}
+    for r in client.rows:
+        assert len(r['fields'][unified])==1
+        assert not {'图片附件','视频附件'} & r['fields'].keys()
+
+
 def fixture_run(tmp_path, monkeypatch, notes):
     cfg=tmp_path/'config.json';x.save(cfg,{'keywords':['乙女向','女性向']});monkeypatch.setattr(x,'CONFIG',cfg)
     clean=[{k:v for k,v in n.items() if k!='matched_keywords'} for n in notes]

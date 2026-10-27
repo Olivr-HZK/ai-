@@ -294,16 +294,33 @@ def bitable_url(config):
     return url
 
 
+def attachment_field(config, is_video):
+    name = config.get('feishu', {}).get('attachment_field')
+    if name is None:
+        return '视频附件' if is_video else '图片附件'
+    if not isinstance(name, str) or not name.strip() or dict(FIELDS).get(name, 17) != 17:
+        raise ValueError('Invalid configured attachment field')
+    return name
+
+
+def field_definitions(config):
+    if config.get('feishu', {}).get('attachment_field') is None:
+        return FIELDS
+    name = attachment_field(config, True)
+    return [(n, k) for n, k in FIELDS if n not in ('视频附件', '图片附件', name)] + [(name, 17)]
+
+
 def provision(client, config):
     route = f"bitable/v1/apps/{config['feishu']['app_token']}/tables/{config['feishu']['table_id']}"
+    definitions = field_definitions(config)
     existing = {f['field_name']: f for f in client.listing(route+'/fields')}
-    for name, kind in FIELDS:
+    for name, kind in definitions:
         if name in existing:
             if existing[name]['type'] != kind: raise ValueError('Field type mismatch: '+name)
         else:
             client.call('POST', route+'/fields', json={'field_name': name, 'type': kind})
     verified = {f['field_name']: f['type'] for f in client.listing(route+'/fields')}
-    if any(verified.get(n) != k for n, k in FIELDS): raise ValueError('Schema readback failed')
+    if any(verified.get(n) != k for n, k in definitions): raise ValueError('Schema readback failed')
     return route
 
 
@@ -387,8 +404,9 @@ def row_fields(note, manifest, day, base):
     return values
 
 
-def verify_row(actual, expected):
+def verify_row(actual, expected, config=None):
     kinds=dict(FIELDS)
+    kinds.update(field_definitions(config or {}))
     for name,value in expected.items():
         got=actual.get(name);kind=kinds[name]
         if value is None:ok=got is None or got==''
@@ -445,7 +463,7 @@ def sync(base, selection, config, day):
                 if digest not in uploads:
                     token=upload_attachment(client,config,path,path.name);uploads[digest]=token;save(base/'uploads.json',uploads)
                 tokens.append({'file_token':uploads[digest]})
-            fields['视频附件' if note['is_video'] else '图片附件']=tokens
+            fields[attachment_field(config,note['is_video'])]=tokens
             existing=by_key.get(fields['唯一键'])
             # First discovery means first locally observed date, never publication date.
             if not existing or not existing['fields'].get('首次发现日期'):fields['首次发现日期']=datetime.fromisoformat(load(base/'run.json')['started_at']).astimezone(TZ).date().isoformat()
@@ -454,7 +472,7 @@ def sync(base, selection, config, day):
                 if text_field(existing['fields'].get('采集批次'))==base.name:
                     fields['同步时间']=text_field(existing['fields'].get('同步时间'))
                 try:
-                    verify_row(existing['fields'],fields)
+                    verify_row(existing['fields'],fields,config)
                 except ValueError:
                     client.call('PUT',route+'/records/'+existing['record_id'],json={'fields':fields})
             else:
@@ -466,14 +484,14 @@ def sync(base, selection, config, day):
         save(base/'media-failures.json',failures)
         print(json.dumps({'phase':'media_and_sync','note_id':note['id'],'verified_pending':len(expected),'failures':len(failures)},ensure_ascii=False),flush=True)
     remote=client.listing(route+'/records');lookup={text_field(r['fields'].get('唯一键')):r for r in remote}
-    for e in expected:verify_row(lookup[e['唯一键']]['fields'],e)
+    for e in expected:verify_row(lookup[e['唯一键']]['fields'],e,config)
     desired={e['唯一键'] for e in expected}
     # Retire only previous XHS selections for the same reporting day after successful new readback.
     if not failures:
         old=[{'record_id':r['record_id'],'fields':{'当前入选':False}} for r in remote if text_field(r['fields'].get('平台'))=='小红书' and text_field(r['fields'].get('唯一键')).startswith('小红书|'+day+'|') and text_field(r['fields'].get('目标日期'))==day and r['fields'].get('当前入选') is True and text_field(r['fields'].get('唯一键')) not in desired]
         if old:client.call('POST',route+'/records/batch_update',json={'records':old})
     final=client.listing(route+'/records')
-    for e in expected:verify_row(next(r['fields'] for r in final if text_field(r['fields'].get('唯一键'))==e['唯一键']),e)
+    for e in expected:verify_row(next(r['fields'] for r in final if text_field(r['fields'].get('唯一键'))==e['唯一键']),e,config)
     result={'status':'complete' if not failures else 'partial','selected':selection['selected'],'verified_rows':len(expected),'failures':failures,
             'video_success':sum(e['素材类型']=='视频' for e in expected),'image_success':sum(e['素材类型']=='图片' for e in expected)}
     save(base/'sync.json',result);return client,result
