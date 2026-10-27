@@ -24,6 +24,12 @@ t日执行，只保留北京时间t−1自然日00:00（含）至t日00:00（不
 
 搜索接口仍使用last_24_hours及真实游标，已有结果不重新付费搜索。接口窗口是取数条件，本地自然日是入选条件；不能将接口结果宣称为整个目标自然日的全站全量。日期筛选不降低图片/视频实际主体审核、点赞前100、失败不补位及附件远端核验要求。以下旧滚动窗口规则仅用于未迁移的历史scope。
 
+## 2026-10-27：小红书写入社媒独立数据表
+
+后续小红书日采集与群内手动链接收录统一写入[社媒创作者与招募](https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c?table=tblgJwoOT0G3naT0&view=vewJHxyWE5)。目标表和视图分别为 `tblgJwoOT0G3naT0`、`vewJHxyWE5`，以 `config/social_chat_xhs_daily.json` 为准，日报链接同样读取该配置。已有采集、审核、排名和回执保持原记录；调度开关不变。
+
+新日批在`daily-context.json`固定目标表和视图；恢复时沿用原目标。旧未完成日批优先使用与原run和目标日匹配的配置快照；没有快照的旧批保留原小红书表`tblwhAqPfQoBXK3Q`，避免迁移到新表。已交付历史批次只核验回执并结束。
+
 ## 2026-10-22：持久化异步搜索、媒体续传和电源预检
 
 日采集搜索统一使用 `mode=async`，每个关键词/页先落盘提交意图，再只提交一次。小红书证据位于 `keywords/序号/pages/页码.job/`；抖音新批位于 `search/序号/`。`job-intent.json` 绑定业务参数、实际提交时间和地址指纹；`submit-response.json` 保留原始 job_id/费用；`job-state.json`、逐次 `poll-*.json` 和 `result.json` 保留真实状态与结果。JSON采用600权限、fsync和原子替换，批次/单job文件锁防并发重复提交。成功结果缓存直接复用，pending、网络中断或进程重启后只对已保存job_id做免费GET查询；没有确定提交回执时停止，不自动重发POST，明确未收费503也不会被无限重试。

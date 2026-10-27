@@ -45,6 +45,10 @@
     "required_for_keep": true
   },
   "feishu": {
+    "source_link_field_id": "fldM60UZFW",
+    "source_link_field_name": "链接",
+    "attachment_field_id": "fldRHIjFcO",
+    "attachment_field_name": "竞品素材（图片/视频/Playable）去除男频",
     "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
     "table_id": "tblwhAqPfQoBXK3Q",
     "base_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c"

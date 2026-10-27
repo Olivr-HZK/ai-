@@ -12,6 +12,21 @@ def note(i='a', likes=5, posted='2026-10-19T10:00:00+00:00'):
             'is_video':True,'matched_keywords':['乙女向']}
 
 
+def test_new_and_old_daily_batches_keep_their_original_table(tmp_path):
+    config={'feishu':{'app_token':'base','base_url':'https://example.com/base','table_id':'new','view_id':'new-view','expected_app_id':'app'}}
+    old={'target_date':'2026-10-26'}
+    legacy=x.daily_destination(tmp_path,config,old)
+    assert legacy['feishu']['table_id']=='tblwhAqPfQoBXK3Q' and not legacy['feishu']['view_id']
+    pinned={**old,'feishu_target':{'app_token':'base','base_url':'https://example.com/base','table_id':'new','view_id':'new-view'}}
+    assert x.daily_destination(tmp_path,config,pinned)['feishu']['table_id']=='new'
+    x.save(tmp_path/'run.json',{'started_at':'2026-10-27T00:00:00+08:00'})
+    x.save(tmp_path/'runtime/config-snapshot.json',{'target_date':old['target_date'],'run_sha256':x.sha(tmp_path/'run.json'),
+           'config':{'feishu':{'app_token':'base','base_url':'https://example.com/base','table_id':'snapshot'}}})
+    assert x.daily_destination(tmp_path,config,old)['feishu']['table_id']=='snapshot'
+    x.save(tmp_path/'run.json',{'changed':True})
+    with pytest.raises(ValueError,match='snapshot'):x.daily_destination(tmp_path,config,old)
+
+
 def fixture_run(tmp_path, monkeypatch, notes):
     cfg=tmp_path/'config.json';x.save(cfg,{'keywords':['乙女向','女性向']});monkeypatch.setattr(x,'CONFIG',cfg)
     clean=[{k:v for k,v in n.items() if k!='matched_keywords'} for n in notes]

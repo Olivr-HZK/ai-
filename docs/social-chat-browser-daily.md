@@ -14,8 +14,18 @@
 
 当前内容口径为男性角色展示、女频恋爱/伴侣陪伴相关、不要真人主持式产品推广口播；女性配角、手部、非主持真人恋爱剧情可保留。存疑不纳入。风格用character-style-v2组合标签，同次保存画面依据；旧风格不机械改名。视频六帧为画面初筛，不称完整审听。实际媒体不足100条时取通过数，不用存疑或缺失补足。App ID未观察到留空，报告估值仅是插件采集快照，未见重投标签是未知。
 
-精选包命名Afizzy_竞品精选_YYYY-MM-DD_N条.zip，N用实际素材数量；内部排名_App名_广告ID.原格式，多图同排名文件夹，附CSV估值/风格/审核说明、说明MD与SHA256。已审核插件视频selection可用social_chat_selected_package；其他插件图片布局先规范化全部原图。保留原字节，CRC及包内逐媒体SHA256核验，重跑复用、变化另存版本。
+精选包命名Afizzy_竞品精选_YYYY-MM-DD_N条.zip，N用实际素材数量；内部日期-序号-广告主.原格式，多图同排名文件夹，附CSV估值/风格/审核说明、说明MD与SHA256。已审核插件视频selection可用social_chat_selected_package；其他插件图片布局先规范化全部原图。保留原字节，CRC及包内逐媒体SHA256核验，重跑复用、变化另存版本。
 
 目标飞书表沿config指定链接，平台广大大、来源每日最新，真实附件与业务字段读回；按独立插件批次键幂等，保护其他批次和手动记录。普通插件包不冒充21项App完整日采集，不套用旧全量日报或发送“正在抓取”@全体。需群播报时使用真实交接范围和既有明确授权，不重发。
 
 操作细则见skills/social-chat-browser-daily/references/plugin-handoff.md和content-review.md。只有用户明确要求直接浏览器采集/恢复旧浏览器任务时才用浏览器备用流程；其CLI显式加--collection-mode direct-browser-v1。旧说明保存在social-chat-browser-daily-legacy.md，旧scope/断点/历史审核保持原规则。
+
+后续飞书上传附件和ZIP内素材共用日期-序号-广告主.原格式，日期用目标日YYYY-MM-DD、序号按最终入选排名001起，多图加-01等分图号；广告ID保留在清单。统一命名函数social_chat_media_names.media_filename，上传用mixed_delivery.upload_selected（缓存包含文件名），并实际读回附件名/精确大小；原字节及后缀保留。本次不追溯改历史附件或重新上传。
+
+## 2026-10-27 统一素材附件字段
+
+所有实际入表视频、图片以及已有/明确允许入表的Playable原附件共用一个附件字段：字段ID `fldRHIjFcO`，当前名称 `竞品素材（图片/视频/Playable）去除男频`。写入前读取实际schema，按config.feishu.attachment_field_id匹配并核对附件类型17，再使用实际当前名称；本地预览可用config中的名称快照。不要重新创建旧“视频附件”“图片附件”列，也不能按素材类型把另一列清空。素材类型本身继续分别记录。Playable可存原HTML等文件但不得执行；统一附件字段不扩张原采集/审核/排名范围，不把Playable封面冒充已取得原文件。
+
+插件批次将upload_selected返回的真实token写入上述同一字段，多图全部上传/保留，按实际字段读回token、名称、精确大小；verify/verify_attachment_names需要传实际字段名。旧分列附件迁移只能在明确授权下将原token与目标已有token有序去重合并，保留旧源列、复刻附件及其他业务字段，不能覆盖目标已有文件、改审核结论或批量重传。
+
+2026-10-27 主列约定：链接（原appid列，type1，ID fldM60UZFW）保存原广大大详情的实际URL，App ID在独立列；后续不重建旧appid/广大大详情列。读取须使用text_field_as_array=true并提取富文本link，显示“查看详情”并不表示URL丢失。现有记录保持，新增写真实URL并读回核验。

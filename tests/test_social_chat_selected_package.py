@@ -39,8 +39,10 @@ def test_mixed_package_contains_all_originals_and_is_idempotent(tmp_path):
             assert row['app_id'] == ''
             for f in row['files']:
                 assert hashlib.sha256(z.read(f['path'])).hexdigest() == f['sha256']
-        assert manifest['items'][0]['files'][0]['path'].endswith('.webm')
+        assert manifest['items'][0]['files'][0]['path']=='视频/2026-10-25-001-App_ Male_Story.webm'
         assert len(manifest['items'][1]['files']) == 2
+        assert manifest['items'][1]['files'][0]['path']=='图片/2026-10-25-002-App_ Male_Story/2026-10-25-002-App_ Male_Story-01.png'
+        assert manifest['items'][1]['files'][1]['path'].endswith('2026-10-25-002-App_ Male_Story-02.jpg')
         assert b'_source' not in z.read('校验清单.json')
     assert package_selection(tmp_path, selected)['sha256'] == receipt['sha256']
     changed = copy.deepcopy(selected)

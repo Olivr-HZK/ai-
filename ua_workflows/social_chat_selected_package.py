@@ -8,18 +8,14 @@ import hashlib
 import io
 import json
 from pathlib import Path
-import re
 import tempfile
 import zipfile
+from ua_workflows.social_chat_media_names import NAMING_VERSION, media_filename, media_stem
 
 
 def digest(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
-
-
-def safe_name(value):
-    return re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', str(value)).strip(' .')[:40] or '未命名'
 
 
 def local_file(root, relative):
@@ -31,7 +27,7 @@ def local_file(root, relative):
     return path
 
 
-def normalize(base, entry, rank):
+def normalize(base, entry, rank, target_date):
     review = entry.get('review', {})
     if review.get('decision') != 'keep' or entry.get('decision', 'keep') != 'keep':
         raise ValueError('Only reviewed keep items may be packaged')
@@ -64,15 +60,15 @@ def normalize(base, entry, rank):
     from ua_workflows.social_chat_browser_daily import estimate as parse_estimate
     if parse_estimate(numeric) != parse_estimate(estimate):
         raise ValueError('Selection estimate mismatch')
-    prefix = f'{rank:03d}_{safe_name(app)}_{safe_name(ad)}'
+    prefix = media_stem(target_date, rank, app)
     files = []
     for n, (path, sha) in enumerate(sources, 1):
         if digest(path) != sha:
             raise ValueError('Selected media SHA256 mismatch')
         ext = path.suffix.lower()
-        if not re.fullmatch(r'\.[a-z0-9]{1,8}', ext):
-            raise ValueError('Selected media needs a valid file extension')
-        name = f'视频/{prefix}{ext}' if kind == '视频' else f'图片/{prefix}/{n:02d}{ext}'
+        filename = media_filename(target_date, rank, app, ext, n if len(sources) > 1 else None)
+        name = f'视频/{filename}' if kind == '视频' else (
+            f'图片/{prefix}/{filename}' if len(sources) > 1 else f'图片/{filename}')
         files.append({'path': name, 'sha256': sha, 'size': path.stat().st_size, '_source': path})
     return {'rank': rank, 'app_name': app, 'os': os_name, 'app_id': app_id, 'ad_id': ad,
             'media_type': kind, 'estimate': estimate, 'estimate_number': float(numeric),
@@ -85,7 +81,7 @@ def normalize(base, entry, rank):
 def package_selection(base, selection, output_dir=None):
     base = Path(base).resolve()
     target = date.fromisoformat(selection['target_date']).isoformat()
-    items = [normalize(base, e, n) for n, e in enumerate(selection['items'], 1)]
+    items = [normalize(base, e, n, target) for n, e in enumerate(selection['items'], 1)]
     if not items:
         return {'status': 'empty', 'selected': 0}
     expected = selection.get('selected_count', selection.get('counts', {}).get('selected', len(items)))
@@ -97,7 +93,7 @@ def package_selection(base, selection, output_dir=None):
     if len(keys) != len(set(keys)):
         raise ValueError('Duplicate selected identity')
     public = [{**i, 'files': [{k: v for k, v in f.items() if k != '_source'} for f in i['files']]} for i in items]
-    manifest = {'version': 'selected-media-package/v1', 'target_date': target,
+    manifest = {'version': 'selected-media-package/v1', 'naming_version': NAMING_VERSION, 'target_date': target,
                 'selected': len(items), 'video_items': sum(i['media_type'] == '视频' for i in items),
                 'image_items': sum(i['media_type'] == '图片' for i in items), 'items': public}
     encoded = json.dumps(manifest, ensure_ascii=False, indent=2).encode()

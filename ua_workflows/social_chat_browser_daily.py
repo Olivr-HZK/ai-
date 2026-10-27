@@ -23,12 +23,13 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / 'config/social_chat_browser_daily.json'
 FSM_SCRIPT = ROOT / 'skills/guangdada-browser-crawl/scripts/state.py'
 TZ = ZoneInfo('Asia/Shanghai')
+SOURCE_LINK_FIELD = '链接'
 FIELDS = [
-    ('appid', 1), ('目标日期', 1), ('首次发现日期', 1), ('广告主', 3),
+    (SOURCE_LINK_FIELD, 1), ('目标日期', 1), ('首次发现日期', 1), ('广告主', 3),
     ('平台', 3), ('App ID', 1), ('广告ID', 1), ('展示估值', 2), ('展示估值原文', 1),
     ('当前入选', 7), ('来源', 3),
     ('投放渠道', 4), ('投放地区', 4), ('文案语言', 4), ('素材尺寸', 1),
-    ('视频链接', 15), ('广大大详情', 15), ('非真人口播判断', 1),
+    ('视频链接', 15), ('非真人口播判断', 1),
     ('审核说明', 1), ('审核方式', 1), ('采集批次', 1), ('唯一键', 1), ('同步时间', 1),
 ]
 
@@ -334,12 +335,20 @@ class Feishu:
 
     def listing(self, route):
         items, cursor = [], None
+        records = route.rstrip('/').endswith('/records')
         while True:
             params = {'page_size': 100}
+            if records:
+                # Plain-text mode returns only a hyperlink's label, hiding its URL.
+                params['text_field_as_array'] = 'true'
             if cursor:
                 params['page_token'] = cursor
             page = self.call('GET', route, params=params)
-            items.extend(page.get('items', []))
+            batch = page.get('items', [])
+            if records:
+                items.extend(normalize_record_texts(row) for row in batch)
+            else:
+                items.extend(batch)
             if not page.get('has_more'):
                 return items
             new = page.get('page_token')
@@ -360,6 +369,11 @@ def table_url(config):
 def provision(config, client):
     route = table_route(config)
     existing = {f['field_name']: f for f in client.listing(route + '/fields')}
+    source_id = config.get('feishu', {}).get('source_link_field_id')
+    if source_id and any('field_id' in f for f in existing.values()):
+        matched = [f for f in existing.values() if f.get('field_id') == source_id]
+        if len(matched) != 1 or matched[0]['type'] != 1 or matched[0]['field_name'] != SOURCE_LINK_FIELD:
+            raise ValueError('Source link primary field identity/name/type changed; do not recreate old columns')
     for name, kind in FIELDS:
         if name in existing:
             if existing[name]['type'] != kind:
@@ -379,7 +393,10 @@ def unique_key(target, card):
 
 
 def record_fields(selection, card):
-    return {'appid': card['app_id'],
+    detail_url = source_link_url(card['detail_url'])
+    if not detail_url:
+        raise ValueError('A real observed creative-detail URL is required for 链接')
+    return {SOURCE_LINK_FIELD: detail_url,
             '目标日期': selection['target_date'], '首次发现日期': card['first_discovered_date'],
             '广告主': card['app_name'], '平台': '广大大', 'App ID': card['app_id'],
             '广告ID': card['ad_id'], '展示估值': card['estimate_number'],
@@ -387,7 +404,6 @@ def record_fields(selection, card):
             '当前入选': True, '来源': '每日最新', '投放渠道': [card['channel']] if card.get('channel') else [], '投放地区': card['regions'],
             '文案语言': [card['language']] if card.get('language') else [], '素材尺寸': card.get('dimensions') or '',
             '视频链接': {'text': '查看视频', 'link': card['video_url']},
-            '广大大详情': {'text': '查看详情', 'link': card['detail_url']},
             '非真人口播判断': '非真人口播（画面初筛）', '审核说明': card['review_reason'],
             '审核方式': card['review_method'] + '；六帧已查看，未完整审听',
             '采集批次': selection['scope_sha256'], '唯一键': unique_key(selection['target_date'], card),
@@ -398,6 +414,41 @@ def text_field(value):
     if isinstance(value, list):
         return ''.join(x.get('text', '') if isinstance(x, dict) else str(x) for x in value)
     return value or ''
+
+
+def source_link_url(value):
+    """Read the actual URL, never accept a display label as a source link."""
+    from urllib.parse import urlsplit
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            parsed = urlsplit(text)
+        except ValueError:
+            return ''
+        return text if parsed.scheme in ('https', 'http') and parsed.netloc else ''
+    if isinstance(value, dict):
+        urls = {source_link_url(value.get(k)) for k in ('link', 'href', 'url', 'text')}
+    elif isinstance(value, list):
+        urls = {source_link_url(item) for item in value}
+    else:
+        return ''
+    urls.discard('')
+    return next(iter(urls)) if len(urls) == 1 else ''
+
+
+def normalize_record_texts(row):
+    """Preserve the source URL; keep all other text fields' existing scalar contract."""
+    fields = dict(row['fields'])
+    for name, value in fields.items():
+        if name == SOURCE_LINK_FIELD:
+            url = source_link_url(value)
+            if url:
+                fields[name] = url
+                continue
+        if (isinstance(value, list) and value and all(isinstance(v, dict)
+                and v.get('type') in ('text', 'url') and 'text' in v for v in value)):
+            fields[name] = text_field(value)
+    return {**row, 'fields': fields}
 
 
 def verify_rows(rows, desired):
@@ -412,7 +463,9 @@ def verify_rows(rows, desired):
         actual = by_key.get(fields['唯一键'], {})
         for name, kind in FIELDS:
             expected, value = fields[name], actual.get(name)
-            if kind in (1, 3):
+            if name == SOURCE_LINK_FIELD:
+                same = bool(source_link_url(expected)) and source_link_url(value) == expected
+            elif kind in (1, 3):
                 same = text_field(value) == expected
             elif kind == 4:
                 same = isinstance(value, list) and sorted(value) == sorted(expected)

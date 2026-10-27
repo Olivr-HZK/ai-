@@ -495,6 +495,34 @@ def authorized_client(config):
     return Feishu()
 
 
+def bitable_url(config):
+    target = config['feishu']
+    url = target['base_url'] + '?table=' + target['table_id']
+    if target.get('view_id'):
+        url += '&view=' + target['view_id']
+    return url
+
+
+def daily_destination(base, config, context):
+    """Keep an unfinished batch on its original table after a destination change."""
+    target = context.get('feishu_target')
+    snapshot_path = Path(base)/'runtime/config-snapshot.json'
+    if target is None and snapshot_path.exists():
+        snapshot=load(snapshot_path)
+        if (snapshot.get('target_date')!=context['target_date'] or not (Path(base)/'run.json').is_file()
+                or snapshot.get('run_sha256')!=sha(Path(base)/'run.json')):
+            raise ValueError('Historical destination snapshot does not match the batch')
+        target=snapshot['config']['feishu']
+    if target is None:
+        # Earlier batches predate destination snapshots and used the former XHS table.
+        target={**config['feishu'],'table_id':'tblwhAqPfQoBXK3Q'}
+        target.pop('view_id',None)
+    if (not target.get('table_id') or target.get('app_token')!=config['feishu']['app_token']
+            or target.get('base_url')!=config['feishu']['base_url']):
+        raise ValueError('Pinned XHS destination does not match the configured base')
+    return {**config,'feishu':{**config['feishu'],**target,**({} if 'view_id' in target else {'view_id':None})}}
+
+
 def provision(client, config):
     route = f"bitable/v1/apps/{config['feishu']['app_token']}/tables/{config['feishu']['table_id']}"
     existing = {f['field_name']: f for f in client.listing(route+'/fields')}
@@ -764,7 +792,7 @@ def report(base,selection,config,client,synced,day):
     if receipt.exists():return load(receipt)
     setting=config['crawl_completion_report'];chat=client.call('GET','im/v1/chats/'+setting['chat_id'])
     if chat.get('name')!=setting['chat_name'] or chat.get('chat_mode')!='group':raise ValueError('Group identity mismatch')
-    summary=load(base/'summary.json');start=datetime.fromisoformat(load(base/'run.json')['started_at']).astimezone(TZ).isoformat();url=config['feishu']['base_url']+'?table='+config['feishu']['table_id']
+    summary=load(base/'summary.json');start=datetime.fromisoformat(load(base/'run.json')['started_at']).astimezone(TZ).isoformat();url=bitable_url(config)
     calendar_day=selection.get('date_filter_rule')==CALENDAR_DAY_RULE
     scope_text=(f'北京时间{day}自然日，7个关键词，最新排序' if calendar_day else '最近24小时，7个关键词，最新排序')
     time_note=('本地只保留目标自然日00:00至次日00:00前发布的内容；搜索接口仍按实际请求前24小时获取，可能不能完整覆盖目标自然日。\n'
@@ -825,10 +853,11 @@ def main():
         now=datetime.now(TZ);base=args.run_dir or folder/now.strftime('%Y%m%d')
         context=base/'daily-context.json'
         if context.exists():
-            day=load(context)['target_date']
+            value=load(context);day=value['target_date']
         else:
             day=(now-timedelta(days=1)).date().isoformat()
-            value={'target_date':day,'execution_started_at':now.isoformat(),'timezone':'Asia/Shanghai'}
+            value={'target_date':day,'execution_started_at':now.isoformat(),'timezone':'Asia/Shanghai',
+                   'feishu_target':{k:config['feishu'][k] for k in ('app_token','table_id','base_url','view_id') if k in config['feishu']}}
             if config.get('date_semantics')==CALENDAR_DAY_RULE:value['date_filter_rule']=CALENDAR_DAY_RULE
             save(context,value)
         # Completed batches keep their original selection and receipt across rule changes.
@@ -840,6 +869,7 @@ def main():
                 raise ValueError('Completed delivery evidence changed; refusing recomputation')
             print(json.dumps({'status':'already_delivered','directory':str(base),'target_date':day,
                               'collection_status':previous.get('collection_status','complete')},ensure_ascii=False));return
+        config=daily_destination(base,config,value)
         with collection_phase(base, 'xhs-daily'):
             if not (base/'summary.json').exists() or (load(base/'summary.json').get('status')!='complete' and not partial_collection_keywords(base, load(base/'summary.json'))):
                 from ua_workflows.social_search import collect_xhs
