@@ -68,6 +68,152 @@ def test_old_timestamp_blocks(tmp_path,monkeypatch):
     with pytest.raises(ValueError,match='window'):x.select(run)
 
 
+def pin_calendar_day(run):
+    x.save(run/'daily-context.json',{'target_date':'2026-10-19','execution_started_at':'2026-10-20T14:00:00+08:00',
+                                   'timezone':'Asia/Shanghai','date_filter_rule':x.CALENDAR_DAY_RULE})
+
+
+def test_calendar_day_filters_shanghai_boundaries_without_rewriting_raw_data(tmp_path,monkeypatch):
+    notes=[note('before',posted='2026-10-18T15:59:59+00:00'),
+           note('start',posted='2026-10-18T16:00:00Z'),
+           note('end',posted='2026-10-19T23:59:59+08:00'),
+           note('today',posted='2026-10-19T16:00:00+00:00'),
+           note('old',posted='2024-07-15T04:55:05+00:00')]
+    run=fixture_run(tmp_path,monkeypatch,notes);pin_calendar_day(run)
+    raw={str(p):p.read_bytes() for p in [run/'notes.json',*run.glob('keywords/*/pages/*.response.json')]}
+    # The local day stays fixed even for a late or resumed run; request windows do not redefine it.
+    for p in run.glob('keywords/*/pages/*.request.json'):
+        r=x.load(p);r['requested_at']='2026-10-20T14:00:00+08:00';x.save(p,r)
+    result=x.select(run)
+    assert {n['id'] for n in result['items']}=={'start','end'}
+    assert result['date_excluded_unique']==3 and result['date_excluded_hits']==6
+    assert result['target_day_start']=='2026-10-19T00:00:00+08:00'
+    assert result['target_day_end_exclusive']=='2026-10-20T00:00:00+08:00'
+    assert all(p.read_bytes()==data for name,data in raw.items() for p in [Path(name)])
+    assert len(x.load(run/'excluded-outside-target-day.json'))==6
+    assert x.load(run/'date-validation.json')['status']=='passed_target_calendar_day_filter'
+
+
+def test_calendar_day_requires_valid_target_and_aware_publication_timestamp(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note(posted='2026-10-19T10:00:00')]);pin_calendar_day(run)
+    with pytest.raises(ValueError,match='timezone'):x.select(run)
+    context=x.load(run/'daily-context.json');context['target_date']='2026-10-18';x.save(run/'daily-context.json',context)
+    with pytest.raises(ValueError,match='day before'):x.select(run)
+
+
+def test_calendar_day_excludes_irrelevant_missing_likes_without_filling_zero(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note('new'),{**note('old',likes=None,posted='2024-07-15T04:55:05Z'),'is_video':None}]);pin_calendar_day(run)
+    original=(run/'notes.json').read_bytes();result=x.select(run)
+    assert [n['id'] for n in result['items']]==['new'] and (run/'notes.json').read_bytes()==original
+    p=run/'notes.json';ns=x.load(p);ns[0]['like_count']=None;x.save(p,ns)
+    for p in run.glob('keywords/*/pages/*.response.json'):
+        d=x.load(p);d['results'][0]['like_count']=None;x.save(p,d)
+    with pytest.raises(ValueError,match='likes'):x.select(run)
+
+
+def test_calendar_day_cannot_keep_an_old_merged_note_using_a_conflicting_observation(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note(posted='2024-07-15T04:55:05Z')]);pin_calendar_day(run)
+    p=run/'keywords/02/pages/0001.response.json';d=x.load(p);d['results'][0]['posted_at']='2026-10-19T10:00:00Z';x.save(p,d)
+    with pytest.raises(ValueError,match='Conflicting publication timestamps'):x.select(run)
+
+
+def test_date_filter_precedes_image_download_without_per_batch_exception(tmp_path,monkeypatch):
+    notes=[{**note('keep'), 'is_video':False},
+           {**note('old',posted='2024-07-15T04:55:05Z'),'is_video':False}]
+    run=fixture_run(tmp_path,monkeypatch,notes);pin_calendar_day(run);calls=[]
+    monkeypatch.setattr(x,'media',lambda n,*a:(calls.append(n['id']) or {'files':[]}))
+    monkeypatch.setattr(x,'reviewed_images',lambda *a:{'files':[]})
+    assert x.prepare_image_review(run)['status']=='complete'
+    assert calls==['keep'] and not (run/'date-policy.json').exists()
+
+
+def test_completed_delivery_is_not_recomputed_after_configuration_change(tmp_path,monkeypatch,capsys):
+    base=tmp_path/'historical';x.save(base/'daily-context.json',{'target_date':'2026-10-19'})
+    x.save(base/'selection.json',{'original':'kept'});digest=x.sha(base/'selection.json')
+    x.save(base/'daily-result.json',{'target_date':'2026-10-19','selection_sha256':digest,
+                                   'collection_status':'partial','sync':{'status':'complete'},'report':{'message_id':'om_saved'}})
+    x.save(base/'report-receipt.json',{'message_id':'om_saved'})
+    cfg=tmp_path/'config.json';x.save(cfg,{'keywords':['changed'],'date_semantics':x.CALENDAR_DAY_RULE})
+    monkeypatch.setattr(x,'ROOT',tmp_path);monkeypatch.setattr(x,'CONFIG',cfg)
+    monkeypatch.setattr(x.sys,'argv',['xhs_daily','run','--run-dir',str(base)])
+    def never(*a):raise AssertionError('Completed delivery must not search or prepare media')
+    monkeypatch.setattr(x,'prepare_image_review',never);monkeypatch.setattr(x,'collection_phase',never)
+    x.main();assert 'already_delivered' in capsys.readouterr().out
+    assert x.sha(base/'selection.json')==digest
+
+
+def authorize_old_exclusion(run):
+    x.save(run/'daily-context.json',{'target_date':'2026-10-19'})
+    x.save(run/'manual-authorization.json',{'exclude_old_hits':True,'answer':'explicitly approved'})
+    x.save(run/'date-policy.json',{'version':'exclude_old_hits_v1','target_date':'2026-10-19',
+           'run_sha256':x.sha(run/'run.json'),'authorization_file':'manual-authorization.json',
+           'authorization_sha256':x.sha(run/'manual-authorization.json')})
+
+
+def test_authorized_date_exclusion_preserves_raw_and_filtered_denominators(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note('old',999,'2026-10-17T10:00:00+00:00'),note('new')])
+    before=(run/'notes.json').read_bytes();authorize_old_exclusion(run)
+    result=x.select(run)
+    assert result['raw_unique_notes']==2 and result['date_excluded_hits']==2
+    assert result['date_excluded_unique']==1 and result['denominator']==1
+    assert result['image_content_excluded']==0 and result['items'][0]['id']=='new'
+    assert (run/'notes.json').read_bytes()==before
+    assert len(x.load(run/'excluded-old-posts.json'))==2
+
+
+def test_date_exclusion_authorization_rejects_changed_scope_or_approval(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note()]);authorize_old_exclusion(run)
+    x.save(run/'manual-authorization.json',{'exclude_old_hits':True,'answer':'changed'})
+    with pytest.raises(ValueError,match='authorization evidence'):x.select(run)
+
+
+def test_authorized_old_exclusion_still_blocks_future_dates(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note(posted='2026-10-20T10:00:00+00:00')]);authorize_old_exclusion(run)
+    with pytest.raises(ValueError,match='window'):x.select(run)
+
+
+def test_partial_delivery_keeps_incomplete_search_status_and_binds_repeat_evidence(tmp_path,monkeypatch):
+    run=fixture_run(tmp_path,monkeypatch,[note()]);authorize_old_exclusion(run)
+    summary=x.load(run/'summary.json');summary['status']='incomplete'
+    summary['keywords'][0]['status']='incomplete';summary['keywords'][1]['status']='complete'
+    x.save(run/'summary.json',summary)
+    p=run/'keywords/01/pages/0001.response.json';response=x.load(p);response['next_page_token']='real-next';x.save(p,response)
+    duplicate=run/'keywords/01/pages/0002.response.json';x.save(duplicate,response)
+    proof={'response_path':str(duplicate.relative_to(run)),'response_sha256':x.sha(duplicate),
+           'duplicate_response_path':str(p.relative_to(run)),'duplicate_response_sha256':x.sha(p)}
+    x.save(run/'repeated-page-validation.json',proof)
+    x.save(run/'partial-delivery-authorization.json',{'allow_partial_delivery':True,'answer':'approved'})
+    x.save(run/'partial-collection-policy.json',{'version':'authorized_available_results_v1',
+           'target_date':'2026-10-19','run_sha256':x.sha(run/'run.json'),'summary_sha256':x.sha(run/'summary.json'),
+           'authorization_sha256':x.sha(run/'partial-delivery-authorization.json'),
+           'repeat_proof_sha256':x.sha(run/'repeated-page-validation.json'),
+           'incomplete_keyword':'乙女向','accepted_pages':1})
+    original=(run/'summary.json').read_bytes();result=x.select(run)
+    assert result['collection_status']=='partial' and result['incomplete_keywords']==['乙女向']
+    assert (run/'summary.json').read_bytes()==original and x.load(run/'summary.json')['status']=='incomplete'
+    response['results']=[];x.save(duplicate,response)
+    with pytest.raises(ValueError,match='Repeated page evidence'):x.select(run)
+
+
+@pytest.mark.parametrize('collection_status',['partial','complete'])
+def test_unavailable_media_needs_bound_explicit_approval_and_cannot_hide_available_file(tmp_path,monkeypatch,collection_status):
+    run=fixture_run(tmp_path,monkeypatch,[note('bad')])
+    monkeypatch.setattr(x,'validated_notes',lambda base:([note('bad')],{'collection_status':collection_status}))
+    assert len(x.reviewable_notes(run)[0])==1
+    x.save(run/'media/bad/failure.json',{'status':'failed','error_type':'ReadTimeout'})
+    x.save(run/'media-unavailable-authorization.json',{'allow_unavailable_media':True,'answer':'explicitly approved'})
+    x.save(run/'unavailable-media-policy.json',{'version':'authorized_unavailable_media_v1',
+           'run_sha256':x.sha(run/'run.json'),'summary_sha256':x.sha(run/'summary.json'),
+           'authorization_sha256':x.sha(run/'media-unavailable-authorization.json'),
+           'failures':[{'note_id':'bad','evidence':[{'path':'media/bad/failure.json','sha256':x.sha(run/'media/bad/failure.json')}]}]})
+    remaining,stats=x.reviewable_notes(run)
+    assert not remaining and stats['media_unavailable_notes']==1
+    assert stats['collection_status']==collection_status and stats['media_review_status']=='partial'
+    assert not (run/'media/bad/audience-review.json').exists()
+    x.save(run/'media/bad/manifest.json',{'note_id':'bad'})
+    with pytest.raises(ValueError,match='Available media'):x.reviewable_notes(run)
+
+
 def test_fields_preserve_null_and_do_not_invent_ad_data(tmp_path):
     row=x.row_fields(note(),{'files':[{'width':720,'height':954,'url':'https://sns-video.xhscdn.com/a.mp4'}]},'2026-10-19',tmp_path)
     assert row['分享数'] is None and row['收藏数']==0
@@ -79,11 +225,38 @@ def test_fields_preserve_null_and_do_not_invent_ad_data(tmp_path):
     with pytest.raises(ValueError):x.verify_row({'视频附件':[{'file_token':'a','size':0}]},{'视频附件':[{'file_token':'a'}]})
 
 
+def test_delivery_readback_rejects_truncation_duplicate_rows_and_local_changes(tmp_path,monkeypatch):
+    path=tmp_path/'video.mp4';path.write_bytes(b'original-video-bytes')
+    item={'path':'video.mp4','sha256':x.sha(path),'size':path.stat().st_size}
+    monkeypatch.setattr(x,'media',lambda *args:{'files':[item]})
+    fields={'唯一键':'key','笔记ID':'a','视频附件':[{'file_token':'token'}]}
+    remote=[{'record_id':'record','fields':{**fields,'视频附件':[{'file_token':'token','size':item['size']}]}}]
+    args=(tmp_path,{'items':[note()]},{},remote,[fields],{item['sha256']:'token'})
+    assert x.verify_delivery_rows(*args)['verified_attachments']==1
+    remote[0]['fields']['视频附件'][0]['size']-=1
+    with pytest.raises(ValueError,match='exact attachment size'):x.verify_delivery_rows(*args)
+    remote[0]['fields']['视频附件'][0]['size']=item['size'];remote.append(remote[0])
+    with pytest.raises(ValueError,match='unique key'):x.verify_delivery_rows(*args)
+    remote.pop();path.write_bytes(b'changed')
+    with pytest.raises(ValueError,match='local media changed'):x.verify_delivery_rows(*args)
+
+
 class MessageClient:
     def __init__(self):self.sent=[]
     def call(self,method,route,**kw):
         if method=='GET':return {'name':'霍振堃','chat_mode':'group'}
         self.sent.append(kw);return {'message_id':'om_test','chat_id':'oc_test'}
+
+
+def test_calendar_day_report_separates_local_day_from_provider_search_window(tmp_path):
+    x.save(tmp_path/'summary.json',{'raw_rows':3,'pages':1,'unique_notes':3,'video_notes':3,'image_notes':0})
+    x.save(tmp_path/'run.json',{'started_at':'2026-10-20T00:01:00+08:00'})
+    cfg={'feishu':{'base_url':'https://example.com/base','table_id':'table'},'crawl_completion_report':{'chat_id':'oc_test','chat_name':'霍振堃'}}
+    client=MessageClient();selection={'selected':1,'denominator':1,'date_filter_rule':x.CALENDAR_DAY_RULE}
+    x.report(tmp_path,selection,cfg,client,{'status':'complete','verified_rows':1,'video_success':1,'image_success':0,'failures':[]},'2026-10-19')
+    text=json.loads(client.sent[0]['json']['content'])['elements'][0]['text']['content']
+    assert '北京时间2026-10-19自然日' in text and '搜索接口仍按实际请求前24小时' in text
+    assert '可能不能完整覆盖目标自然日' in text
 
 
 def test_partial_report_and_idempotency(tmp_path):
@@ -96,6 +269,34 @@ def test_partial_report_and_idempotency(tmp_path):
     card=json.loads(client.sent[0]['json']['content']);assert '部分完成' in card['header']['title']['content']
     assert card['elements'][1]['actions'][0]['url']=='https://example.com/base?table=table'
     assert '展示估值' not in client.sent[0]['json']['content']
+
+
+def test_complete_search_with_authorized_unreviewed_media_reports_partial_once(tmp_path):
+    x.save(tmp_path/'summary.json',{'raw_rows':20,'pages':7,'unique_notes':20,'video_notes':10,'image_notes':10})
+    x.save(tmp_path/'run.json',{'started_at':'2026-10-27T00:00:00+08:00'})
+    cfg={'feishu':{'base_url':'https://example.com/base','table_id':'table'},'crawl_completion_report':{'chat_id':'oc_test','chat_name':'霍振堃'}}
+    client=MessageClient();selection={'selected':10,'denominator':10,'collection_status':'complete','media_review_status':'partial','media_unavailable_notes':4}
+    synced={'status':'complete','verified_rows':10,'video_success':5,'image_success':5,'failures':[]}
+    x.report(tmp_path,selection,cfg,client,synced,'2026-10-26')
+    x.report(tmp_path,selection,cfg,client,synced,'2026-10-26')
+    assert len(client.sent)==1
+    card=json.loads(client.sent[0]['json']['content']);text=card['elements'][0]['text']['content']
+    assert card['header']['template']=='orange' and '部分完成' in card['header']['title']['content']
+    assert '全部关键词已到接口末页' in text and '未审核：**4 篇**' in text
+    assert '排名仅基于已取得并审核的素材' in text and '未到末页' not in text
+
+
+def test_partial_collection_report_remains_partial_when_all_selected_rows_sync(tmp_path):
+    x.save(tmp_path/'summary.json',{'raw_rows':489,'pages':25,'unique_notes':451,'video_notes':114,'image_notes':337,'prior_timeout_billing_unknown':True})
+    x.save(tmp_path/'run.json',{'started_at':'2026-10-26T00:00:00+08:00'})
+    cfg={'feishu':{'base_url':'https://example.com/base','table_id':'table'},'crawl_completion_report':{'chat_id':'oc_test','chat_name':'霍振堃'}}
+    client=MessageClient();selection={'selected':16,'denominator':156,'collection_status':'partial','incomplete_keywords':['猫箱'],'media_unavailable_notes':6}
+    x.report(tmp_path,selection,cfg,client,{'status':'complete','verified_rows':16,'video_success':11,'image_success':5,'failures':[]},'2026-10-25')
+    card=json.loads(client.sent[0]['json']['content']);text=card['elements'][0]['text']['content']
+    assert card['header']['template']=='orange' and '部分完成' in card['header']['title']['content']
+    assert '猫箱未到末页' in text and '排名仅基于已获数据' in text
+    assert '未审核：**6 篇**' in text and '不计入可审核排名分母' in text
+    assert '全部关键词已到接口末页' not in text
 
 
 def test_range_download_resumes_and_checks_full_size(tmp_path,monkeypatch):
@@ -225,6 +426,30 @@ def test_audience_frames_use_real_sparse_video_frames(tmp_path):
     assert max(s['frame_index'] for s in samples)==1
     assert max(s['timestamp_seconds'] for s in samples)<=1
     assert all((tmp_path/s['path']).stat().st_size>0 for s in samples)
+
+
+def test_six_actual_indices_decode_once_and_verified_cache_never_rewrites(tmp_path,monkeypatch):
+    import subprocess
+    from PIL import Image,ImageStat
+    inputs=tmp_path/'inputs';inputs.mkdir();source=tmp_path/'sample.mp4'
+    for i in range(12):Image.new('RGB',(64,48),(i*20,)*3).save(inputs/f'{i+1:02}.png')
+    subprocess.run(['ffmpeg','-v','error','-y','-framerate','12','-i',str(inputs/'%02d.png'),'-frames:v','12','-c:v','libx264','-crf','0','-pix_fmt','yuv420p',str(source)],check=True)
+    real_run=subprocess.run;calls=[]
+    def traced(cmd,*a,**kw):calls.append(cmd[0]);return real_run(cmd,*a,**kw)
+    monkeypatch.setattr(x.subprocess,'run',traced)
+    samples=x.extract_audience_frames(source,tmp_path/'frames',tmp_path)
+    assert calls.count('ffmpeg')==1 and calls.count('ffprobe')==1
+    assert [s['frame_index'] for s in samples]==[0,2,4,7,9,11]
+    for s in samples:
+        with Image.open(tmp_path/s['path']) as im:mean=ImageStat.Stat(im.convert('RGB')).mean
+        assert all(abs(v-s['frame_index']*20)<=3 for v in mean)
+        assert abs(s['timestamp_seconds']-s['frame_index']/12)<0.001
+    before={s['path']:x.sha(tmp_path/s['path']) for s in samples}
+    assert x.extract_audience_frames(source,tmp_path/'frames',tmp_path)==samples
+    assert len(calls)==2 and before=={s['path']:x.sha(tmp_path/s['path']) for s in samples}
+    (tmp_path/samples[0]['path']).write_bytes(b'changed')
+    with pytest.raises(ValueError,match='frame evidence changed'):x.extract_audience_frames(source,tmp_path/'frames',tmp_path)
+    assert len(calls)==2
 
 
 def test_media_download_transport_fallback_and_length_check(tmp_path,monkeypatch):

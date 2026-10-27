@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 import json
 import fcntl
 import csv
+import hashlib
 from functools import wraps
 
 from ua_workflows.collection_runtime import collection_phase, record_failure, write
@@ -33,6 +34,25 @@ def cursor(payload):
     return token or None
 
 
+def resolve_page_job(request, canonical_job):
+    """Bind the one manual retry job to its retained original submission intent."""
+    canonical_job = Path(canonical_job).resolve()
+    job = Path(request.get('async_job_dir') or canonical_job).resolve()
+    if job == canonical_job:
+        return job
+    if job != canonical_job.with_suffix('.authorized-retry.job'):
+        raise ValueError('Unexpected async retry job directory')
+    authorization = load(job/'retry-authorization.json')
+    original = canonical_job/'job-intent.json'
+    if (authorization.get('original_job_dir') != str(canonical_job)
+            or not original.is_file()
+            or authorization.get('original_intent_sha256') != hashlib.sha256(original.read_bytes()).hexdigest()
+            or authorization.get('body') != request['body']
+            or authorization.get('max_additional_attempts') != 1):
+        raise ValueError('Authorized retry evidence mismatch')
+    return job
+
+
 def page(body, request_file, response_file, job, *, key, endpoint, poll_budget):
     request_file, response_file, job=map(Path,(request_file,response_file,job))
     if request_file.exists():
@@ -43,6 +63,7 @@ def page(body, request_file, response_file, job, *, key, endpoint, poll_budget):
         if response_file.exists(): return load(response_file),request
         if request.get('transport')!='persistent_async_v1':
             raise JobBlocked('Legacy request outcome uncertain; explicit retry authorization required')
+        job = resolve_page_job(request, job)
     else:
         request={'body':{**body,'mode':'async'},'requested_at':datetime.now(TZ).isoformat(),
                  'started_at':datetime.now(TZ).isoformat(),'transport':'persistent_async_v1'}
@@ -76,6 +97,12 @@ def collect_xhs(base,config,*,key,poll_budget=300):
     else:
         run={'started_at':datetime.now(TZ).isoformat(),'keywords':config['keywords'],
              'date_range':'last_24_hours','sort':'newest','content_type':'all','transport':'persistent_async_v1'}
+        if config.get('continuation_policy') is not None:
+            from ua_workflows.xhs_tolerance import validate_policy
+            run['continuation_policy']=validate_policy(config['continuation_policy'])
+        if config.get('video_duration_filter') is not None:
+            from ua_workflows.xhs_duration import validate_policy
+            run['video_duration_filter']=validate_policy(config['video_duration_filter'])
         write(runfile,run)
     if (base/'summary.json').exists():
         previous=load(base/'summary.json')

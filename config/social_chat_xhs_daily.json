@@ -37,7 +37,17 @@
       "legacy_unknown_requests": "explicit_authorization_required"
     }
   },
-  "date_semantics": "rolling_last_24_hours_at_request_time",
+  "date_semantics": "previous_calendar_day_asia_shanghai_v1",
+  "video_duration_filter": {
+    "rule": "video_stream_duration_max300_v1",
+    "max_seconds": 300
+  },
+  "continuation_policy": {
+    "rule": "majority_keywords_media_three_attempts_v1",
+    "minimum_complete_keywords": 4,
+    "detail_attempts": 3,
+    "media_attempts": 3
+  },
   "ranking": {
     "scope": "all_keywords_deduped_after_person_and_male_subject_review",
     "metric": "like_count",
@@ -52,8 +62,8 @@
   "schedule": {
     "timezone": "Asia/Shanghai",
     "time": "00:00",
-    "first_run": "2026-10-20T00:00:00+08:00",
-    "automation_id": "24",
+    "first_run": "2026-10-23T00:00:00+08:00",
+    "automation_id": "automation-4",
     "kind": "thread_heartbeat"
   },
   "feishu": {

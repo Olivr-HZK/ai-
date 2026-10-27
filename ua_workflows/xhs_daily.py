@@ -1,8 +1,10 @@
 """XHS keyword search -> global likes top decile -> media -> Bitable -> daily card."""
 from ua_workflows.collection_runtime import collection_phase, post_json, record_failure
 from ua_workflows.social_selection import selection_policy, selection_report
+from ua_workflows.xhs_tolerance import MediaUnavailable, bounded_acquire, exhausted_notes, policy_for
+from ua_workflows.xhs_duration import DurationExcluded, check_video, excluded_notes as duration_excluded_notes, policy_for as duration_policy_for
 import argparse
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 import math
@@ -44,6 +46,23 @@ def stable_uuid(seed):
 
 
 IMAGE_RULE = 'person_or_digital_human_v1'
+CALENDAR_DAY_RULE = 'previous_calendar_day_asia_shanghai_v1'
+
+
+def target_day_window(base):
+    """Use the pinned Shanghai calendar day; legacy scopes keep their old rule."""
+    path=Path(base)/'daily-context.json'
+    context=load(path) if path.exists() else {}
+    rule=context.get('date_filter_rule')
+    if rule is None:return None
+    if rule!=CALENDAR_DAY_RULE or context.get('timezone')!='Asia/Shanghai':
+        raise ValueError('Unsupported pinned date filter')
+    target=date.fromisoformat(context['target_date'])
+    executed=datetime.fromisoformat(context['execution_started_at'])
+    if executed.tzinfo is None or target!=executed.astimezone(TZ).date()-timedelta(days=1):
+        raise ValueError('Target date must be the day before the pinned execution date')
+    start=datetime.combine(target,datetime.min.time(),tzinfo=TZ)
+    return start,start+timedelta(days=1)
 
 
 def reviewed_images(note, base):
@@ -135,8 +154,9 @@ def prepare_image_review(base):
     from PIL import Image, ImageDraw
     base = Path(base); config = load(CONFIG); pending = []; failures = []
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    notes = [n for n in load(base / 'notes.json') if not n['is_video']]
-    pool = ThreadPoolExecutor(max_workers=6)
+    candidates = reviewable_notes(base)[0]
+    notes = [n for n in candidates if not n['is_video']]
+    pool = ThreadPoolExecutor(max_workers=3)
     futures = {pool.submit(media, n, base, config): n for n in notes}
     for future in as_completed(futures):
         note = futures[future]
@@ -146,6 +166,8 @@ def prepare_image_review(base):
                 reviewed_images(note, base)
             except ValueError:
                 pending.extend({'note_id': note['id'], **m} for m in manifest['files'])
+        except MediaUnavailable:
+            continue
         except Exception as exc:
             failures.append({'note_id': note['id'], 'error_type': type(exc).__name__, 'diagnostic': record_failure(base, 'xhs-media', exc)})
         save(base / 'image-review-progress.json', {'pending_images': len(pending), 'failures': failures})
@@ -162,6 +184,9 @@ def prepare_image_review(base):
             draw.text((x+4,y+243), Path(item['path']).name, fill='black')
         sheet.save(directory / f'{start//24+1:03}.jpg')
     result = {'rule': IMAGE_RULE, 'status': 'IMAGE_REVIEW_PENDING' if pending or failures else 'complete', 'images': pending, 'failures': failures}
+    if policy_for(base):
+        stats=reviewable_notes(base)[1]
+        result.update(media_unavailable_notes=stats['media_unavailable_notes'],media_unavailable_ids=stats['media_unavailable_ids'])
     save(base / 'image-review-index.json', result)
     return {k:v for k,v in result.items() if k!='images'}
 
@@ -169,17 +194,43 @@ def prepare_image_review(base):
 def extract_audience_frames(source, folder, base):
     # Audio/container duration can outlast sparse video frames. Select actual decoded
     # video frame indices instead of seeking beyond the last real frame.
-    probe=subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','frame=best_effort_timestamp_time','-of','json',str(source)],capture_output=True,text=True,check=True)
-    frames=json.loads(probe.stdout)['frames']
-    if not frames:raise ValueError('Missing actual video frames')
-    folder.mkdir(exist_ok=True);samples=[]
-    for index,fraction in enumerate((.02,.2,.4,.6,.8,.98),1):
-        frame_index=round((len(frames)-1)*fraction);frame=folder/f'{index:02}.jpg'
-        subprocess.run(['ffmpeg','-v','error','-y','-threads','1','-i',str(source),'-vf',f'select=eq(n\\,{frame_index})','-frames:v','1','-threads','1',str(frame)],capture_output=True,check=True,timeout=120)
-        if not frame.exists():raise ValueError('Missing actual video frame')
-        samples.append({'path':str(frame.relative_to(base)),'frame_index':frame_index,'timestamp_seconds':float(frames[frame_index]['best_effort_timestamp_time']),'sha256':sha(frame)})
-    save(folder/'actual-frame-index.json',{'source':str(source.relative_to(base)),'source_sha256':sha(source),'frame_count':len(frames),'samples':samples})
-    return samples
+    import fcntl, shutil, tempfile
+    source,folder,base=map(Path,(source,folder,base));folder.mkdir(exist_ok=True)
+    fractions=(.02,.2,.4,.6,.8,.98);source_sha=sha(source);index_file=folder/'actual-frame-index.json'
+    with (folder/'.extract.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if index_file.exists():
+            cached=load(index_file);samples=cached.get('samples',[]);count=cached.get('frame_count',0)
+            if (cached.get('source')!=str(source.relative_to(base)) or cached.get('source_sha256')!=source_sha
+                    or type(count) is not int or count<=0 or len(samples)!=6):
+                raise ValueError('Cached actual frame evidence changed')
+            for i,(sample,fraction) in enumerate(zip(samples,fractions),1):
+                frame=folder/f'{i:02}.jpg'
+                if (sample.get('path')!=str(frame.relative_to(base)) or sample.get('frame_index')!=round((count-1)*fraction)
+                        or not isinstance(sample.get('timestamp_seconds'),(int,float)) or not math.isfinite(sample['timestamp_seconds'])
+                        or not frame.is_file() or sha(frame)!=sample.get('sha256')):
+                    raise ValueError('Cached actual frame evidence changed')
+            return samples
+        probe=subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','frame=best_effort_timestamp_time','-of','json',str(source)],capture_output=True,text=True,check=True,timeout=180)
+        frames=json.loads(probe.stdout)['frames']
+        if not frames:raise ValueError('Missing actual video frames')
+        indices=[round((len(frames)-1)*fraction) for fraction in fractions];unique=sorted(set(indices));samples=[]
+        # One decode pass for all six indices, including sparse videos with repeated indices.
+        with tempfile.TemporaryDirectory(prefix='.extract-',dir=folder) as temporary:
+            expression='+'.join(f'eq(n\\,{i})' for i in unique)
+            subprocess.run(['ffmpeg','-v','error','-y','-threads','1','-i',str(source),'-vf','select='+expression,
+                            '-fps_mode','vfr','-frames:v',str(len(unique)),'-q:v','2','-threads','1',str(Path(temporary)/'%02d.jpg')],
+                           capture_output=True,check=True,timeout=240)
+            extracted={n:Path(temporary)/f'{i:02}.jpg' for i,n in enumerate(unique,1)}
+            if any(not p.is_file() or not p.stat().st_size for p in extracted.values()) or sha(source)!=source_sha:
+                raise ValueError('Missing actual video frame or changed source')
+            for index,n in enumerate(indices,1):
+                frame=folder/f'{index:02}.jpg';shutil.copyfile(extracted[n],frame)
+                samples.append({'path':str(frame.relative_to(base)),'frame_index':n,
+                                'timestamp_seconds':float(frames[n]['best_effort_timestamp_time']),'sha256':sha(frame)})
+        save(index_file,{'source':str(source.relative_to(base)),'source_sha256':source_sha,'frame_count':len(frames),
+                         'extraction_mode':'single_decode_actual_indices_v1','samples':samples})
+        return samples
 
 
 def prepare_audience_review(base):
@@ -204,10 +255,12 @@ def prepare_audience_review(base):
         else:
             evidence=[{'note_id':note['id'],'media_path':m['path'],'sha256':m['sha256'],'evidence_path':m['path']} for m in manifest['files']]
         return evidence
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        jobs={pool.submit(prepare,n):n for n in load(base/'notes.json')}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        candidates = reviewable_notes(base)[0]
+        jobs={pool.submit(prepare,n):n for n in candidates}
         for future in as_completed(jobs):
             try:pending.extend(future.result())
+            except (MediaUnavailable,DurationExcluded):continue
             except Exception as exc:failures.append({'note_id':jobs[future]['id'],'error_type':type(exc).__name__,'diagnostic':record_failure(base, 'xhs-audience-media', exc)})
     pending.sort(key=lambda m:(m['note_id'],m['media_path'],m.get('timestamp_seconds',0)))
     directory=base/'audience-review-sheets';directory.mkdir(exist_ok=True)
@@ -218,25 +271,92 @@ def prepare_audience_review(base):
             x,y=index%4*400,index//4*260;sheet.paste(im,(x+(400-im.width)//2,y));draw.text((x+4,y+228),f"{start+index+1} {m['note_id']}",fill='black');draw.text((x+4,y+243),Path(m['media_path']).name+' '+str(round(m.get('timestamp_seconds',0),2)),fill='black')
         sheet.save(directory/f'{start//24+1:03}.jpg')
     result={'rule':AUDIENCE_RULE,'status':'AUDIENCE_REVIEW_PENDING' if pending or failures else 'complete','items':pending,'failures':failures}
+    if policy_for(base):
+        stats=reviewable_notes(base)[1]
+        result.update(media_unavailable_notes=stats['media_unavailable_notes'],media_unavailable_ids=stats['media_unavailable_ids'])
+        result.update(video_duration_excluded=stats.get('video_duration_excluded',0))
     save(base/'audience-review-index.json',result);return {k:v for k,v in result.items() if k!='items'}
 
 
-def select(base):
+def old_post_exclusion_authorized(base):
+    """Only this explicitly authorized run may exclude old supplier search hits."""
+    base = Path(base).resolve()
+    policy = base/'date-policy.json'
+    if not policy.exists():
+        return False
+    d = load(policy)
+    authorization = (base/d.get('authorization_file', '')).resolve()
+    if (d.get('version') != 'exclude_old_hits_v1'
+            or d.get('run_sha256') != sha(base/'run.json')
+            or d.get('target_date') != load(base/'daily-context.json')['target_date']
+            or not authorization.is_relative_to(base) or not authorization.is_file()
+            or d.get('authorization_sha256') != sha(authorization)):
+        raise ValueError('Date policy authorization evidence mismatch')
+    approved = load(authorization)
+    if approved.get('exclude_old_hits') is not True or not approved.get('answer'):
+        raise ValueError('Explicit old-post exclusion authorization required')
+    return True
+
+
+def partial_collection_keywords(base, summary):
+    """Keep collection incomplete; a bound manual approval may deliver available results."""
+    base = Path(base).resolve()
+    if policy_for(base):
+        from ua_workflows.xhs_tolerance import majority_incomplete_keywords
+        return majority_incomplete_keywords(base, summary)
+    path = base/'partial-collection-policy.json'
+    if not path.exists(): return []
+    policy = load(path); approval = load(base/'partial-delivery-authorization.json')
+    proof = load(base/'repeated-page-validation.json')
+    if (policy.get('version') != 'authorized_available_results_v1'
+            or policy.get('target_date') != load(base/'daily-context.json')['target_date']
+            or policy.get('run_sha256') != sha(base/'run.json')
+            or policy.get('summary_sha256') != sha(base/'summary.json')
+            or policy.get('authorization_sha256') != sha(base/'partial-delivery-authorization.json')
+            or policy.get('repeat_proof_sha256') != sha(base/'repeated-page-validation.json')
+            or approval.get('allow_partial_delivery') is not True or not approval.get('answer')):
+        raise ValueError('Partial delivery authorization evidence mismatch')
+    keyword = policy['incomplete_keyword']
+    unfinished = [t for t in summary['keywords'] if t.get('status') != 'complete']
+    if (len(unfinished) != 1 or unfinished[0]['keyword'] != keyword
+            or unfinished[0]['pages'] != policy['accepted_pages']):
+        raise ValueError('Partial collection scope changed')
+    index = [t['keyword'] for t in summary['keywords']].index(keyword) + 1
+    page = policy['accepted_pages'] + 1
+    expected_path = f'keywords/{index:02}/pages/{page:04}.response.json'
+    if proof.get('response_path') != expected_path:
+        raise ValueError('Partial collection repeat page mismatch')
+    repeated_path = base/expected_path; duplicate_path = (base/proof['duplicate_response_path']).resolve()
+    if not duplicate_path.is_relative_to(repeated_path.parent):
+        raise ValueError('Invalid duplicate evidence path')
+    repeated, duplicate = load(repeated_path), load(duplicate_path)
+    if (sha(repeated_path) != proof['response_sha256'] or sha(duplicate_path) != proof['duplicate_response_sha256']
+            or not repeated.get('results') or not repeated.get('next_page_token')
+            or sorted(n['id'] for n in repeated['results']) != sorted(n['id'] for n in duplicate['results'])):
+        raise ValueError('Repeated page evidence changed')
+    return [keyword]
+
+
+def validated_notes(base):
     base = Path(base); summary = load(base / 'summary.json'); run = load(base / 'run.json'); notes = load(base / 'notes.json')
     config = load(CONFIG)
-    if summary['status'] != 'complete' or [t['keyword'] for t in summary['keywords']] != config['keywords']:
+    partial = partial_collection_keywords(base, summary)
+    if (summary['status'] != 'complete' and not partial) or [t['keyword'] for t in summary['keywords']] != config['keywords']:
         raise ValueError('All configured keyword searches must finish before ranking')
     if summary['date_range'] != 'last_24_hours' or run['sort'] != 'newest':
         raise ValueError('Unexpected search scope')
     # Verify each real cursor transition and raw response, rather than trusting summary.json.
-    observed = {}
+    observed = {}; eligible_ids = set(); old_hits = []; snapshots = []
+    window=target_day_window(base)
+    exclude_old = old_post_exclusion_authorized(base) if window is None else False
     for index, task in enumerate(summary['keywords'], 1):
         previous = None
         for page in range(1, task['pages'] + 1):
             stem = base / f'keywords/{index:02}/pages/{page:04}'
             req, resp = load(stem.with_suffix('.request.json')), load(stem.with_suffix('.response.json'))
             if req.get('transport')=='persistent_async_v1':
-                job=stem.with_suffix('.job')
+                from ua_workflows.social_search import resolve_page_job
+                job=resolve_page_job(req, stem.with_suffix('.job'))
                 receipt=load(job/'submit-response.json');completed=load(job/'result.json')
                 if completed!=resp or completed.get('status')!='succeeded' or completed.get('job_id')!=receipt.get('job_id'):
                     raise ValueError('Async page job evidence mismatch')
@@ -250,21 +370,110 @@ def select(base):
                 tokens = {r.get('next_page_token') for r in resp['results'] if r.get('next_page_token')}
                 if len(tokens) > 1: raise ValueError('Conflicting cursor')
                 previous = next(iter(tokens), None)
-            if bool(previous) != (page < task['pages']): raise ValueError('Incomplete pagination')
-            at = datetime.fromisoformat(req['requested_at'])
+            if bool(previous) != (page < task['pages'] or task['keyword'] in partial): raise ValueError('Incomplete pagination')
+            at = datetime.fromisoformat(req['requested_at']); snapshots.append(at)
+            if at.tzinfo is None: raise ValueError('Request timestamp must have timezone')
             for n in resp['results']:
                 when = datetime.fromisoformat(n['posted_at'].replace('Z', '+00:00'))
-                if when.tzinfo is None or not at-timedelta(hours=24) <= when <= at:
+                if when.tzinfo is None:
+                    raise ValueError('Publication timestamp must have timezone')
+                if window is not None and n['id'] in observed:
+                    first_when=datetime.fromisoformat(observed[n['id']]['posted_at'].replace('Z','+00:00'))
+                    if first_when!=when:raise ValueError('Conflicting publication timestamps for the same note ID')
+                if window is not None:
+                    outside=not (window[0]<=when<window[1])
+                    reason='outside_target_calendar_day'
+                else:
+                    outside=when<at-timedelta(hours=24)
+                    reason='older_than_24h'
+                if window is None and (when > at or (outside and not exclude_old)):
                     raise ValueError('Publication timestamp is missing or outside the requested rolling window')
+                if outside:
+                    old_hits.append({'id':n['id'], 'keyword':task['keyword'], 'page':page,
+                                     'posted_at':n['posted_at'], 'requested_at':req['requested_at'],
+                                     'response_file':str(stem.with_suffix('.response.json').relative_to(base)),
+                                     'reason':reason})
+                else:
+                    eligible_ids.add(n['id'])
                 if n['id'] not in observed: observed[n['id']] = {**n, 'matched_keywords': []}
                 if task['keyword'] not in observed[n['id']]['matched_keywords']: observed[n['id']]['matched_keywords'].append(task['keyword'])
     if len(observed) != summary['unique_notes'] or len(notes) != len(observed): raise ValueError('Merged count mismatch')
     for n in notes:
         if n['id'] not in observed or any(n.get(k) != observed[n['id']].get(k) for k in observed[n['id']]):
             raise ValueError('Merged note does not match raw evidence')
-        if type(n.get('like_count')) is not int or n['like_count'] < 0: raise ValueError('Missing/invalid likes cannot be treated as zero')
-        if type(n.get('is_video')) is not bool: raise ValueError('Unknown media type')
-    raw_count = len(notes)
+        if window is None or n['id'] in eligible_ids:
+            if type(n.get('like_count')) is not int or n['like_count'] < 0: raise ValueError('Missing/invalid likes cannot be treated as zero')
+            if type(n.get('is_video')) is not bool: raise ValueError('Unknown media type')
+    stats = {'raw_unique_notes':len(notes), 'date_excluded_hits':len(old_hits),
+             'collection_status':'partial' if partial else 'complete', 'incomplete_keywords':partial,
+             'date_excluded_unique':len(set(observed)-eligible_ids),
+             'date_eligible_unique_notes':len(eligible_ids),
+             'snapshot_start':min(snapshots).astimezone(TZ).isoformat() if snapshots else None,
+             'snapshot_end':max(snapshots).astimezone(TZ).isoformat() if snapshots else None}
+    if policy_for(base):
+        stats.update(continuation_rule=policy_for(base)['rule'],keyword_count=7,
+                     completed_keywords=sum(t.get('status')=='complete' for t in summary['keywords']))
+    if window is not None:
+        stats.update(date_filter_rule=CALENDAR_DAY_RULE,target_date=window[0].date().isoformat(),
+                     timezone='Asia/Shanghai',target_day_start=window[0].isoformat(),target_day_end_exclusive=window[1].isoformat())
+        save(base/'excluded-outside-target-day.json',old_hits)
+        save(base/'date-validation.json',{'status':'passed_target_calendar_day_filter',**stats,
+                                         'context_sha256':sha(base/'daily-context.json'),
+                                         'provider_search_window':'last_24_hours',
+                                         'coverage':'API acquired results filtered locally; not all posts on the target calendar day'})
+    elif exclude_old:
+        save(base/'excluded-old-posts.json',old_hits)
+        save(base/'date-validation.json',{'status':'passed_with_authorized_old_post_exclusion',
+                                         **stats, 'date_policy_sha256':sha(base/'date-policy.json')})
+    return [n for n in notes if n['id'] in eligible_ids], stats
+
+
+def reviewable_notes(base):
+    base = Path(base).resolve(); notes, stats = validated_notes(base)
+    if duration_policy_for(base):
+        excluded=duration_excluded_notes(base,notes);ids={r['note_id'] for r in excluded}
+        save(base/'excluded-over-duration.json',excluded)
+        stats.update(video_duration_filter=duration_policy_for(base),video_duration_excluded=len(ids),video_duration_excluded_ids=sorted(ids))
+        notes=[n for n in notes if n['id'] not in ids]
+    if policy_for(base):
+        failures=exhausted_notes(base,notes)
+        save(base/'unavailable-media-after-three-attempts.json',failures)
+        excluded={f['note_id'] for f in failures}
+        stats.update(media_unavailable_notes=len(excluded),media_unavailable_ids=sorted(excluded),
+                     media_review_status='partial' if excluded else 'complete')
+        return [n for n in notes if n['id'] not in excluded],stats
+    policy_path = base/'unavailable-media-policy.json'
+    if not policy_path.exists(): return notes, stats
+    policy = load(policy_path); authorization = load(base/'media-unavailable-authorization.json')
+    if (policy.get('version') != 'authorized_unavailable_media_v1'
+            or policy.get('run_sha256') != sha(base/'run.json')
+            or policy.get('summary_sha256') != sha(base/'summary.json')
+            or policy.get('authorization_sha256') != sha(base/'media-unavailable-authorization.json')
+            or authorization.get('allow_unavailable_media') is not True or not authorization.get('answer')):
+        raise ValueError('Unavailable media authorization evidence mismatch')
+    mapping = {n['id']:n for n in notes}; excluded = set()
+    for failure in policy.get('failures',[]):
+        ident = failure['note_id']
+        if ident in excluded or ident not in mapping or not mapping[ident]['is_video']:
+            raise ValueError('Unavailable media identity mismatch')
+        if (base/f'media/{ident}/manifest.json').exists():
+            raise ValueError('Available media cannot use the unavailable exception')
+        if not failure.get('evidence'): raise ValueError('Actual media failure evidence required')
+        for item in failure['evidence']:
+            path = (base/item['path']).resolve()
+            if not path.is_relative_to(base) or not path.is_file() or sha(path)!=item['sha256']:
+                raise ValueError('Unavailable media failure evidence changed')
+        excluded.add(ident)
+    if not excluded: raise ValueError('Empty unavailable media exception')
+    stats.update(media_unavailable_notes=len(excluded),media_unavailable_ids=sorted(excluded),
+                 media_review_status='partial',unavailable_media_policy_sha256=sha(policy_path))
+    return [n for n in notes if n['id'] not in excluded],stats
+
+
+def select(base):
+    base = Path(base); config = load(CONFIG)
+    notes, date_stats = reviewable_notes(base)
+    raw_count = date_stats['raw_unique_notes']; date_count = len(notes)
     person_notes = [n for n in notes if n['is_video'] or reviewed_images(n, base)['files']]
     person_count = len(person_notes)
     if config.get('audience_content_filter', {}).get('enabled'):
@@ -273,7 +482,7 @@ def select(base):
         notes = person_notes
     notes.sort(key=lambda n: (-n['like_count'], -datetime.fromisoformat(n['posted_at'].replace('Z', '+00:00')).timestamp(), n['id']))
     policy = selection_policy(len(notes), config.get('ranking', {}).get('rule_version', 'likes_top10_below100_else_decile_v1')); count = policy['selected']
-    result = {**policy, 'audience_review_rule': AUDIENCE_RULE if config.get('audience_content_filter', {}).get('enabled') else None, 'audience_excluded': person_count-len(notes), 'audience_review_digest': audience_review_digest(base), 'image_review_rule': IMAGE_RULE, 'raw_unique_notes': raw_count, 'image_content_excluded': raw_count-person_count, 'denominator': len(notes),
+    result = {**policy, **date_stats, 'audience_review_rule': AUDIENCE_RULE if config.get('audience_content_filter', {}).get('enabled') else None, 'audience_excluded': person_count-len(notes), 'audience_review_digest': audience_review_digest(base), 'image_review_rule': IMAGE_RULE, 'raw_unique_notes': raw_count, 'image_content_excluded': date_count-person_count, 'denominator': len(notes),
               'tie_policy': 'likes desc, posted_at desc, note_id asc', 'items': notes[:count]}
     save(base / 'selection.json', result)
     return result
@@ -300,6 +509,40 @@ def provision(client, config):
 
 
 def api_video(note, folder, config):
+    base=Path(folder).parents[1]
+    if policy_for(base):
+        import fcntl
+        from ua_workflows.collection_runtime import paid_request_power
+        from ua_workflows.shared.config import project_env_values
+        key=project_env_values().get('EVERYINFRA_API_KEY')
+        def valid(response):
+            result=response.get('results')
+            if not isinstance(result,dict) or result.get('id')!=note['id'] or not result.get('video_url'):
+                raise ValueError('Video URL unavailable or note ID mismatch')
+            return result['video_url']
+        def attempt(slot):
+            save(slot/'video-api-intent.json',{'note_id':note['id'],'url':note['url'],'at':datetime.now(TZ).isoformat()})
+            r,response=post_json(config['api']['endpoint'],key=key,
+                body={'platform':'xiaohongshu','action':'video','params':{'url':note['url']}},
+                diagnostic_path=slot/'video-api-http.json')
+            save(slot/'video-api-result-meta.json',{'ok':r.ok,'status_code':r.status_code})
+            save(slot/'video-api-response.json',response)
+            if not r.ok:raise ValueError('Video API failed HTTP '+str(r.status_code))
+            return valid(response)
+        def recover(slot):
+            path=slot/'video-api-response.json'
+            meta=slot/'video-api-result-meta.json'
+            if path.exists() and meta.exists() and load(meta).get('ok') is True:
+                try:return valid(load(path))
+                except ValueError:return None
+        def preflight(slot):
+            if not key:raise ValueError('Missing EVERYINFRA_API_KEY')
+            return paid_request_power(slot/'video-api-power.json')
+        runtime=base/'runtime';runtime.mkdir(exist_ok=True)
+        with (runtime/'.detail-submission.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            return bounded_acquire(base,note,'detail',attempt,
+                before_attempt=preflight,recover=recover)
     import requests
     from ua_workflows.shared.config import project_env_values
     p = folder/'video-api-response.json'
@@ -307,7 +550,7 @@ def api_video(note, folder, config):
         response = load(p)
     else:
         if (folder/'video-api-intent.json').exists(): raise ValueError('Previous video API outcome uncertain; inspect before replay')
-        key = project_env_values().get('EVERYINFRA_API_KEY') or os.environ.get('EVERYINFRA_API_KEY')
+        key = project_env_values().get('EVERYINFRA_API_KEY')
         if not key: raise ValueError('Missing EVERYINFRA_API_KEY')
         from ua_workflows.collection_runtime import paid_request_power
         with paid_request_power(folder/'video-api-power.json'):
@@ -333,6 +576,22 @@ def download(url, path):
 
 
 def media(note, base, config):
+    base=Path(base)
+    duration_check=base/'media'/note['id']/'video-duration-check.json'
+    if note['is_video'] and duration_policy_for(base) and duration_check.exists():
+        check_video(note,base,base/load(duration_check)['source'])
+    if (base/'media'/note['id']/'manifest.json').exists() or not policy_for(base):
+        result=_media_once(note,base,config)
+        if note['is_video'] and duration_policy_for(base):check_video(note,base,base/result['files'][0]['path'])
+        return result
+    resolved=note
+    if note['is_video'] and not note.get('video_url'):
+        folder=base/'media'/note['id'];folder.mkdir(parents=True,exist_ok=True)
+        resolved={**note,'video_url':api_video(note,folder,config)}
+    return bounded_acquire(base,resolved,'media',lambda slot:_media_once(resolved,base,config))
+
+
+def _media_once(note, base, config):
     folder=base/'media'/note['id'];folder.mkdir(parents=True,exist_ok=True);manifest=folder/'manifest.json'
     if manifest.exists():
         result=load(manifest)
@@ -341,10 +600,11 @@ def media(note, base, config):
     files=[]
     if note['is_video']:
         url=note.get('video_url') or api_video(note,folder,config);path=folder/'video.mp4';download(url,path)
-        p=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_type,width,height','-of','json',str(path)],capture_output=True,text=True,check=True)
+        p=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_type,width,height,duration,duration_ts,time_base','-of','json',str(path)],capture_output=True,text=True,check=True)
         probe=json.loads(p.stdout);stream=next(s for s in probe['streams'] if s.get('codec_type')=='video')
+        video_duration=check_video(note,base,path,probe)
         subprocess.run(['ffmpeg','-v','error','-i',str(path),'-map','0:v:0','-f','null','-'],capture_output=True,check=True,timeout=180)
-        files.append({'path':str(path.relative_to(base)),'sha256':sha(path),'size':path.stat().st_size,'width':stream['width'],'height':stream['height'],'duration_seconds':float(probe['format']['duration']),'url':url,'decode_verified':True})
+        files.append({'path':str(path.relative_to(base)),'sha256':sha(path),'size':path.stat().st_size,'width':stream['width'],'height':stream['height'],'duration_seconds':video_duration if video_duration is not None else float(probe['format']['duration']),'url':url,'decode_verified':True})
     else:
         urls=note.get('images') or note.get('image_urls') or ([note['image_url']] if note.get('image_url') else [])
         if not urls or not all(isinstance(u,str) for u in urls):raise ValueError('Missing/unsupported image list')
@@ -369,7 +629,7 @@ def row_fields(note, manifest, day, base):
             '命中关键词':note['matched_keywords'],'作者昵称':note.get('author_name') or '', '作者ID':note.get('author_id') or '',
             '目标日期':day,'当前入选':True,'采集批次':base.name,
             '唯一键':'|'.join(['小红书',day,note['id']]),'同步时间':datetime.now(TZ).isoformat(),
-            '采集窗口':'最近24小时；各页以请求时刻为准',
+            '采集窗口':f'北京时间{day}自然日；搜索接口最近24小时' if target_day_window(base) else '最近24小时；各页以请求时刻为准',
             '素材尺寸':' / '.join(dict.fromkeys(f"{m['width']}×{m['height']}" for m in manifest['files']))}
     for src,dst in [('like_count','点赞数'),('collect_count','收藏数'),('comment_count','评论数'),('share_count','分享数')]:
         value=note.get(src)
@@ -422,6 +682,32 @@ def upload_attachment(client,config,path,name):
     state['file_token']=finished['file_token'];save(checkpoint,state);return finished['file_token']
 
 
+def verify_delivery_rows(base, selection, config, remote, expected, uploads):
+    """Require unique remote rows and exact attachment bytes before reporting."""
+    notes={n['id']:n for n in selection['items']}; checked=[]
+    for fields in expected:
+        matches=[r for r in remote if text_field(r['fields'].get('唯一键'))==fields['唯一键']]
+        if len(matches)!=1:raise ValueError('Delivery unique key readback mismatch')
+        actual=matches[0]['fields'];verify_row(actual,fields)
+        note=notes[fields['笔记ID']]
+        manifest=eligible_media(note,base,config) if config.get('audience_content_filter',{}).get('enabled') else (media(note,base,config) if note['is_video'] else reviewed_images(note,base))
+        attachments=actual.get('视频附件' if note['is_video'] else '图片附件') or []
+        if len(attachments)!=len(manifest['files']):raise ValueError('Delivery attachment count mismatch')
+        files=[]
+        for item in manifest['files']:
+            path=base/item['path'];token=uploads[item['sha256']]
+            if path.stat().st_size!=item['size'] or sha(path)!=item['sha256']:
+                raise ValueError('Delivery local media changed')
+            found=[a for a in attachments if a.get('file_token')==token]
+            if len(found)!=1 or found[0].get('size')!=item['size']:
+                raise ValueError('Delivery exact attachment size mismatch')
+            files.append({'path':item['path'],'sha256':item['sha256'],'size':item['size'],'file_token':token})
+        checked.append({'unique_key':fields['唯一键'],'record_id':matches[0]['record_id'],'files':files})
+    result={'status':'passed','verified_rows':len(checked),'verified_attachments':sum(len(r['files']) for r in checked),'unique_keys_fields_tokens_exact_sizes_and_local_hashes':True,'rows':checked}
+    save(base/'delivery-validation.json',result)
+    return result
+
+
 def sync(base, selection, config, day):
     client=authorized_client(config);route=provision(client,config);uploads=load(base/'uploads.json') if (base/'uploads.json').exists() else {};expected=[];failures=[]
     rows=client.listing(route+'/records');by_key={}
@@ -439,6 +725,8 @@ def sync(base, selection, config, day):
                 tokens.append({'file_token':uploads[digest]})
             fields['视频附件' if note['is_video'] else '图片附件']=tokens
             existing=by_key.get(fields['唯一键'])
+            if existing and (text_field(existing['fields'].get('来源'))!='每日最新' or text_field(existing['fields'].get('平台'))!='小红书' or text_field(existing['fields'].get('目标日期'))!=day):
+                raise ValueError('Protected manual/platform/date record conflicts with daily unique key')
             # First discovery means first locally observed date, never publication date.
             if not existing or not existing['fields'].get('首次发现日期'):fields['首次发现日期']=datetime.fromisoformat(load(base/'run.json')['started_at']).astimezone(TZ).date().isoformat()
             else:fields['首次发现日期']=text_field(existing['fields']['首次发现日期'])
@@ -462,10 +750,10 @@ def sync(base, selection, config, day):
     desired={e['唯一键'] for e in expected}
     # Retire only previous XHS selections for the same reporting day after successful new readback.
     if not failures:
-        old=[{'record_id':r['record_id'],'fields':{'当前入选':False}} for r in remote if text_field(r['fields'].get('平台'))=='小红书' and text_field(r['fields'].get('唯一键')).startswith('小红书|'+day+'|') and text_field(r['fields'].get('目标日期'))==day and r['fields'].get('当前入选') is True and text_field(r['fields'].get('唯一键')) not in desired]
+        old=[{'record_id':r['record_id'],'fields':{'当前入选':False}} for r in remote if text_field(r['fields'].get('来源'))=='每日最新' and text_field(r['fields'].get('平台'))=='小红书' and text_field(r['fields'].get('唯一键')).startswith('小红书|'+day+'|') and text_field(r['fields'].get('目标日期'))==day and r['fields'].get('当前入选') is True and text_field(r['fields'].get('唯一键')) not in desired]
         if old:client.call('POST',route+'/records/batch_update',json={'records':old})
     final=client.listing(route+'/records')
-    for e in expected:verify_row(next(r['fields'] for r in final if text_field(r['fields'].get('唯一键'))==e['唯一键']),e)
+    verify_delivery_rows(base,selection,config,final,expected,uploads)
     result={'status':'complete' if not failures else 'partial','selected':selection['selected'],'verified_rows':len(expected),'failures':failures,
             'video_success':sum(e['素材类型']=='视频' for e in expected),'image_success':sum(e['素材类型']=='图片' for e in expected)}
     save(base/'sync.json',result);return client,result
@@ -476,21 +764,39 @@ def report(base,selection,config,client,synced,day):
     if receipt.exists():return load(receipt)
     setting=config['crawl_completion_report'];chat=client.call('GET','im/v1/chats/'+setting['chat_id'])
     if chat.get('name')!=setting['chat_name'] or chat.get('chat_mode')!='group':raise ValueError('Group identity mismatch')
-    summary=load(base/'summary.json');start=load(base/'run.json')['started_at'];url=config['feishu']['base_url']+'?table='+config['feishu']['table_id']
-    title=('小红书素材日报' if synced['status']=='complete' else '小红书素材日报｜部分完成')+'｜'+day
-    text=(f"**采集口径：最近24小时，7个关键词，最新排序**\n执行开始：{start}\n\n"
-          f"📊 搜索命中：**{summary['raw_rows']} 条**，共 **{summary['pages']} 页**，全部关键词已到接口末页\n"
+    summary=load(base/'summary.json');start=datetime.fromisoformat(load(base/'run.json')['started_at']).astimezone(TZ).isoformat();url=config['feishu']['base_url']+'?table='+config['feishu']['table_id']
+    calendar_day=selection.get('date_filter_rule')==CALENDAR_DAY_RULE
+    scope_text=(f'北京时间{day}自然日，7个关键词，最新排序' if calendar_day else '最近24小时，7个关键词，最新排序')
+    time_note=('本地只保留目标自然日00:00至次日00:00前发布的内容；搜索接口仍按实际请求前24小时获取，可能不能完整覆盖目标自然日。\n'
+               if calendar_day else '窗口以每页实际请求时刻往前24小时为准；若有断点续采，不代表严格自然日。\n')
+    date_note = (f"日期窗口剔除：**{selection.get('date_excluded_hits',0)} 条命中 / {selection.get('date_excluded_unique',0)} 篇**\n"
+                 f"实际请求快照：{selection.get('snapshot_start')} 至 {selection.get('snapshot_end')}；搜索接口各页分别向前24小时。\n") if selection.get('snapshot_start') else ''
+    fee_note = '原超时请求收费仍未知，另有用户授权单次恢复；未将未知费用记为0。\n' if summary.get('prior_timeout_billing_unknown') else ''
+    partial_collection = selection.get('collection_status') == 'partial'
+    partial_delivery=partial_collection or bool(selection.get('media_unavailable_notes')) or synced['status']!='complete'
+    title=('小红书素材日报' if not partial_delivery else '小红书素材日报｜部分完成')+'｜'+day
+    coverage_note = ('**采集不完整：'+ '、'.join(selection['incomplete_keywords']) +'未到末页；按授权以已获结果继续，排名仅基于已获数据。**\n') if partial_collection else ''
+    if selection.get('completed_keywords') is not None:
+        coverage_note+=f"实际完整采集关键词：**{selection['completed_keywords']}/{selection['keyword_count']}**。\n"
+    media_label='原素材' if policy_for(base) else '原视频'
+    unavailable_note = (f"{media_label}获取失败／未审核：**{selection['media_unavailable_notes']} 篇**，经明确授权单列，不计入可审核排名分母；排名仅基于已取得并审核的素材，未虚构内容判断。\n") if selection.get('media_unavailable_notes') else ''
+    coverage = '，存在未完成关键词' if partial_collection else '，全部关键词已到接口末页'
+    duration_note=(f"视频时长上限：**5分钟**（300秒含）；超限排除：**{selection.get('video_duration_excluded',0)} 篇**，不抽帧、不纳入排名。\n") if selection.get('video_duration_filter') else ''
+    text=(f"**采集口径：{scope_text}**\n执行开始：{start}\n\n"
+          f"{coverage_note}{unavailable_note}"
+          f"📊 搜索命中：**{summary['raw_rows']} 条**，共 **{summary['pages']} 页**{coverage}\n"
           f"去重笔记：**{summary['unique_notes']} 篇**（视频 {summary['video_notes']}，图文 {summary['image_notes']}）\n\n"
-          f"人物图片审核剔除：**{selection.get('image_content_excluded', 0)} 篇**；合格候选：**{selection['denominator']} 篇**\n"
+          f"{date_note}{fee_note}{duration_note}"
+          f"人物图片审核剔除：**{selection.get('image_content_excluded', 0)} 篇**；已审核合格候选：**{selection['denominator']} 篇**\n"
           f"男性主体审核剔除：**{selection.get('audience_excluded',0)} 篇**\n"
           f"{selection_report(selection)}\n"
           f"🎬 视频下载并入表：**{synced['video_success']} 篇**\n🖼️ 图文下载并入表：**{synced['image_success']} 篇**\n"
-          f"⚠️ 媒体/同步失败：**{len(synced['failures'])} 篇**，不补位、不改写分母\n"
+          f"⚠️ 入选项媒体/同步失败：**{len(synced['failures'])} 篇**，不补位、不改写分母\n"
           f"✅ 实际写表并读回验证：**{synced['verified_rows']} 篇**，附媒体附件\n\n"
-          "同赞按发布时间从新到旧排序。缺失互动数保留为空；图片及视频均已按当前主体规则审核，图文仅上传审核合格图片。\n"
-          "窗口以每页实际请求时刻往前24小时为准；若有断点续采，不代表严格自然日。\n"
+          "同赞按发布时间从新到旧排序。缺失互动数保留为空；入表图片及视频均已按当前主体规则审核，图文仅上传审核合格图片。\n"
+          f"{time_note}"
           "统计仅限API可返回结果，不代表全站全部笔记。点击下方链接查看。")
-    card={'config':{'wide_screen_mode':True},'header':{'template':'blue' if synced['status']=='complete' else 'orange','title':{'tag':'plain_text','content':title}},'elements':[{'tag':'div','text':{'tag':'lark_md','content':text}},{'tag':'action','actions':[{'tag':'button','type':'primary','text':{'tag':'plain_text','content':'查看多维表格'},'url':url}]}]}
+    card={'config':{'wide_screen_mode':True},'header':{'template':'orange' if partial_delivery else 'blue','title':{'tag':'plain_text','content':title}},'elements':[{'tag':'div','text':{'tag':'lark_md','content':text}},{'tag':'action','actions':[{'tag':'button','type':'primary','text':{'tag':'plain_text','content':'查看多维表格'},'url':url}]}]}
     save(base/'report-payload.json',card)
     sent=client.call('POST','im/v1/messages',params={'receive_id_type':'chat_id'},json={'receive_id':setting['chat_id'],'msg_type':'interactive','content':json.dumps(card,ensure_ascii=False),'uuid':stable_uuid('xhs|'+day+'|'+setting['chat_id'])})
     if sent.get('chat_id')!=setting['chat_id'] or not sent.get('message_id'):raise ValueError('Message receipt mismatch')
@@ -522,13 +828,25 @@ def main():
             day=load(context)['target_date']
         else:
             day=(now-timedelta(days=1)).date().isoformat()
-            save(context,{'target_date':day,'execution_started_at':now.isoformat(),'timezone':'Asia/Shanghai'})
+            value={'target_date':day,'execution_started_at':now.isoformat(),'timezone':'Asia/Shanghai'}
+            if config.get('date_semantics')==CALENDAR_DAY_RULE:value['date_filter_rule']=CALENDAR_DAY_RULE
+            save(context,value)
+        # Completed batches keep their original selection and receipt across rule changes.
+        prior=base/'daily-result.json';receipt=base/'report-receipt.json'
+        if prior.exists() and receipt.exists() and load(prior)['sync']['status']=='complete':
+            previous=load(prior);sent=load(receipt)
+            if (previous['target_date']!=day or previous['selection_sha256']!=sha(base/'selection.json')
+                    or not sent.get('message_id') or previous['report']['message_id']!=sent['message_id']):
+                raise ValueError('Completed delivery evidence changed; refusing recomputation')
+            print(json.dumps({'status':'already_delivered','directory':str(base),'target_date':day,
+                              'collection_status':previous.get('collection_status','complete')},ensure_ascii=False));return
         with collection_phase(base, 'xhs-daily'):
-            if not (base/'summary.json').exists() or load(base/'summary.json').get('status')!='complete':
+            if not (base/'summary.json').exists() or (load(base/'summary.json').get('status')!='complete' and not partial_collection_keywords(base, load(base/'summary.json'))):
                 from ua_workflows.social_search import collect_xhs
                 from ua_workflows.shared.config import project_env_values
                 searched=collect_xhs(base,config,key=project_env_values().get('EVERYINFRA_API_KEY'))
-                if searched['status']!='complete':raise ValueError('SEARCH_INCOMPLETE: resume saved async jobs; no paid replay')
+                if searched['status']!='complete' and not partial_collection_keywords(base,searched):
+                    raise ValueError('SEARCH_INCOMPLETE: insufficient completed keywords; resume saved jobs without paid replay')
             prior=base/'daily-result.json'
             review_status=prepare_image_review(base)
             if review_status['status']!='complete':
@@ -546,7 +864,11 @@ def main():
                 return
             client,synced=sync(base,selection,config,day)
             sent=report(base,selection,config,client,synced,day)
-            save(base/'daily-result.json',{'target_date':day,'image_review_rule':IMAGE_RULE,'selection_sha256':sha(base/'selection.json'),'sync':synced,'report':sent})
+            save(base/'daily-result.json',{'target_date':day,'collection_status':selection.get('collection_status','complete'),
+                  'media_review_status':selection.get('media_review_status','complete'),'media_unavailable_ids':selection.get('media_unavailable_ids',[]),
+                  'video_duration_filter':selection.get('video_duration_filter'),'video_duration_excluded':selection.get('video_duration_excluded',0),
+                  'delivery_status':'partial' if selection.get('media_unavailable_notes') or selection.get('collection_status')=='partial' or synced['status']!='complete' else 'complete',
+                  'incomplete_keywords':selection.get('incomplete_keywords',[]),'image_review_rule':IMAGE_RULE,'selection_sha256':sha(base/'selection.json'),'sync':synced,'report':sent})
             print(json.dumps({'target_date':day,'directory':str(base),'sync':synced,'report':sent},ensure_ascii=False))
             if synced['status']!='complete':raise SystemExit(1)
 
