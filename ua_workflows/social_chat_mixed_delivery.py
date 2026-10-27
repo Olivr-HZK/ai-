@@ -13,12 +13,14 @@ import uuid
 from pathlib import Path
 from ua_workflows import social_chat_browser_daily as daily
 from ua_workflows import social_chat_mixed_window as window
+from ua_workflows.social_chat_attachments import DEFAULT_ATTACHMENT_FIELD, LEGACY_ATTACHMENT_FIELDS, configured_name, resolve_field
 
-EXTRA_FIELDS = [('素材类型', 3), ('图片链接', 15), ('图片附件', 17), ('视频附件', 17), ('风格标签', 4)]
+EXTRA_FIELDS = [('素材类型', 3), ('图片链接', 15), (DEFAULT_ATTACHMENT_FIELD, 17), ('风格标签', 4)]
 
 
 def extra_fields(selection):
-    return [(n, k) for n, k in EXTRA_FIELDS if n != '风格标签' or selection.get('style_tagging') is not None]
+    return [(selection.get('attachment_field', n) if n == DEFAULT_ATTACHMENT_FIELD else n, k)
+            for n, k in EXTRA_FIELDS if n != '风格标签' or selection.get('style_tagging') is not None]
 
 def options(value):
     values = value if isinstance(value, list) else [value]
@@ -56,21 +58,20 @@ def fields(selection, card):
         common['图片链接'] = {'text': '查看原图', 'link': card['image_files'][0]['url']}
         common['非真人口播判断'] = '不适用（静态图片）'
         common['审核方式'] = 'original_image；全部原图已查看'
-        common['视频附件'] = []
     else:
         common['图片链接'] = None
-        common['图片附件'] = []
         # YouTube-resolved media keeps the observed original external URL.
         url = card.get('video_url') or card.get('external_url')
         if not url:
             externals = card.get('links') or card.get('observed_external_links') or []
             url = next((x.get('href') if isinstance(x, dict) else x for x in externals if 'youtu' in str(x)), None)
         common['视频链接'] = {'text': '查看视频来源', 'link': url} if url else None
+    common[selection.get('attachment_field', DEFAULT_ATTACHMENT_FIELD)] = []
     return common
 
-def verify(rows, desired):
+def verify(rows, desired, attachment_field=DEFAULT_ATTACHMENT_FIELD):
     by_key = {}
-    kinds = dict(daily.FIELDS + EXTRA_FIELDS)
+    kinds = dict(daily.FIELDS + EXTRA_FIELDS + [(n, 17) for n in LEGACY_ATTACHMENT_FIELDS] + [(attachment_field, 17)])
     for row in rows:
         key = daily.text_field(row['fields'].get('唯一键'))
         if key:
@@ -81,7 +82,9 @@ def verify(rows, desired):
         for name, value in expected.items():
             got = actual.get(name)
             kind = kinds[name]
-            if kind in (1, 3):
+            if name == daily.SOURCE_LINK_FIELD:
+                same = bool(daily.source_link_url(value)) and daily.source_link_url(got) == value
+            elif kind in (1, 3):
                 same = daily.text_field(got) == value
             elif kind == 4:
                 same = sorted(got or []) == sorted(value)
@@ -126,12 +129,12 @@ def upload_selected(client, config, path, *, target_date, sequence, advertiser, 
     return {'file_token': saved['file_token'], 'name': name, 'size': saved['size']}
 
 
-def verify_attachment_names(rows, expected):
+def verify_attachment_names(rows, expected, attachment_field=DEFAULT_ATTACHMENT_FIELD):
     """expected maps record unique key to its selected named attachment receipts."""
     by_key = {daily.text_field(row['fields'].get('唯一键')): row['fields'] for row in rows}
     for key, desired in expected.items():
         actual = by_key.get(key, {})
-        found = {item['file_token']: item for field in ('视频附件', '图片附件') for item in (actual.get(field) or [])}
+        found = {item['file_token']: item for item in (actual.get(attachment_field) or [])}
         for item in desired:
             got = found.get(item['file_token'], {})
             window.require(got.get('name') == item['name'] and got.get('size') == item['size'],
@@ -185,6 +188,12 @@ def delivery(base, result, candidates):
 def sync(run_dir, config, client=None, apply=False):
     base = Path(run_dir).resolve()
     result = window.select(base, config)  # Always revalidate actual evidence.
+    if apply:
+        client = client or daily.Feishu()
+        attachment_field = resolve_field(config, client.listing(daily.table_route(config) + '/fields'))['field_name']
+    else:
+        attachment_field = configured_name(config)
+    result['attachment_field'] = attachment_field
     candidates = daily.load(base / 'all_candidates.json')
     out = delivery(base, result, candidates)
     desired = [fields(result, c) for c in result['items']]
@@ -225,7 +234,7 @@ def sync(run_dir, config, client=None, apply=False):
             daily.save(receipt_path, cache)
             named_attachments.setdefault(f['唯一键'], []).append(named)
             tokens.append({'file_token': named['file_token']})
-        f['图片附件' if image else '视频附件'] = tokens
+        f[attachment_field] = tokens
     daily.save(base / 'feishu-payload.json', {'records': desired})
     creates = [{'fields': f} for f in desired if f['唯一键'] not in existing]
     updates = [{'record_id': existing[f['唯一键']]['record_id'], 'fields': f} for f in desired if f['唯一键'] in existing]
@@ -234,14 +243,14 @@ def sync(run_dir, config, client=None, apply=False):
         client.call('POST', route + '/records/batch_create', params={'client_token': str(uuid.UUID(hex=digest[:32], version=4))}, json={'records': chunk})
     for start in range(0, len(updates), 100):
         client.call('POST', route + '/records/batch_update', json={'records': updates[start:start + 100]})
-    verified = client.listing(route + '/records'); verify(verified, desired)
-    verify_attachment_names(verified, named_attachments)
+    verified = client.listing(route + '/records'); verify(verified, desired, attachment_field)
+    verify_attachment_names(verified, named_attachments, attachment_field)
     keys = {f['唯一键'] for f in desired}
     retire = [{'record_id': r['record_id'], 'fields': {'当前入选': False}} for r in verified if is_daily_row(r, result['target_date']) and r['fields'].get('当前入选') is True and daily.text_field(r['fields'].get('唯一键')) not in keys]
     for start in range(0, len(retire), 100):
         client.call('POST', route + '/records/batch_update', json={'records': retire[start:start + 100]})
-    final = client.listing(route + '/records'); verify(final, desired)
-    verify_attachment_names(final, named_attachments)
+    final = client.listing(route + '/records'); verify(final, desired, attachment_field)
+    verify_attachment_names(final, named_attachments, attachment_field)
     daily.save(base / 'attachment-name-readback.json', {'verified': True, 'records': named_attachments})
     active = [r for r in final if is_daily_row(r, result['target_date']) and r['fields'].get('当前入选') is True]
     window.require(len(active) == len(keys) and {daily.text_field(r['fields'].get('唯一键')) for r in active} == keys, 'Remote active set mismatch')

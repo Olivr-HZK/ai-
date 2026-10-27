@@ -20,14 +20,18 @@ def sample(kind='图片'):
 def test_payload_uses_real_image_fields_and_individual_options():
     s={'target_date':'2026-10-17','scope_sha256':'scope','generated_at':'now'}
     image=delivery.fields(s,sample())
-    assert image['视频链接'] is None and image['视频附件']==[]
+    assert image['视频链接'] is None and image[delivery.DEFAULT_ATTACHMENT_FIELD]==[]
+    assert '视频附件' not in image and '图片附件' not in image
     assert image['图片链接']['link']=='https://example.com/original.png'
     assert image['投放地区']==['日本','韩国']
     assert image['投放渠道']==['Facebook','TikTok']
     assert image['非真人口播判断']=='不适用（静态图片）'
     video=delivery.fields(s,sample('视频'))
     assert video['视频链接']['link']=='https://www.youtube.com/watch?v=abcdefghijk'
-    assert video['图片附件']==[] and video['图片链接'] is None
+    assert video[delivery.DEFAULT_ATTACHMENT_FIELD]==[] and video['图片链接'] is None
+    playable=delivery.fields(s,sample('Playable'))
+    assert playable['素材类型']=='Playable' and playable[delivery.DEFAULT_ATTACHMENT_FIELD]==[]
+    assert '视频附件' not in playable and '图片附件' not in playable
 
 
 def test_payload_carries_reviewed_style_labels_and_visual_reason():

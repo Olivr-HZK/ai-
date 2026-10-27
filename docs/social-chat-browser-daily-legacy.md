@@ -70,3 +70,7 @@
 ## 2026-10-26 每日入选素材独立ZIP
 
 审核排名完成后，social_chat_mixed_delivery自动生成 `delivery/Afizzy_竞品精选_YYYY-MM-DD_N条.zip` 并在看板提供下载入口。仅包实际入选的视频与全部原图，按日期-序号-广告主编号，附素材清单CSV、审核说明、估值/风格及SHA256；原媒体不转码，旧风格不改名。N为实际素材条数，多图计一条但全部图片入包。独立入口为 `.venv/bin/python -m ua_workflows.social_chat_selected_package --run-dir <目录>`，可处理已审核插件视频selection，其他图片布局先规范化。检查数量/排序/keep决定及逐文件SHA256后创建ZIP，CRC与ZIP内原字节逐项复核；相同榜单复用、变化另存版本。打包不代表飞书同步/群日报成功，不更改历史排名、调度或审核条件。
+
+2026-10-27 附件字段约定更新：后续实际写表时，视频/图片/已有Playable统一写config.feishu.attachment_field_id对应的附件列（现名竞品素材（图片/视频/Playable）去除男频），不创建旧视频附件/图片附件列。旧源列与既有附件保留；不改变原scope的审核/入选范围。
+
+2026-10-27 主列约定：链接（原appid列，type1，ID fldM60UZFW）保存原广大大详情的实际URL，App ID在独立列；后续不重建旧appid/广大大详情列。读取须使用text_field_as_array=true并提取富文本link，显示“查看详情”并不表示URL丢失。现有记录保持，新增写真实URL并读回核验。

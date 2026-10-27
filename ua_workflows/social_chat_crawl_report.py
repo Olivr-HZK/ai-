@@ -116,9 +116,10 @@ def report(run_dir, config, client, test=False):
     selection = load(run_dir / 'selection-with-media-waiver.json') if (run_dir / 'selection-with-media-waiver.json').exists() else load(run_dir / 'selection.json')
     expected = {unique_key(target, c) for c in selection['items']}
     actual = {text_field(r['fields'].get('唯一键')) for r in rows}
-    image_ids = {c['ad_id'] for c in selection['items'] if is_image(c)}
+    from ua_workflows.social_chat_attachments import resolve_field
+    attachment_field = resolve_field(config, client.listing(table_route(config) + '/fields'))['field_name']
     if expected != actual or len(rows) != len(expected) or any(
-            not r['fields'].get('图片附件' if r['fields']['广告ID'] in image_ids else '视频附件') for r in rows):
+            not r['fields'].get(attachment_field) for r in rows):
         raise ValueError('Remote selected records/attachments mismatch')
     stats = {'report_date': datetime.now(TZ).date().isoformat(), 'target_date': target,
              'tasks': summary['combined_platform_tasks'], 'new': len(candidates),

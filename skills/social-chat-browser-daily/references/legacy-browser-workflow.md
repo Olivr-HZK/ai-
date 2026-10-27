@@ -50,7 +50,7 @@
 
 ## 飞书字段约定（2026-10-19）
 
-主列为 `appid`，值为实际 App ID；广告主（完整 App 名）、平台用单选，投放渠道、投放地区、文案语言用多选。保留视频附件与来源链接，不写“入选数量”“有效候选总数”“全局排名”三列；排名和候选计数仍保留在本地用于校验。后续写入保持此字段结构，不重新创建已删除的列。
+主列现为 `链接`，内容为实际广大大详情URL；实际App ID仅写独立App ID列，广告主（完整 App 名）、平台用单选，投放渠道、投放地区、文案语言用多选。保留视频附件与来源链接，不写“入选数量”“有效候选总数”“全局排名”三列；排名和候选计数仍保留在本地用于校验。后续写入保持此字段结构，不重新创建已删除的列。
 
 ## 每日自动执行的缺失媒体处理
 
@@ -118,3 +118,5 @@ APP proof记录search_mode=综合、query_type=app_id、query_app_id、query_ter
 ## 点卡前合并执行（2026-10-22）
 
 direct-browser-v1由direct_session.mjs组合执行，以APP_COLLECTION_PENDING一次验收；以下分阶段调用仅适用旧模式。旧模式分类、基础筛选、综合App ID查询、回车提交读回及最新创意排序，在同一段授权浏览器REPL脚本连续执行，正常只返回摘要；实际操作使用guangdada-browser-crawl的scripts/browser_prepare_app.mjs，先读其references/browser-prepare-app.md。每日状态仍按CATEGORY/FILTERS/APP/SORT逐阶段begin及证据complete；本地CLI可由REPL文件/进程桥顺序调用，不为每个阶段交回模型。正确筛选只读，差异才修改；不选择广告主候选；保留逐卡身份、截图、回车提交及排序时序校验。输入值被工具脱敏时读可见查询标签，不重复提交。异常停在真实失败阶段，不自动重试或跳过。
+
+2026-10-27 附件字段约定更新：后续实际写表时，视频/图片/已有Playable统一写config.feishu.attachment_field_id对应的附件列（现名竞品素材（图片/视频/Playable）去除男频），不创建旧视频附件/图片附件列。旧源列与既有附件保留；不改变原scope的审核/入选范围。

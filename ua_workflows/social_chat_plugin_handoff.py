@@ -107,7 +107,8 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
 视频实际解码、抽六帧并查看，图片逐原图解码/查看，记录决定、理由、证据哈希；六帧不称完整审听。
 通过项同次按scope固定风格版本打标，合并按展示估值降序取scope.ranking规定的前100条（不足取实际通过数）。
 生成审核看板及Afizzy_竞品精选_YYYY-MM-DD_N条.zip，包内日期-序号-广告主及CSV/审核说明/SHA256。
-按已有授权写指定飞书表并读回实际字段/附件token及大小；App ID不可见留空，批次/日期/源包摘要/广告ID幂等，保护历史与手动记录。
+按已有授权写指定飞书表并读回实际字段/附件token及大小；主列链接写原广大大详情的真实URL，独立App ID不可见留空；普通文本标签不代表失链，需富文本模式读取真实link；批次/日期/源包摘要/广告ID幂等，保护历史与手动记录。
+所有视频、图片或已有Playable附件统一写config.feishu.attachment_field_id对应的附件字段，当前名称“竞品素材（图片/视频/Playable）去除男频”；不再按类型分写视频附件/图片附件，不重建旧列。实际API写入前按字段ID读回当前名称，图片多图全部保留；附件归并不改变审核范围，不执行Playable。
 不得伪造21项App全采、首次发现或重投结论，不套用旧全量日报；群播报如执行须使用实际交接批次统计和既有明确授权，不重复发送。
 下一步：读取skills/social-chat-browser-daily/references/plugin-handoff.md。
 '''

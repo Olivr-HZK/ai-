@@ -140,10 +140,13 @@ def test_media_retry_budget_hash_cache_queue_lock_and_review_bridge(collected,mo
             self.rows=[{'record_id':'manual','fields':{'唯一键':'manual-fixture','平台':'广大大','来源':'手动增加','目标日期':'2026-10-21','当前入选':True}}]
             self.tokens={};self.sends=0;self.upload_names=[]
         def listing(self,route):
-            if route.endswith('/fields'):return [{'field_name':n,'type':k} for n,k in daily.FIELDS+delivery.EXTRA_FIELDS]
+            if route.endswith('/fields'):return [{'field_name':n,'type':k,
+                'field_id':(cfg['feishu']['attachment_field_id'] if n==delivery.DEFAULT_ATTACHMENT_FIELD else
+                            cfg['feishu']['source_link_field_id'] if n==daily.SOURCE_LINK_FIELD else n)}
+                for n,k in daily.FIELDS+delivery.EXTRA_FIELDS]
             rows=copy.deepcopy(self.rows)
             for row in rows:
-                for field in ('视频附件','图片附件'):
+                for field in (delivery.DEFAULT_ATTACHMENT_FIELD,):
                     for item in row['fields'].get(field,[]):item.update(self.tokens[item['file_token']])
             return rows
         def call(self,method,route,**kw):

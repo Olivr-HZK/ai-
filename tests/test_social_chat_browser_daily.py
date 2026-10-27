@@ -170,10 +170,10 @@ class FakeFeishu:
 
 def test_provision_idempotent_and_type_mismatch_blocked():
     client = FakeFeishu()
-    assert daily.provision(config(), client)['fields'] == 23
-    assert len(client.calls) == 23
+    assert daily.provision(config(), client)['fields'] == 22
+    assert len(client.calls) == 22
     daily.provision(config(), client)
-    assert len(client.calls) == 23
+    assert len(client.calls) == 22
     client.fields[0]['type'] = 2
     with pytest.raises(ValueError, match='Unexpected remote field type'):
         daily.provision(config(), client)
@@ -193,12 +193,15 @@ def test_verify_numeric_string_readback_preserves_value_checks():
             daily.verify_rows([{'fields': actual}], [fields])
 
 
-def test_table_schema_uses_appid_and_select_fields():
+def test_table_schema_uses_detail_link_primary_and_separate_app_id():
     c = card(12)
     c['regions'] = ['美国', '日本']
     chosen = selection([c])
     fields = daily.record_fields(chosen, chosen['items'][0])
-    assert fields['appid'] == c['app_id']
+    assert fields['链接'] == c['detail_url']
+    assert fields['App ID'] == c['app_id']
+    assert 'appid' not in fields and '广大大详情' not in fields
+    assert dict(daily.FIELDS)['链接'] == 1
     assert fields['广告主'] == c['app_name']
     assert fields['来源'] == '每日最新' and fields['平台'] == '广大大'
     assert dict(daily.FIELDS)['来源'] == 3

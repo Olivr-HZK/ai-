@@ -42,7 +42,7 @@ def test_named_upload_does_not_reuse_wrong_date_rank_or_legacy_token(tmp_path, m
 
 def test_attachment_name_and_exact_size_are_verified_from_remote_readback():
     expected={'key':[{'file_token':'token','name':'2026-10-26-001-Tipsy.mp4','size':12}]}
-    def rows(name,size):return [{'fields':{'唯一键':'key','视频附件':[{'file_token':'token','name':name,'size':size}]}}]
+    def rows(name,size):return [{'fields':{'唯一键':'key',delivery.DEFAULT_ATTACHMENT_FIELD:[{'file_token':'token','name':name,'size':size}]}}]
     delivery.verify_attachment_names(rows('2026-10-26-001-Tipsy.mp4',12),expected)
     for name,size in [('ad-id.mp4',12),(None,12),('2026-10-26-001-Tipsy.mp4',11)]:
         with pytest.raises(ValueError,match='name/size mismatch'):

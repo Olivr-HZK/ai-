@@ -21,3 +21,11 @@
 操作细则见skills/social-chat-browser-daily/references/plugin-handoff.md和content-review.md。只有用户明确要求直接浏览器采集/恢复旧浏览器任务时才用浏览器备用流程；其CLI显式加--collection-mode direct-browser-v1。旧说明保存在social-chat-browser-daily-legacy.md，旧scope/断点/历史审核保持原规则。
 
 后续飞书上传附件和ZIP内素材共用日期-序号-广告主.原格式，日期用目标日YYYY-MM-DD、序号按最终入选排名001起，多图加-01等分图号；广告ID保留在清单。统一命名函数social_chat_media_names.media_filename，上传用mixed_delivery.upload_selected（缓存包含文件名），并实际读回附件名/精确大小；原字节及后缀保留。本次不追溯改历史附件或重新上传。
+
+## 2026-10-27 统一素材附件字段
+
+所有实际入表视频、图片以及已有/明确允许入表的Playable原附件共用一个附件字段：字段ID `fldRHIjFcO`，当前名称 `竞品素材（图片/视频/Playable）去除男频`。写入前读取实际schema，按config.feishu.attachment_field_id匹配并核对附件类型17，再使用实际当前名称；本地预览可用config中的名称快照。不要重新创建旧“视频附件”“图片附件”列，也不能按素材类型把另一列清空。素材类型本身继续分别记录。Playable可存原HTML等文件但不得执行；统一附件字段不扩张原采集/审核/排名范围，不把Playable封面冒充已取得原文件。
+
+插件批次将upload_selected返回的真实token写入上述同一字段，多图全部上传/保留，按实际字段读回token、名称、精确大小；verify/verify_attachment_names需要传实际字段名。旧分列附件迁移只能在明确授权下将原token与目标已有token有序去重合并，保留旧源列、复刻附件及其他业务字段，不能覆盖目标已有文件、改审核结论或批量重传。
+
+2026-10-27 主列约定：链接（原appid列，type1，ID fldM60UZFW）保存原广大大详情的实际URL，App ID在独立列；后续不重建旧appid/广大大详情列。读取须使用text_field_as_array=true并提取富文本link，显示“查看详情”并不表示URL丢失。现有记录保持，新增写真实URL并读回核验。
