@@ -138,13 +138,13 @@ def test_media_retry_budget_hash_cache_queue_lock_and_review_bridge(collected,mo
     class MockFeishu:
         def __init__(self):
             self.rows=[{'record_id':'manual','fields':{'唯一键':'manual-fixture','平台':'广大大','来源':'手动增加','目标日期':'2026-10-21','当前入选':True}}]
-            self.tokens={};self.sends=0
+            self.tokens={};self.sends=0;self.upload_names=[]
         def listing(self,route):
             if route.endswith('/fields'):return [{'field_name':n,'type':k} for n,k in daily.FIELDS+delivery.EXTRA_FIELDS]
             rows=copy.deepcopy(self.rows)
             for row in rows:
                 for field in ('视频附件','图片附件'):
-                    for item in row['fields'].get(field,[]):item['size']=self.tokens[item['file_token']]
+                    for item in row['fields'].get(field,[]):item.update(self.tokens[item['file_token']])
             return rows
         def call(self,method,route,**kw):
             if method=='GET':return {'name':cfg['crawl_completion_report']['chat_name'],'chat_mode':'group'}
@@ -156,11 +156,22 @@ def test_media_retry_budget_hash_cache_queue_lock_and_review_bridge(collected,mo
             return {}
     client=MockFeishu()
     def upload(mock,cfg,path,name):
-        token=window.sha(path);mock.tokens[token]=path.stat().st_size;return token
+        token=hashlib.sha256((window.sha(path)+name).encode()).hexdigest()
+        mock.tokens[token]={'size':path.stat().st_size,'name':name};mock.upload_names.append(name);return token
     monkeypatch.setattr(delivery,'upload',upload)
     with state.tracked(base,'SYNC_PENDING'):synced=delivery.sync(base,cfg,client=client,apply=True)
     assert synced['verified_active']==18 and state.status(base)['state']=='REPORT_PENDING'
+    assert synced['attachment_names_verified'] is True
+    assert daily.load(base/'attachment-name-readback.json')['verified'] is True
+    import zipfile
+    package=daily.load(base/'delivery/package-receipt.json')
+    with zipfile.ZipFile(package['path']) as archive:
+        manifest=json.loads(archive.read('校验清单.json'))
+    assert client.upload_names==[Path(f['path']).name for item in manifest['items'] for f in item['files']]
+    assert all(name.startswith('2026-10-21-') for name in client.upload_names)
+    count_uploads=len(client.upload_names)
     again=delivery.sync(base,cfg,client=client,apply=True)
+    assert len(client.upload_names)==count_uploads
     assert again['created']==0 and len(client.rows)==19 and client.rows[0]['fields']['当前入选'] is True
     assert '风格标签' not in client.rows[0]['fields']
     assert all(r['fields']['风格标签']==['欧美写实'] for r in client.rows[1:])

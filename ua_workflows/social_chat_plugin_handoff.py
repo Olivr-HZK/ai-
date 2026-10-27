@@ -106,7 +106,7 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
 本批内容规则：男性角色有意义展示、女频恋爱/伴侣陪伴相关，排除真人主持式产品推广口播；女性配角、手部及非口播真人恋爱剧情可保留。存疑不纳入，不凑数。
 视频实际解码、抽六帧并查看，图片逐原图解码/查看，记录决定、理由、证据哈希；六帧不称完整审听。
 通过项同次按scope固定风格版本打标，合并按展示估值降序取scope.ranking规定的前100条（不足取实际通过数）。
-生成审核看板及Afizzy_竞品精选_YYYY-MM-DD_N条.zip，包内排名_App名_广告ID及CSV/审核说明/SHA256。
+生成审核看板及Afizzy_竞品精选_YYYY-MM-DD_N条.zip，包内日期-序号-广告主及CSV/审核说明/SHA256。
 按已有授权写指定飞书表并读回实际字段/附件token及大小；App ID不可见留空，批次/日期/源包摘要/广告ID幂等，保护历史与手动记录。
 不得伪造21项App全采、首次发现或重投结论，不套用旧全量日报；群播报如执行须使用实际交接批次统计和既有明确授权，不重复发送。
 下一步：读取skills/social-chat-browser-daily/references/plugin-handoff.md。

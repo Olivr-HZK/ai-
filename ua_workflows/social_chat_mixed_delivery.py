@@ -110,6 +110,34 @@ def upload(client, config, path, name):
     return body['data']['file_token']
 
 
+def upload_selected(client, config, path, *, target_date, sequence, advertiser, source_sha256, cache, part=None):
+    """Reusable by plugin handoff and mixed daily delivery; cache includes the filename."""
+    from ua_workflows.social_chat_media_names import media_filename
+    path = Path(path)
+    window.require(window.sha(path) == source_sha256, 'Media changed before upload')
+    name = media_filename(target_date, sequence, advertiser, path.suffix, part)
+    key = config['feishu']['app_token'] + '|' + source_sha256 + '|' + name
+    if key not in cache:
+        token = upload(client, config, path, name)
+        cache[key] = {'file_token': token, 'sha256': source_sha256, 'size': path.stat().st_size, 'name': name}
+    saved = cache[key]
+    window.require(saved.get('name') == name and saved.get('sha256') == source_sha256
+                   and saved.get('size') == path.stat().st_size and saved.get('file_token'), 'Named attachment cache mismatch')
+    return {'file_token': saved['file_token'], 'name': name, 'size': saved['size']}
+
+
+def verify_attachment_names(rows, expected):
+    """expected maps record unique key to its selected named attachment receipts."""
+    by_key = {daily.text_field(row['fields'].get('唯一键')): row['fields'] for row in rows}
+    for key, desired in expected.items():
+        actual = by_key.get(key, {})
+        found = {item['file_token']: item for field in ('视频附件', '图片附件') for item in (actual.get(field) or [])}
+        for item in desired:
+            got = found.get(item['file_token'], {})
+            window.require(got.get('name') == item['name'] and got.get('size') == item['size'],
+                           'Remote attachment name/size mismatch: ' + key)
+
+
 def delivery(base, result, candidates):
     out = base / 'delivery'; out.mkdir(exist_ok=True)
     daily.save(out / 'all_candidates.json', candidates)
@@ -185,19 +213,18 @@ def sync(run_dir, config, client=None, apply=False):
     guard_manual_collisions(existing, desired)
     receipt_path = base / 'attachment-uploads.json'
     cache = daily.load(receipt_path) if receipt_path.exists() else {}
-    for card, f in zip(result['items'], desired):
+    named_attachments = {}
+    for sequence, (card, f) in enumerate(zip(result['items'], desired), 1):
         root = Path(card['source_collection'])
         image = card['media_type'] == '图片'
         sources = [(root / i['path'], i['sha256'], i['format'].lower()) for i in card['image_files']] if image else [(root / card['local_source'], card['source_sha256'], 'mp4')]
         tokens = []
         for n, (path, digest, ext) in enumerate(sources, 1):
-            window.require(window.sha(path) == digest, 'Media changed before upload')
-            key = config['feishu']['app_token'] + '|' + digest
-            if key not in cache:
-                token = upload(client, config, path, f'{card["ad_id"]}-{n}.{ext}')
-                cache[key] = {'file_token': token, 'sha256': digest, 'size': path.stat().st_size}
-                daily.save(receipt_path, cache)
-            tokens.append({'file_token': cache[key]['file_token']})
+            named = upload_selected(client, config, path, target_date=result['target_date'], sequence=sequence,
+                advertiser=card['app_name'], source_sha256=digest, cache=cache, part=n if len(sources) > 1 else None)
+            daily.save(receipt_path, cache)
+            named_attachments.setdefault(f['唯一键'], []).append(named)
+            tokens.append({'file_token': named['file_token']})
         f['图片附件' if image else '视频附件'] = tokens
     daily.save(base / 'feishu-payload.json', {'records': desired})
     creates = [{'fields': f} for f in desired if f['唯一键'] not in existing]
@@ -208,14 +235,17 @@ def sync(run_dir, config, client=None, apply=False):
     for start in range(0, len(updates), 100):
         client.call('POST', route + '/records/batch_update', json={'records': updates[start:start + 100]})
     verified = client.listing(route + '/records'); verify(verified, desired)
+    verify_attachment_names(verified, named_attachments)
     keys = {f['唯一键'] for f in desired}
     retire = [{'record_id': r['record_id'], 'fields': {'当前入选': False}} for r in verified if is_daily_row(r, result['target_date']) and r['fields'].get('当前入选') is True and daily.text_field(r['fields'].get('唯一键')) not in keys]
     for start in range(0, len(retire), 100):
         client.call('POST', route + '/records/batch_update', json={'records': retire[start:start + 100]})
     final = client.listing(route + '/records'); verify(final, desired)
+    verify_attachment_names(final, named_attachments)
+    daily.save(base / 'attachment-name-readback.json', {'verified': True, 'records': named_attachments})
     active = [r for r in final if is_daily_row(r, result['target_date']) and r['fields'].get('当前入选') is True]
     window.require(len(active) == len(keys) and {daily.text_field(r['fields'].get('唯一键')) for r in active} == keys, 'Remote active set mismatch')
-    report = {'status': 'synced', 'created': len(creates), 'updated': len(updates), 'retired': len(retire), 'verified_active': len(active), 'url': daily.table_url(config)}
+    report = {'status': 'synced', 'created': len(creates), 'updated': len(updates), 'retired': len(retire), 'verified_active': len(active), 'attachment_names_verified': True, 'url': daily.table_url(config)}
     daily.save(base / 'feishu-sync.json', report)
     from collections import Counter
     daily.save(base / 'summary.json', {'producer': result['producer'], 'target_date': result['target_date'], 'feishu_written': True, 'ranking_computed': True, 'ranking': result.get('ranking'), 'combined_platform_tasks': result['task_count'], 'combined_target_videos': len(candidates), 'combined_counts': dict(Counter(c['decision'] for c in candidates)), 'out_of_scope_playable': result['counts'].get('out_of_scope_playable', 0), 'counts': result['counts'], 'feishu': report})
