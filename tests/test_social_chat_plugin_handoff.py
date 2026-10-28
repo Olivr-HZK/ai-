@@ -30,6 +30,8 @@ def test_default_prepare_waits_for_package_without_browser_or_daily_fsm(tmp_path
     scope = daily.load(tmp_path / 'scope.json')
     assert scope['ranking'] == {'mode': 'top_n', 'count': 100}
     assert scope['content_review_policy']['version'] == 'male-display-female-oriented-no-talking-head-v1'
+    from ua_workflows.social_chat_plugin_review_plan import POLICY
+    assert scope['processing_policy']==POLICY
     assert not (tmp_path / 'daily-machine').exists() and not (tmp_path / 'tasks').exists()
     assert not (tmp_path / 'browser-task.txt').exists()
 
@@ -96,3 +98,26 @@ def test_cli_default_entry_accepts_plugin_zip_without_browser(tmp_path):
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['status'] == 'PACKAGE_RECEIVED'
     assert not (base / 'daily-machine').exists()
+
+
+def test_legacy_handoff_does_not_gain_new_processing_order(tmp_path):
+    from ua_workflows.social_chat_plugin_handoff import prepare
+    cfg=daily.load(daily.CONFIG)
+    daily.prepare('2026-10-25',tmp_path,cfg)
+    scope=daily.load(tmp_path/'scope.json');scope.pop('processing_policy')
+    daily.save(tmp_path/'scope.json',scope)
+    receipt=daily.load(tmp_path/'handoff.json')
+    receipt['scope_sha256']=hashlib.sha256(json.dumps(scope,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    daily.save(tmp_path/'handoff.json',receipt)
+    before=(tmp_path/'scope.json').read_bytes()
+    prepare('2026-10-25',tmp_path,cfg)
+    assert (tmp_path/'scope.json').read_bytes()==before
+    assert 'processing_policy' not in daily.load(tmp_path/'scope.json')
+
+
+def test_cli_pre_review_requires_new_policy_and_received_zip(tmp_path):
+    cfg=daily.load(daily.CONFIG);daily.prepare('2026-10-25',tmp_path,cfg)
+    result=subprocess.run([sys.executable,'scripts/run_social_chat_browser_daily.py','pre-review','--run-dir',str(tmp_path)],
+        cwd=daily.ROOT,capture_output=True,text=True,timeout=20)
+    assert result.returncode==2 and 'Receive the original plugin ZIP' in result.stderr
+    assert not (tmp_path/'pre-review/plan.json').exists()

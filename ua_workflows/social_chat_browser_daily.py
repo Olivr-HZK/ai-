@@ -522,12 +522,14 @@ def sync(selection, config, client):
 
 def main():
     parser = argparse.ArgumentParser(description='社交竞品每日最新：插件ZIP手动交接；浏览器历史流程仅作备用')
-    parser.add_argument('command', choices=['prepare', 'select', 'sync', 'provision'])
+    parser.add_argument('command', choices=['prepare', 'pre-review', 'select', 'sync', 'provision'])
     parser.add_argument('--date', default='')
     parser.add_argument('--execution-origin', choices=['manual','scheduled'], default='manual', help='本次真实触发来源；仅定时触发传scheduled')
     parser.add_argument('--run-dir', type=Path)
     parser.add_argument('--collection-mode', choices=['plugin-handoff-v1', 'direct-browser-v1'], help='仅显式要求浏览器备用流程时选择direct-browser-v1')
     parser.add_argument('--source-zip', type=Path, action='append', default=[], help='手动交接的插件原始ZIP，可多次传入')
+    parser.add_argument('--media-index', type=Path, help='pre-review：报告已核对的标准化本地素材及历史清单')
+    parser.add_argument('--embedding-cache', type=Path, help='pre-review：绑定代理图SHA256及CLIP模型身份的本地向量缓存')
     parser.add_argument('--apply', action='store_true', help='实际写飞书；默认只生成本地待写入包')
     args = parser.parse_args()
     config = load(CONFIG)
@@ -541,6 +543,19 @@ def main():
     with collection_phase(run_dir, 'social_chat_browser_daily'):
         if args.command == 'prepare':
             result = prepare(target, run_dir, config, args.execution_origin, args.source_zip)
+        elif args.command == 'pre-review':
+            from ua_workflows.social_chat_plugin_review_plan import POLICY, prepare_queue
+            scope = load(run_dir / 'scope.json')
+            if scope.get('collection_mode') != 'plugin-handoff-v1' or scope.get('processing_policy') != POLICY:
+                raise ValueError('Use a new dedupe-first handoff directory; historical scopes are not migrated')
+            if load(run_dir / 'handoff.json')['status'] != 'PACKAGE_RECEIVED':
+                raise ValueError('Receive the original plugin ZIP before pre-review')
+            if not args.media_index or not args.embedding_cache or args.apply:
+                raise ValueError('pre-review requires --media-index and --embedding-cache; it is local-only')
+            if args.date and args.date != scope['target_date']:
+                raise ValueError('Date disagrees with pinned handoff scope')
+            result = prepare_queue(scope['target_date'], args.media_index, args.embedding_cache,
+                                   run_dir / 'pre-review/plan.json', scope['processing_policy'])
         elif args.command == 'provision':
             result = provision(config, Feishu()) if args.apply else {'status': 'dry_run', 'url': table_url(config), 'fields': FIELDS}
         else:

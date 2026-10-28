@@ -4,6 +4,7 @@
   "execution": "manual",
   "plugin_handoff": {
     "mode": "manual_zip",
+    "processing_policy_version": "dedupe-first-joint-review-v1",
     "content_review_policy": {
       "version": "male-display-female-oriented-no-talking-head-v1",
       "male_display": "required",
