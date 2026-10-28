@@ -1,5 +1,7 @@
 # 广告之神：群内链接手动收录
 
+2026-10-27：小红书新表手动收录的视频和图片均写统一素材列（字段ID `fld8kRrOQY`，按实际schema读取名称），不重建旧视频/图片附件列。已存在手动记录的统一列只追加缺失token并保留原附件及旧列；实际新附件按token、精确字节数、本地SHA256读回验证。历史已完成回执仍核验原记录，不自动迁移或重传。抖音配置和旧表保持各自原规则。
+
 2026-10-27：后续小红书收录写入[社媒创作者与招募](https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c?table=tblgJwoOT0G3naT0&view=vewJHxyWE5)，读取小红书日配置中的目标表与视图。抖音链接读取抖音配置，目的地保持原设置；混合消息分别入表，完成回执列出实际目的地，不再硬编码旧视图。
 
 仅处理配置白名单“霍振堃”测试群内，用户明确@广告之神的文字或富文本消息。每条最多5个小红书笔记链接，支持完整原文链接及xhslink HTTPS短链接，原文token保留。未@、其他群、其他机器人及非小红书地址均忽略。
@@ -8,7 +10,7 @@
 
 `config/feishu_xhs_link_bot.json`控制群白名单、应用身份和状态目录；凭据仅使用项目.env。官方lark-oapi长连接接收`im.message.receive_v1`，最小权限为`im:message.group_at_msg:readonly`，不需要全群消息读取权限。官方平台需设置长连接、添加事件并发布版本。
 
-启动：`.venv/bin/python -m ua_workflows.xhs_link_bot`；检查应用/群/字段：追加`--check`。当前在本机`screen`会话`adgod-xhs-link`内运行；LaunchAgent模板已生成但因外置卷启动阻塞而未启用，不承诺登录自启。电脑睡眠/离线时无法即时处理。不对消息中的任意自然语言执行命令。
+启动：`.venv/bin/python -m ua_workflows.xhs_link_bot`；检查应用/群/字段：追加`--check`。可在本机`screen`会话`adgod-xhs-link`中运行，须实际检查进程状态，不假定会话一直存在。LaunchAgent模板已生成但因外置卷启动阻塞而未启用，不承诺登录自启。电脑睡眠/离线时无法即时处理。不对消息中的任意自然语言执行命令。
 
 状态保存在`data/xhs_link_bot/jobs/`与`notes/<笔记ID>/`。消息ID和笔记ID双重去重，发送回复使用稳定UUID。付费详情请求先保存intent，超时或结果不确定不自动重发；失败任务标为blocked，管理员核查后才能恢复。原始响应和媒体只保存在本地，不在群里输出token、密钥或原始错误。
 

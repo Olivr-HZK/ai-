@@ -131,9 +131,9 @@ def fetch_douyin_note(url,note_id,root,config):
 def fetch_note(url,note_id,folder,config):
     response=folder/'note-response.json'; intent=folder/'note-intent.json'
     if not response.exists():
+        if intent.exists():raise ValueError('上次详情请求结果不确定，暂停重复付费请求，请检查断点')
         key=project_env_values().get('EVERYINFRA_API_KEY')
         if not key:raise ValueError('缺少EveryInfra密钥')
-        if intent.exists():raise ValueError('上次详情请求结果不确定，暂停重复付费请求，请检查断点')
         x.save(intent,{'url':url,'note_id':note_id,'at':datetime.now(x.TZ).isoformat()})
         r=requests.post(config['api']['endpoint'],headers={'Authorization':'Bearer '+key},json={'platform':'xiaohongshu','action':'note','params':{'url':url}},timeout=(15,120))
         body=r.json();x.save(response,{'http_status':r.status_code,'body':body})
@@ -157,8 +157,13 @@ def import_link(url,root,client,config):
     remote=client.listing(route+'/records');existing=next((r for r in remote if x.text_field(r['fields'].get('唯一键'))==key),None)
     receipt=folder/'import-receipt.json'
     if receipt.exists() and existing:
-        expected=x.load(folder/'expected-row.json');x.verify_row(existing['fields'],expected)
+        expected=x.load(folder/'expected-row.json')
+        attachment_fields=[k for k,v in expected.items() if isinstance(v,list) and v and all(isinstance(a,dict) and a.get('file_token') for a in v)]
+        x.verify_row(existing['fields'],expected,attachment_fields)
         return {'note_id':note_id,'status':'already_imported','record_id':existing['record_id']}
+    if existing and (x.text_field(existing['fields'].get('平台'))!=platform or x.text_field(existing['fields'].get('来源'))!='手动增加'):
+        raise ValueError('Protected record conflicts with manual import key')
+    if not is_douyin:config=x.with_resolved_attachment(client,config,route)
     note=fetch_douyin_note(url,note_id,root,config) if is_douyin else fetch_note(url,note_id,folder,config)
     manifest=d.media(note,root,config) if is_douyin else x.media(note,root,config)
     if is_douyin:note['is_video']=manifest['is_video']
@@ -169,16 +174,34 @@ def import_link(url,root,client,config):
     uploads=x.load(root/'uploads.json') if (root/'uploads.json').exists() else {}
     for m in manifest['files']:
         digest=m['sha256'];path=root/m['path']
+        if not is_douyin and config['feishu'].get('attachment_field_id'):
+            if not path.is_file() or path.stat().st_size!=m['size'] or x.sha(path)!=digest:
+                raise ValueError('Manual import local media changed')
         if digest not in uploads:
             uploads[digest]=x.upload_attachment(client,config,path,path.name);x.save(root/'uploads.json',uploads)
         tokens.append({'file_token':uploads[digest]})
-    fields['视频附件' if note['is_video'] else '图片附件']=tokens
+    attachment=x.attachment_key(note,config)
+    if existing and not is_douyin and config['feishu'].get('attachment_field_id'):
+        previous=existing['fields'].get(attachment) or []
+        if any(not a.get('file_token') for a in previous):raise ValueError('Existing attachment has no token')
+        kept=[{'file_token':a['file_token']} for a in previous];seen={a['file_token'] for a in kept}
+        tokens=kept+[a for a in tokens if a['file_token'] not in seen]
+    fields[attachment]=tokens
     x.save(folder/'expected-row.json',fields)
     if existing:
         record_id=existing['record_id'];client.call('PUT',route+'/records/'+record_id,json={'fields':fields})
     else:
         result=client.call('POST',route+'/records/batch_create',params={'client_token':x.stable_uuid(key)},json={'records':[{'fields':fields}]});record_id=result['records'][0]['record_id']
-    actual=client.call('GET',route+'/records/'+record_id)['record'];x.verify_row(actual['fields'],fields)
+    actual=client.call('GET',route+'/records/'+record_id)['record'];x.verify_row(actual['fields'],fields,(attachment,))
+    if not is_douyin and config['feishu'].get('attachment_field_id'):
+        remote_attachments=actual['fields'].get(attachment) or []
+        for m in manifest['files']:
+            local=root/m['path'];token=uploads[m['sha256']]
+            if not local.is_file() or local.stat().st_size!=m['size'] or x.sha(local)!=m['sha256']:
+                raise ValueError('Manual import local media changed')
+            matches=[a for a in remote_attachments if a.get('file_token')==token]
+            if len(matches)!=1 or matches[0].get('size')!=m['size']:
+                raise ValueError('Manual import exact attachment size mismatch')
     result={'status':'verified','note_id':note_id,'record_id':record_id,'attachments':len(tokens)};x.save(receipt,result);return result
 
 

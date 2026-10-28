@@ -34,7 +34,7 @@ def main():
     socket.socket.connect_ex=connect(original_connect_ex)
     socket.getaddrinfo=lookup
     files=['test_everyinfra_jobs','test_resumable_media','test_collection_power','test_collection_runtime',
-           'test_daily_runtime_integration','test_douyin_daily','test_xhs_daily','test_xhs_tolerance','test_xhs_duration','test_xhs_link_bot',
+           'test_daily_runtime_integration','test_douyin_daily','test_xhs_daily','test_xhs_tolerance','test_xhs_duration','test_xhs_like_prefilter','test_xhs_unified_attachment','test_xhs_link_bot',
            'test_social_share_formats','test_social_selection']
     try:
         for probe in (lambda:socket.getaddrinfo('api.everyinfra.com',443),

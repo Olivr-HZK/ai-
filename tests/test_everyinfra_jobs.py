@@ -170,3 +170,30 @@ def test_both_platforms_end_to_end_search_evidence_and_cached_rerun(tmp_path,mon
     search.collect_douyin(db,cfg,key='test-key');assert douyin.select(db,cfg)['selected']==1
     for _ in range(2):search.collect_xhs(xb,cfg,key='test-key');search.collect_douyin(db,cfg,key='test-key')
     assert counts=={'post':2,'get':2}
+
+
+def test_authorized_xhs_retry_survives_pending_without_second_post(tmp_path,monkeypatch):
+    from scripts import resume_xhs_keyword_search as retry
+    monkeypatch.setattr(retry,'ROOT',tmp_path)
+    runtime.write(tmp_path/'config/social_chat_xhs_daily.json',{'keywords':['猫箱']})
+    base=tmp_path/'run';folder=base/'keywords/01';stem=folder/'pages/0001';canonical=stem.with_suffix('.job')
+    body={'platform':'xiaohongshu','action':'search','params':{'keyword':'猫箱','content_type':'all','date_range':'last_24_hours','sort':'newest'}}
+    runtime.write(canonical/'job-intent.json',{'status':'sending','original_evidence':'retained'})
+    original=(canonical/'job-intent.json').read_bytes()
+    runtime.write(stem.with_suffix('.request.json'),{'body':{**body,'mode':'async'},'transport':'persistent_async_v1','requested_at':datetime.now(timezone.utc).isoformat()})
+    runtime.write(folder/'complete.json',{'status':'incomplete'})
+    runtime.write(folder/'checkpoint.json',{'pages':0,'next_page_token':None})
+    retry.authorize_retry(base,'猫箱')
+    s=Session(['running','succeeded']);monkeypatch.setattr(requests,'post',s.post)
+    def get(*a,**kw):
+        r=s.get(*a,**kw);d=r.json();d['platform']='xiaohongshu';return response(d)
+    monkeypatch.setattr(requests,'get',get)
+    args=(body,stem.with_suffix('.request.json'),stem.with_suffix('.response.json'),canonical)
+    with pytest.raises(jobs.JobPending):search.page(*args,key='test-key',endpoint='https://api.everyinfra.com/api/v1/social',poll_budget=0)
+    retry.authorize_retry(base,'猫箱')
+    search.page(*args,key='test-key',endpoint='https://api.everyinfra.com/api/v1/social',poll_budget=0)
+    assert s.posts==1 and s.gets==2
+    assert (canonical/'job-intent.json').read_bytes()==original
+    assert search.resolve_page_job(search.load(stem.with_suffix('.request.json')),canonical)==canonical.with_suffix('.authorized-retry.job').resolve()
+    runtime.write(canonical/'job-intent.json',{'changed':True})
+    with pytest.raises(ValueError,match='retry evidence'):search.resolve_page_job(search.load(stem.with_suffix('.request.json')),canonical)

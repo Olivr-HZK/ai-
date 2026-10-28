@@ -38,6 +38,10 @@
     }
   },
   "date_semantics": "previous_calendar_day_asia_shanghai_v1",
+  "like_filter": {
+    "rule": "minimum_likes_before_media_v1",
+    "minimum_likes": 100
+  },
   "video_duration_filter": {
     "rule": "video_stream_duration_max300_v1",
     "max_seconds": 300
@@ -70,6 +74,8 @@
     "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
     "table_id": "tblgJwoOT0G3naT0",
     "view_id": "vewJHxyWE5",
+    "attachment_field_id": "fld8kRrOQY",
+    "attachment_field_name": "竞品素材（图片/视频/Playable）去除男频",
     "base_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c",
     "expected_app_id": "cli_a906892c9c8c1cb3"
   },

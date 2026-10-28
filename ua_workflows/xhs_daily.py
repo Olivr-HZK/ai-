@@ -47,6 +47,15 @@ def stable_uuid(seed):
 
 IMAGE_RULE = 'person_or_digital_human_v1'
 CALENDAR_DAY_RULE = 'previous_calendar_day_asia_shanghai_v1'
+LIKE_FILTER = {'rule': 'minimum_likes_before_media_v1', 'minimum_likes': 100}
+
+
+def like_filter_for(base):
+    path = Path(base) / 'daily-context.json'
+    value = load(path).get('like_filter') if path.exists() else None
+    if value is not None and value != LIKE_FILTER:
+        raise ValueError('Unsupported pinned likes filter')
+    return value
 
 
 def target_day_window(base):
@@ -173,7 +182,9 @@ def prepare_image_review(base):
         save(base / 'image-review-progress.json', {'pending_images': len(pending), 'failures': failures})
     pool.shutdown(wait=True)
     pending.sort(key=lambda m: (m['note_id'], m['path']))
-    directory = base / 'image-review-sheets'; directory.mkdir(exist_ok=True)
+    # Existing review decisions cite sheet hashes; never overwrite their evidence.
+    directory = base / 'image-review-sheets' / uuid.uuid4().hex
+    directory.mkdir(parents=True, exist_ok=False)
     for start in range(0, len(pending), 24):
         batch = pending[start:start+24]; sheet = Image.new('RGB', (1600, 1560), 'white'); draw = ImageDraw.Draw(sheet)
         for index, item in enumerate(batch):
@@ -263,7 +274,7 @@ def prepare_audience_review(base):
             except (MediaUnavailable,DurationExcluded):continue
             except Exception as exc:failures.append({'note_id':jobs[future]['id'],'error_type':type(exc).__name__,'diagnostic':record_failure(base, 'xhs-audience-media', exc)})
     pending.sort(key=lambda m:(m['note_id'],m['media_path'],m.get('timestamp_seconds',0)))
-    directory=base/'audience-review-sheets';directory.mkdir(exist_ok=True)
+    directory=base/'audience-review-sheets'/uuid.uuid4().hex;directory.mkdir(parents=True,exist_ok=False)
     for start in range(0,len(pending),24):
         sheet=Image.new('RGB',(1600,1560),'white');draw=ImageDraw.Draw(sheet)
         for index,m in enumerate(pending[start:start+24]):
@@ -430,6 +441,14 @@ def validated_notes(base):
 
 def reviewable_notes(base):
     base = Path(base).resolve(); notes, stats = validated_notes(base)
+    like_filter = like_filter_for(base)
+    if like_filter:
+        excluded = [n for n in notes if n['like_count'] < like_filter['minimum_likes']]
+        notes = [n for n in notes if n['like_count'] >= like_filter['minimum_likes']]
+        notes.sort(key=lambda n: (-n['like_count'], -datetime.fromisoformat(n['posted_at'].replace('Z', '+00:00')).timestamp(), n['id']))
+        stats.update(like_filter=like_filter, like_filter_excluded=len(excluded), like_filter_eligible=len(notes))
+        save(base/'excluded-below-likes.json', {'rule': like_filter, 'notes': [
+            {'id': n['id'], 'like_count': n['like_count']} for n in excluded]})
     if duration_policy_for(base):
         excluded=duration_excluded_notes(base,notes);ids={r['note_id'] for r in excluded}
         save(base/'excluded-over-duration.json',excluded)
@@ -481,7 +500,11 @@ def select(base):
     else:
         notes = person_notes
     notes.sort(key=lambda n: (-n['like_count'], -datetime.fromisoformat(n['posted_at'].replace('Z', '+00:00')).timestamp(), n['id']))
-    policy = selection_policy(len(notes), config.get('ranking', {}).get('rule_version', 'likes_top10_below100_else_decile_v1')); count = policy['selected']
+    if like_filter_for(base):
+        count = len(notes)
+        policy = {'selection_rule': 'minimum_likes_before_media_v1', 'selection_mode': 'all_eligible', 'selected': count}
+    else:
+        policy = selection_policy(len(notes), config.get('ranking', {}).get('rule_version', 'likes_top10_below100_else_decile_v1')); count = policy['selected']
     result = {**policy, **date_stats, 'audience_review_rule': AUDIENCE_RULE if config.get('audience_content_filter', {}).get('enabled') else None, 'audience_excluded': person_count-len(notes), 'audience_review_digest': audience_review_digest(base), 'image_review_rule': IMAGE_RULE, 'raw_unique_notes': raw_count, 'image_content_excluded': date_count-person_count, 'denominator': len(notes),
               'tie_policy': 'likes desc, posted_at desc, note_id asc', 'items': notes[:count]}
     save(base / 'selection.json', result)
@@ -516,23 +539,56 @@ def daily_destination(base, config, context):
     if target is None:
         # Earlier batches predate destination snapshots and used the former XHS table.
         target={**config['feishu'],'table_id':'tblwhAqPfQoBXK3Q'}
-        target.pop('view_id',None)
+        for key in ('view_id','attachment_field_id','attachment_field_name','attachment_field_resolved_name'):
+            target.pop(key,None)
     if (not target.get('table_id') or target.get('app_token')!=config['feishu']['app_token']
             or target.get('base_url')!=config['feishu']['base_url']):
         raise ValueError('Pinned XHS destination does not match the configured base')
-    return {**config,'feishu':{**config['feishu'],**target,**({} if 'view_id' in target else {'view_id':None})}}
+    feishu={**config['feishu'],**target,**({} if 'view_id' in target else {'view_id':None})}
+    if target['table_id']!=config['feishu']['table_id'] and not target.get('attachment_field_id'):
+        for key in ('attachment_field_id','attachment_field_name','attachment_field_resolved_name'):feishu.pop(key,None)
+    return {**config,'feishu':feishu}
+
+
+def attachment_field_name(client,config,route):
+    """Resolve a configured unified column by the ID in this specific table."""
+    if not config.get('feishu',{}).get('attachment_field_id'):return None
+    from ua_workflows.social_chat_attachments import resolve_field
+    return resolve_field(config,client.listing(route+'/fields'))['field_name']
+
+
+def attachment_key(note,config):
+    f=config.get('feishu',{})
+    if f.get('attachment_field_id'):
+        name=f.get('attachment_field_resolved_name') or f.get('attachment_field_name')
+        if not name:raise ValueError('Unified XHS attachment field name is missing')
+        return name
+    return '视频附件' if note['is_video'] else '图片附件'
+
+
+def with_resolved_attachment(client,config,route):
+    name=attachment_field_name(client,config,route)
+    return {**config,'feishu':{**config['feishu'],'attachment_field_resolved_name':name}} if name else config
 
 
 def provision(client, config):
     route = f"bitable/v1/apps/{config['feishu']['app_token']}/tables/{config['feishu']['table_id']}"
-    existing = {f['field_name']: f for f in client.listing(route+'/fields')}
-    for name, kind in FIELDS:
+    fields=client.listing(route+'/fields');existing = {f['field_name']: f for f in fields}
+    required=FIELDS
+    if config['feishu'].get('attachment_field_id'):
+        from ua_workflows.social_chat_attachments import resolve_field
+        attachment=resolve_field(config,fields)
+        required=[(name,kind) for name,kind in FIELDS if name not in ('视频附件','图片附件')]+[(attachment['field_name'],17)]
+    for name, kind in required:
         if name in existing:
             if existing[name]['type'] != kind: raise ValueError('Field type mismatch: '+name)
         else:
             client.call('POST', route+'/fields', json={'field_name': name, 'type': kind})
     verified = {f['field_name']: f['type'] for f in client.listing(route+'/fields')}
-    if any(verified.get(n) != k for n, k in FIELDS): raise ValueError('Schema readback failed')
+    if any(verified.get(n) != k for n, k in required): raise ValueError('Schema readback failed')
+    if config['feishu'].get('attachment_field_id'):
+        from ua_workflows.social_chat_attachments import resolve_field
+        resolve_field(config,client.listing(route+'/fields'))
     return route
 
 
@@ -667,8 +723,9 @@ def row_fields(note, manifest, day, base):
     return values
 
 
-def verify_row(actual, expected):
+def verify_row(actual, expected, attachment_fields=()):
     kinds=dict(FIELDS)
+    kinds.update({name:17 for name in attachment_fields if name})
     for name,value in expected.items():
         got=actual.get(name);kind=kinds[name]
         if value is None:ok=got is None or got==''
@@ -716,10 +773,11 @@ def verify_delivery_rows(base, selection, config, remote, expected, uploads):
     for fields in expected:
         matches=[r for r in remote if text_field(r['fields'].get('唯一键'))==fields['唯一键']]
         if len(matches)!=1:raise ValueError('Delivery unique key readback mismatch')
-        actual=matches[0]['fields'];verify_row(actual,fields)
         note=notes[fields['笔记ID']]
+        key=attachment_key(note,config)
+        actual=matches[0]['fields'];verify_row(actual,fields,(key,))
         manifest=eligible_media(note,base,config) if config.get('audience_content_filter',{}).get('enabled') else (media(note,base,config) if note['is_video'] else reviewed_images(note,base))
-        attachments=actual.get('视频附件' if note['is_video'] else '图片附件') or []
+        attachments=actual.get(key) or []
         if len(attachments)!=len(manifest['files']):raise ValueError('Delivery attachment count mismatch')
         files=[]
         for item in manifest['files']:
@@ -737,7 +795,7 @@ def verify_delivery_rows(base, selection, config, remote, expected, uploads):
 
 
 def sync(base, selection, config, day):
-    client=authorized_client(config);route=provision(client,config);uploads=load(base/'uploads.json') if (base/'uploads.json').exists() else {};expected=[];failures=[]
+    client=authorized_client(config);route=provision(client,config);config=with_resolved_attachment(client,config,route);uploads=load(base/'uploads.json') if (base/'uploads.json').exists() else {};expected=[];failures=[]
     rows=client.listing(route+'/records');by_key={}
     for r in rows:
         key=text_field(r['fields'].get('唯一键'))
@@ -751,10 +809,14 @@ def sync(base, selection, config, day):
                 if digest not in uploads:
                     token=upload_attachment(client,config,path,path.name);uploads[digest]=token;save(base/'uploads.json',uploads)
                 tokens.append({'file_token':uploads[digest]})
-            fields['视频附件' if note['is_video'] else '图片附件']=tokens
+            attachment=attachment_key(note,config);fields[attachment]=tokens
             existing=by_key.get(fields['唯一键'])
             if existing and (text_field(existing['fields'].get('来源'))!='每日最新' or text_field(existing['fields'].get('平台'))!='小红书' or text_field(existing['fields'].get('目标日期'))!=day):
                 raise ValueError('Protected manual/platform/date record conflicts with daily unique key')
+            if existing and config['feishu'].get('attachment_field_id'):
+                old={a.get('file_token') for a in (existing['fields'].get(attachment) or [])}
+                if old and old!={a['file_token'] for a in tokens}:
+                    raise ValueError('Existing unified attachments differ; refusing overwrite')
             # First discovery means first locally observed date, never publication date.
             if not existing or not existing['fields'].get('首次发现日期'):fields['首次发现日期']=datetime.fromisoformat(load(base/'run.json')['started_at']).astimezone(TZ).date().isoformat()
             else:fields['首次发现日期']=text_field(existing['fields']['首次发现日期'])
@@ -762,7 +824,7 @@ def sync(base, selection, config, day):
                 if text_field(existing['fields'].get('采集批次'))==base.name:
                     fields['同步时间']=text_field(existing['fields'].get('同步时间'))
                 try:
-                    verify_row(existing['fields'],fields)
+                    verify_row(existing['fields'],fields,(attachment,))
                 except ValueError:
                     client.call('PUT',route+'/records/'+existing['record_id'],json={'fields':fields})
             else:
@@ -774,7 +836,7 @@ def sync(base, selection, config, day):
         save(base/'media-failures.json',failures)
         print(json.dumps({'phase':'media_and_sync','note_id':note['id'],'verified_pending':len(expected),'failures':len(failures)},ensure_ascii=False),flush=True)
     remote=client.listing(route+'/records');lookup={text_field(r['fields'].get('唯一键')):r for r in remote}
-    for e in expected:verify_row(lookup[e['唯一键']]['fields'],e)
+    for e in expected:verify_row(lookup[e['唯一键']]['fields'],e,(config['feishu'].get('attachment_field_resolved_name'),))
     desired={e['唯一键'] for e in expected}
     # Retire only previous XHS selections for the same reporting day after successful new readback.
     if not failures:
@@ -810,14 +872,16 @@ def report(base,selection,config,client,synced,day):
     unavailable_note = (f"{media_label}获取失败／未审核：**{selection['media_unavailable_notes']} 篇**，经明确授权单列，不计入可审核排名分母；排名仅基于已取得并审核的素材，未虚构内容判断。\n") if selection.get('media_unavailable_notes') else ''
     coverage = '，存在未完成关键词' if partial_collection else '，全部关键词已到接口末页'
     duration_note=(f"视频时长上限：**5分钟**（300秒含）；超限排除：**{selection.get('video_duration_excluded',0)} 篇**，不抽帧、不纳入排名。\n") if selection.get('video_duration_filter') else ''
+    likes_note = (f"点赞筛选：**不少于100赞**，符合 **{selection['like_filter_eligible']} 篇**，排除 **{selection['like_filter_excluded']} 篇**；筛选后获取媒体。\n" if selection.get('like_filter') else '')
+    selected_report = (f"点赞筛选及主体审核后入选：**{selection['selected']} 篇**" if selection.get('like_filter') else selection_report(selection))
     text=(f"**采集口径：{scope_text}**\n执行开始：{start}\n\n"
           f"{coverage_note}{unavailable_note}"
           f"📊 搜索命中：**{summary['raw_rows']} 条**，共 **{summary['pages']} 页**{coverage}\n"
           f"去重笔记：**{summary['unique_notes']} 篇**（视频 {summary['video_notes']}，图文 {summary['image_notes']}）\n\n"
-          f"{date_note}{fee_note}{duration_note}"
+          f"{date_note}{fee_note}{likes_note}{duration_note}"
           f"人物图片审核剔除：**{selection.get('image_content_excluded', 0)} 篇**；已审核合格候选：**{selection['denominator']} 篇**\n"
           f"男性主体审核剔除：**{selection.get('audience_excluded',0)} 篇**\n"
-          f"{selection_report(selection)}\n"
+          f"{selected_report}\n"
           f"🎬 视频下载并入表：**{synced['video_success']} 篇**\n🖼️ 图文下载并入表：**{synced['image_success']} 篇**\n"
           f"⚠️ 入选项媒体/同步失败：**{len(synced['failures'])} 篇**，不补位、不改写分母\n"
           f"✅ 实际写表并读回验证：**{synced['verified_rows']} 篇**，附媒体附件\n\n"
@@ -857,8 +921,11 @@ def main():
         else:
             day=(now-timedelta(days=1)).date().isoformat()
             value={'target_date':day,'execution_started_at':now.isoformat(),'timezone':'Asia/Shanghai',
-                   'feishu_target':{k:config['feishu'][k] for k in ('app_token','table_id','base_url','view_id') if k in config['feishu']}}
+                   'feishu_target':{k:config['feishu'][k] for k in ('app_token','table_id','base_url','view_id','attachment_field_id','attachment_field_name') if k in config['feishu']}}
             if config.get('date_semantics')==CALENDAR_DAY_RULE:value['date_filter_rule']=CALENDAR_DAY_RULE
+            if config.get('like_filter') is not None:
+                if config['like_filter'] != LIKE_FILTER: raise ValueError('Unsupported configured likes filter')
+                value['like_filter'] = dict(LIKE_FILTER)
             save(context,value)
         # Completed batches keep their original selection and receipt across rule changes.
         prior=base/'daily-result.json';receipt=base/'report-receipt.json'
