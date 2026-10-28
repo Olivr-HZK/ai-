@@ -7,7 +7,7 @@ import json
 import math
 from pathlib import Path
 
-POLICY = {
+LEGACY_POLICY = {
     'version': 'dedupe-first-joint-review-v1',
     'order': ['package_ledger', 'exclude_relaunch', 'intraday_dedupe', 'crossday_7d_dedupe',
               'product_joint_visual_review', 'template_representatives', 'rank_top100', 'package_and_sync'],
@@ -17,6 +17,29 @@ POLICY = {
     'frame_fractions': [0.03, 0.15, 0.30, 0.50, 0.70, 0.90],
     'reuse_bound_evidence': True, 'template_uncertain': 'not_admitted',
 }
+POLICY = {
+    **LEGACY_POLICY,
+    'version': 'dedupe-first-joint-review-v2',
+    'order': ['package_ledger', 'plugin_relaunch_labels', 'intraday_dedupe', 'crossday_7d_dedupe',
+              'product_joint_visual_review', 'template_representatives', 'rank_all_qualified', 'package_and_sync'],
+    'screening_passes': ['plugin_relaunch_labels', 'intraday_vectors', 'crossday_7d_vectors',
+                         'joint_content_style_product_template'],
+    'selection': 'all_qualified',
+}
+
+
+def validate_policy(policy):
+    if policy != POLICY and policy != LEGACY_POLICY:
+        raise ValueError('Unsupported pinned processing policy')
+    return policy
+
+
+def is_relaunch(row):
+    """Only explicit plugin label data; never infer from copy or absent labels."""
+    value = row.get('relaunch')
+    if isinstance(value, dict):
+        return value.get('value') is True
+    return value is True or value in ('confirmed', '重投')
 
 
 def sha(path):
@@ -64,19 +87,23 @@ def _components(rows, vectors, threshold):
 
 def plan(target, records, vectors, policy=None):
     """Inputs are ledger-checked local media; existing content decisions are ignored."""
-    policy = policy or POLICY
-    if policy != POLICY:
-        raise ValueError('Unsupported pinned processing policy')
+    policy = validate_policy(policy or POLICY)
     today_date = date.fromisoformat(target)
     ids = [r['id'] for r in records]
     if len(ids) != len(set(ids)):
         raise ValueError('Duplicate normalized media IDs')
-    today, history, skipped_history, coverage = [], [], [], set()
+    today, history, skipped_history, coverage, relaunch_ids = [], [], [], set(), []
+    target_media_input = 0
     for row in records:
         age = (today_date - date.fromisoformat(row['day'])).days
         if age < 0 or age > policy['history_days']:
             continue
-        if row.get('relaunch') in ('confirmed', True) or row.get('kind') not in ('视频', '图片'):
+        if row.get('kind') not in ('视频', '图片'):
+            continue
+        if age == 0:
+            target_media_input += 1
+        if is_relaunch(row):
+            if age == 0: relaunch_ids.append(row['id'])
             continue
         try:
             identity = group(row)
@@ -124,22 +151,23 @@ def plan(target, records, vectors, policy=None):
     counts = dict(Counter(o['status'] for o in outcomes.values()))
     missing = [(today_date - timedelta(days=i)).isoformat() for i in range(1, 8)
                if (today_date - timedelta(days=i)).isoformat() not in coverage]
-    return {'version': POLICY['version'], 'target_date': target, 'policy': dict(policy),
+    return {'version': policy['version'], 'target_date': target, 'policy': dict(policy),
             'status': 'JOINT_REVIEW_PENDING', 'input_before_content_review': len(today), 'counts': counts,
+            'target_media_before_relaunch': target_media_input, 'plugin_relaunch_excluded_ids': relaunch_ids,
             'history_rows': len(history), 'history_dates': sorted(coverage), 'missing_history_dates': sorted(missing),
             'unidentified_history_ids': skipped_history, 'decisions': outcomes,
             'review_queue': sorted(survivors, key=lambda r: (r['group'], -r['value'], r['id'])),
             'review_certified': False}
 
 
-def prepare_queue(target, index, cache, output, policy=None):
+def prepare_queue(target, index, cache, output, policy=None, history_vector_pack=None):
     index, cache, output = Path(index), Path(cache), Path(output)
     document = json.loads(index.read_text())
     records = document if isinstance(document, list) else document['records']
     vectors, fingerprints, blobs = {}, set(), {}
     for row in records:
         age = (date.fromisoformat(target) - date.fromisoformat(row['day'])).days
-        if not 0 <= age <= 7 or row.get('relaunch') in ('confirmed', True) or row.get('kind') not in ('视频', '图片'):
+        if not 0 <= age <= 7 or is_relaunch(row) or row.get('kind') not in ('视频', '图片'):
             continue
         try: group(row)
         except ValueError:
@@ -156,7 +184,26 @@ def prepare_queue(target, index, cache, output, policy=None):
         fingerprints.add(blob['model_fingerprint']);vectors[row['id']] = blob['vector']
     if len(fingerprints) != 1:
         raise ValueError('Dedupe requires one verified CLIP model fingerprint')
+    history_receipt = None
+    if history_vector_pack:
+        from ua_workflows.social_chat_clip_vectors import read_bundle
+        bundle = read_bundle(history_vector_pack, next(iter(fingerprints)))
+        existing = {r['id']:r for r in records}
+        for row in bundle['records']:
+            age = (date.fromisoformat(target)-date.fromisoformat(row['day'])).days
+            if not 1 <= age <= 7:
+                continue
+            prior = existing.get(row['id'])
+            if prior is not None:
+                if any(prior.get(k)!=row.get(k) for k in ('day','app','os')) or prior['proxy']['sha256']!=row['proxy']['sha256']:
+                    raise ValueError('History record identity disagrees with local index: '+row['id'])
+                continue
+            records.append(row);vectors[row['id']]=bundle['vectors'][row['id']]
+        history_receipt = {'sha256':sha(history_vector_pack),'source_records':bundle['manifest']['records'],
+                           'source_vectors':bundle['manifest']['vectors'],'images_required':False}
     result = plan(target, records, vectors, policy)
+    if history_receipt:
+        result['history_vector_pack'] = history_receipt
     # Freeze only the survivors for one combined human review; no style/template
     # decisions are inferred from the proxy or inherited content decisions.
     for row in result['review_queue']:

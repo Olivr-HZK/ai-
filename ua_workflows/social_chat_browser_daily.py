@@ -530,6 +530,7 @@ def main():
     parser.add_argument('--source-zip', type=Path, action='append', default=[], help='手动交接的插件原始ZIP，可多次传入')
     parser.add_argument('--media-index', type=Path, help='pre-review：报告已核对的标准化本地素材及历史清单')
     parser.add_argument('--embedding-cache', type=Path, help='pre-review：绑定代理图SHA256及CLIP模型身份的本地向量缓存')
+    parser.add_argument('--history-vector-pack', type=Path, help='pre-review：只含历史向量与索引的便携ZIP，无需历史图片/视频')
     parser.add_argument('--apply', action='store_true', help='实际写飞书；默认只生成本地待写入包')
     args = parser.parse_args()
     config = load(CONFIG)
@@ -544,10 +545,11 @@ def main():
         if args.command == 'prepare':
             result = prepare(target, run_dir, config, args.execution_origin, args.source_zip)
         elif args.command == 'pre-review':
-            from ua_workflows.social_chat_plugin_review_plan import POLICY, prepare_queue
+            from ua_workflows.social_chat_plugin_review_plan import validate_policy, prepare_queue
             scope = load(run_dir / 'scope.json')
-            if scope.get('collection_mode') != 'plugin-handoff-v1' or scope.get('processing_policy') != POLICY:
+            if scope.get('collection_mode') != 'plugin-handoff-v1' or not scope.get('processing_policy'):
                 raise ValueError('Use a new dedupe-first handoff directory; historical scopes are not migrated')
+            validate_policy(scope['processing_policy'])
             if load(run_dir / 'handoff.json')['status'] != 'PACKAGE_RECEIVED':
                 raise ValueError('Receive the original plugin ZIP before pre-review')
             if not args.media_index or not args.embedding_cache or args.apply:
@@ -555,7 +557,7 @@ def main():
             if args.date and args.date != scope['target_date']:
                 raise ValueError('Date disagrees with pinned handoff scope')
             result = prepare_queue(scope['target_date'], args.media_index, args.embedding_cache,
-                                   run_dir / 'pre-review/plan.json', scope['processing_policy'])
+                                   run_dir / 'pre-review/plan.json', scope['processing_policy'], args.history_vector_pack)
         elif args.command == 'provision':
             result = provision(config, Feishu()) if args.apply else {'status': 'dry_run', 'url': table_url(config), 'fields': FIELDS}
         else:

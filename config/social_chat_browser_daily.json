@@ -4,7 +4,7 @@
   "execution": "manual",
   "plugin_handoff": {
     "mode": "manual_zip",
-    "processing_policy_version": "dedupe-first-joint-review-v1",
+    "processing_policy_version": "dedupe-first-joint-review-v2",
     "content_review_policy": {
       "version": "male-display-female-oriented-no-talking-head-v1",
       "male_display": "required",
@@ -19,8 +19,7 @@
   "date_semantics": "first_discovered_on_target_date",
   "ranking": {
     "scope": "all_apps_and_platforms",
-    "mode": "top_n",
-    "count": 100,
+    "mode": "all",
     "ties": "stable_app_platform_ad_id"
   },
   "filters": {

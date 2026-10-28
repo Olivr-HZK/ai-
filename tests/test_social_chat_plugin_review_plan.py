@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from ua_workflows.social_chat_plugin_review_plan import POLICY, plan, prepare_queue
+from ua_workflows.social_chat_plugin_review_plan import POLICY, LEGACY_POLICY, plan, prepare_queue
 
 
 def vector(angle):
@@ -27,6 +27,22 @@ def test_dedupe_before_content_preserves_highest_even_if_old_review_excluded():
     assert result['decisions']['low']['status']=='intraday_removed'
     assert result['status']=='JOINT_REVIEW_PENDING' and not result['review_certified']
     assert result['input_before_content_review']==3
+
+
+def test_plugin_positive_labels_are_first_pass_and_unknown_is_not_false():
+    records=[row('positive',relaunch={'value':True,'label':'重投'}),row('unknown',relaunch={'value':None,'label':'未知'}),
+             row('copy_only',raw_text='广告文案写重投，实际无标签')]
+    result=plan('2026-10-25',records,{'unknown':vector(0),'copy_only':vector(90)})
+    assert result['plugin_relaunch_excluded_ids']==['positive']
+    assert result['target_media_before_relaunch']==3 and result['input_before_content_review']==2
+    assert {r['id'] for r in result['review_queue']}=={'unknown','copy_only'}
+    assert result['policy']['selection']=='all_qualified' and len(result['policy']['screening_passes'])==4
+
+
+def test_legacy_processing_version_resumes_without_policy_migration():
+    result=plan('2026-10-25',[row('one')],{'one':vector(0)},LEGACY_POLICY)
+    assert result['version']=='dedupe-first-joint-review-v1'
+    assert result['policy']==LEGACY_POLICY and 'rank_top100' in result['policy']['order']
 
 
 def test_seven_calendar_day_window_excludes_17_and_includes_18():

@@ -28,7 +28,7 @@ def test_default_prepare_waits_for_package_without_browser_or_daily_fsm(tmp_path
     result = daily.prepare('2026-10-25', tmp_path, cfg)
     assert result['status'] == 'WAITING_PACKAGE' and result['browser_started'] is False
     scope = daily.load(tmp_path / 'scope.json')
-    assert scope['ranking'] == {'mode': 'top_n', 'count': 100}
+    assert scope['ranking'] == {'mode': 'all'}
     assert scope['content_review_policy']['version'] == 'male-display-female-oriented-no-talking-head-v1'
     from ua_workflows.social_chat_plugin_review_plan import POLICY
     assert scope['processing_policy']==POLICY

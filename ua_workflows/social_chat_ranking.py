@@ -6,6 +6,10 @@ def rule(value=None):
     # Scopes created before ranking was pinned used the global top decile.
     value = value or {'mode': 'fraction', 'fraction': '0.10', 'rounding': 'ceil'}
     mode = value.get('mode', 'fraction')
+    if mode == 'all':
+        if 'count' in value or 'fraction' in value:
+            raise ValueError('All-qualified ranking must not carry a truncation limit')
+        return {'mode': 'all'}
     if mode == 'top_n':
         n = value.get('count')
         if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
@@ -26,12 +30,16 @@ def count(eligible, ranking=None):
     if isinstance(eligible, bool) or not isinstance(eligible, int) or eligible < 0:
         raise ValueError('Invalid eligible count')
     r = rule(ranking)
+    if r['mode'] == 'all':
+        return eligible
     return min(eligible, r['count']) if r['mode'] == 'top_n' else int(
         (Decimal(eligible) * Decimal(r['fraction'])).to_integral_value(rounding=ROUND_CEILING))
 
 
 def label(ranking=None):
     r = rule(ranking)
+    if r['mode'] == 'all':
+        return '全部审核合格项（不截取）'
     if r['mode'] == 'top_n':
         return f"前{r['count']}条（不足时取全部通过项）"
     return f"前{Decimal(r['fraction']) * 100:g}%，向上取整"

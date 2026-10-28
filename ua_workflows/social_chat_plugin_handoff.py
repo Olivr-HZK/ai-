@@ -55,9 +55,9 @@ def inspect_package(path):
 
 def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
     from ua_workflows.social_chat_browser_daily import load, save
-    from ua_workflows.social_chat_ranking import rule
+    from ua_workflows.social_chat_ranking import rule, label
     from ua_workflows.social_chat_style_tags import validate_style_policy
-    from ua_workflows.social_chat_plugin_review_plan import POLICY
+    from ua_workflows.social_chat_plugin_review_plan import POLICY, validate_policy
     date.fromisoformat(target)
     if execution_origin != 'manual':
         raise ValueError('Plugin handoff is manual; supply the downloaded ZIPs in chat')
@@ -81,8 +81,8 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
         raise ValueError('Unsupported plugin handoff content policy')
     validate_style_policy(scope['style_tagging'])
     processing = scope.get('processing_policy')
-    if processing is not None and processing != POLICY:
-        raise ValueError('Unsupported pinned plugin processing policy')
+    if processing is not None:
+        validate_policy(processing)
     incoming = [inspect_package(p) for p in source_zips]
     prior = load(base / 'handoff.json') if (base / 'handoff.json').exists() else None
     fingerprint = hashlib.sha256(json.dumps(scope, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -103,13 +103,15 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
         save(base / 'scope.json', scope)
     if receipt != prior:
         save(base / 'handoff.json', receipt)
-    review_steps = '''先对全部已下载非重投素材做日内去重，再比对目标日前7个自然日历史；不先按旧内容审核决定过滤。CLIP阈值0.9，按完整App身份及系统分组，每个日内簇保留展示估值最高者。缺历史日期/身份/向量须留账，不当作零结果。
+    review_steps = '''第一道筛选直接按插件报告中的明确重投标签剔除，不重新点卡猜测；未见标签仍为未知。随后对全部已下载非重投素材做日内向量去重、目标日前7自然日跨日向量去重，最后按产品一次联合做主体/内容审核、风格打标及模板去重，共四道筛选。
+不先按旧内容审核决定过滤。CLIP阈值0.9，按完整App身份及系统分组，每个日内簇保留展示估值最高者。缺历史日期/身份/向量须留账，不当作零结果。
 生成标准化清单后，运行pre-review入口（--media-index与--embedding-cache），只产生JOINT_REVIEW_PENDING队列，不认证人工审核完成。向量缓存须绑定同一CLIP模型和代理图SHA256；缺缓存先本地计算，不调用OpenRouter或私有接口。
 去重阶段使用原封面或已有3%代理帧；不做内容人工初筛。只对去重剩余项核验完整解码（已有源SHA匹配回执可复用），再按产品分组，一次准备六帧并同时检查内容、模板和风格。源文件/参数/帧哈希一致的证据复用；没有六帧才提取一套，若3%代理已是同参数真实帧，复用并补其余五帧。不得为了三个审核任务各抽一套/看一轮。
 在同一条joint_review中填写content、template、style及画面依据；逐产品俯瞰镜头顺序、动作、对白钩子、交互与结束页，判定仅换角色外观或画法的模板变体；共同版式不等于相同模板。内容或模板存疑暂不纳入；通过项才填写正式风格标签。证据不足可放大/补帧/播放，不宣称一次六帧能保证检出所有问题。
-内容审核完后，在合格同模板组内仅留最高展示估值一条；代表不过审时不自动复活已被前序去重剔除项补数。全部合格媒体合并降序取scope.ranking的前100条，不足取实际数量。''' if processing else '''本历史scope没有dedupe-first-joint-review-v1，不自动迁移或改变历史顺序。
+内容审核完后，在合格同模板组内仅留最高展示估值一条；代表不过审时不自动复活已被前序去重剔除项补数。交付数量严格遵循本批scope.ranking。''' if processing else '''本历史scope没有固定联合审核版本，不自动迁移或改变历史顺序。
 视频实际解码、抽六帧并查看，图片逐原图解码/查看，记录决定、理由、证据哈希；六帧不称完整审听。
 通过项同次按scope固定风格版本打标，合并按展示估值降序取scope.ranking规定的前100条（不足取实际通过数）。'''
+    review_steps += '\n本批固定交付范围：' + label(scope['ranking']) + '。展示估值只决定排序和同模板代表；不隐式套用前100/前10%限制。'
     prompt = f'''# {target} 插件每日最新素材 · 手动交接
 
 当前：{receipt['status']}；已登记{len(packages)}份ZIP。prepare只登记文件，不表示已审核、入表或完成全量采集。
