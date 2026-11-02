@@ -22,6 +22,7 @@ mcp = [
 [project.scripts]
 guangdada = "guangdada_crawl.cli:main"
 guangdada-mcp = "guangdada_crawl.mcp_server:main"
+replica-studio = "ua_workflows.replica_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

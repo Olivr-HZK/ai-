@@ -46,3 +46,6 @@ session_log.json
 data/creative_platform/
 apps/creative-platform/__pycache__/
 apps/creative-platform/tests/__pycache__/
+
+# Replica CLI session credentials, per-account checkpoints and downloaded media
+data/replica-cli/
