@@ -1,17 +1,35 @@
-UA 素材 · 三工作流版
+# UA 素材 · 竞品采集与复刻
 
-本项目现在只保留三条生产工作流：
+本项目旨在爬取竞品广告素材，完成去重、内容审核和风格打标，再进行素材复刻，**目前聚焦 Afizzy 项目**。
+
+当前主流程为：**爬取 → 筛选 → 复刻**。
+
+| 阶段 | 当前情况 | 后续方向 |
+|------|----------|----------|
+| 爬取 | 用户手动用广大大浏览器插件采集，将目标日期和原始 ZIP 交给 Agent | 实现无头浏览器定时稳定采集；目前只有隔离样本可行性验证，未完成生产无人值守验收 |
+| 筛选 | 按明确重投标签剔除，封面图日内/跨日7天去重，再一次完成主体审核、风格打标及产品内模板去重；依据画面文案及实际口播标一个主语言，全部合格项打包入表 | 完善跨批历史向量、审核证据与复刻输入清单的衔接，减少重复处理 |
+| 复刻 | 视频复刻、图片复刻已完成；视频走 Replica Studio CLI（换 Logo、翻译），新批图片入库核验后由 Agent 使用内置图片生成工具替换 Afizzy 品牌并回填复刻附件 | 完成 Playable 复刻；视频侧后续实现换人 |
+
+完整流程、阶段现状和后续验收目标见 **[Afizzy 竞品素材流程与路线图](docs/afizzy-material-workflow.md)**（更新于2026-11-02）。未来方向不表示已实现，也不自动启动采集或复刻任务。
+
+## 既有 VE / Arrow2 工作流
+
+仓库仍保留以下既有工作流，其入口及说明用于维护原业务，不作为 Afizzy 当前默认入口：
 
 1. **Video Enhancer**：竞品素材抓取、结构化灵感分析、玩法资产判断、飞书多维表同步与浩鹏 TopN 推送。
 2. **Arrow2 latest_yesterday**：Arrow2 竞品每日最新素材。
 3. **Arrow2 exposure_top10**：Arrow2 竞品展示估值素材。
 
-核心代码位于 `ua_workflows/`，`scripts/` 只保留三个整合入口。
+核心代码位于 `ua_workflows/`，浏览器插件位于 `apps/`，执行入口位于 `scripts/`。
 
 ## 项目文档
 
 | 说明 | 路径 |
 |------|------|
+| **Afizzy 当前流程与路线图** | [docs/afizzy-material-workflow.md](docs/afizzy-material-workflow.md) |
+| Replica Studio CLI | [docs/replica-studio-cli.md](docs/replica-studio-cli.md) |
+| 图片品牌复刻 | [image-replication.md](skills/social-chat-browser-daily/references/image-replication.md) |
+| 小红书当前流程 | [docs/social-chat-xhs-daily.md](docs/social-chat-xhs-daily.md) |
 | 文档索引 | [docs/README.md](docs/README.md) |
 | **定时任务（crontab）** | [docs/cron-schedules.md](docs/cron-schedules.md) |
 | 三条工作流说明 | [docs/workflows.md](docs/workflows.md) |
@@ -29,7 +47,7 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-## 项目结构
+## 既有 VE / Arrow2 目录与入口
 
 ```text
 ua素材/
@@ -56,7 +74,7 @@ ua素材/
 └── archive/
 ```
 
-## 运行方式
+## 既有 VE / Arrow2 运行方式
 
 在项目根目录下执行：
 
@@ -71,7 +89,7 @@ ua素材/
 
 不需要分析时可去掉 `--analyze`。Arrow2 可用 `--skip-sync` 跳过飞书同步。
 
-## 爬取冒烟测试
+## 既有 VE / Arrow2 爬取冒烟测试
 
 三个测试脚本只验证爬取，一个产品，不入库、不同步：
 
@@ -107,4 +125,4 @@ python -m compileall ua_workflows scripts
 
 ## 归档说明
 
-旧 UA、hot rank/new rank、playable、调试探针、一次性 backfill/preview/test 脚本已归档到 `archive/removed_scripts_2026_05_06/`。后续维护应优先修改 `ua_workflows/` 中的三条主工作流。
+旧 UA、hot rank/new rank、playable、调试探针、一次性 backfill/preview/test 脚本已归档到 `archive/removed_scripts_2026_05_06/`。VE/Arrow2 原业务沿各自入口维护；Afizzy 新批次按上方当前流程处理，不默认调用旧爬虫。

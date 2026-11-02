@@ -1,5 +1,7 @@
 # 三条生产工作流 + 独立反馈训练链路
 
+本文维护既有VE/Arrow2工作流。Afizzy当前默认流程为手动广大大插件ZIP交接 → 去重、审核与打标入库 → 视频CLI或图片内置生成复刻，见[当前流程与路线图](afizzy-material-workflow.md)，不以本页旧入口替代。
+
 核心实现位于 `**ua_workflows/**`；`**scripts/**` 只做薄封装入口，便于 `python scripts/run_*.py` 与 cron 调用。
 
 ## 总览

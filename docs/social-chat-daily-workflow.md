@@ -1,5 +1,7 @@
 # 社交聊天 AI 应用日工作流
 
+> 本文记录旧 VE 复用链路，不作为 Afizzy 当前默认流程。当前为用户手动插件采集交接 ZIP → 去重与联合审核、主语言打标并入库 → 分媒体类型复刻（视频CLI，图片内置生成并回填），详见[当前流程与路线图](afizzy-material-workflow.md)。下述每广告主10条及cron入口不适用于当前插件交接批次。
+
 该工作流复用 VE 的广大大抓取、目标日 `first_seen` 筛选、封面去重、分析和多维表同步节点，使用独立产物前缀 `workflow_social_chat_YYYY-MM-DD`。
 
 封面日内/历史去重后，会再按广告主执行每日精选：每个广告主最多 10 条。选择权重为封面 CLIP 差异度 90%、展示估值 10%；先用平均视觉距离选择首条，再用 max-min 距离逐条补齐，确保高曝光相似变体不会挤掉明显不同的新创意。完整候选保留在 `creative_library` 供历史去重，`daily_creative_insights`、分析和飞书只保留入选项。报告写入 `data/workflow_social_chat_YYYY-MM-DD_daily_advertiser_selection.json`。
