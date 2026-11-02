@@ -10,6 +10,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import time
 from pathlib import Path
 from urllib.parse import quote, unquote, urljoin, urlsplit
@@ -74,7 +75,38 @@ def allowed(method, path):
     if method == 'PUT':
         return bool(re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}', path))
     return method == 'POST' and (path in {'/api/jobs', '/api/jobs/download/files'} or bool(
-        re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate)', path)))
+        re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate)', path) or portrait_path(path)))
+
+
+def portrait_path(path):
+    return re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/portrait/[A-Za-z0-9_-]{1,64}', path)
+
+
+def prepare_portrait(path):
+    """Read and inspect the exact upload bytes, without resizing or conversion."""
+    path = Path(path).expanduser().resolve()
+    formats = {'.png': ('png', 'image/png'), '.jpg': ('mjpeg', 'image/jpeg'),
+               '.jpeg': ('mjpeg', 'image/jpeg'), '.webp': ('webp', 'image/webp')}
+    if path.suffix.lower() not in formats or not path.is_file() or not 0 < path.stat().st_size <= 30 * 1024 * 1024:
+        raise ReplicaError('invalid_portrait', 'Use a PNG/JPG/WebP image of at most 30 MiB')
+    with path.open('rb') as stream:
+        data = stream.read(30 * 1024 * 1024 + 1)
+    if not 0 < len(data) <= 30 * 1024 * 1024:
+        raise ReplicaError('invalid_portrait', 'Portrait exceeds 30 MiB')
+    try:
+        probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                                '-show_entries', 'stream=codec_name,width,height', '-of', 'json', '-i', 'pipe:0'],
+                               input=data, capture_output=True, timeout=20, check=True)
+        stream = json.loads(probe.stdout)['streams'][0]
+        width, height = stream['width'], stream['height']
+        if (stream['codec_name'] != formats[path.suffix.lower()][0] or
+                type(width) is not int or type(height) is not int or min(width, height) < 320):
+            raise ValueError('Invalid image dimensions or encoding')
+    except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError):
+        raise ReplicaError('invalid_portrait', 'Image must match its PNG/JPG/WebP extension and have a short side of at least 320 pixels; ffprobe is required') from None
+    return {'data': data, 'mime': formats[path.suffix.lower()][1],
+            'identity': {'path': str(path), 'name': path.name, 'bytes': len(data),
+                         'sha256': hashlib.sha256(data).hexdigest(), 'width': width, 'height': height}}
 
 
 def digest(path):
@@ -180,6 +212,9 @@ class ReplicaAPI:
         if not allowed(method, path):
             raise ReplicaError('unsupported_endpoint', 'Endpoint outside analysis / smart-Logo / translation workflow')
         validate_workflow_body(method, path, body)
+        if method == 'POST' and portrait_path(path):
+            if not files or set(files) != {'file'} or body:
+                raise ReplicaError('unsupported_action', 'Portrait replacement only accepts one multipart file')
         if safe_retry and method != 'GET' and path != '/api/jobs/download/files':
             raise ReplicaError('unsupported_action', 'Generation and route changes must not be automatically retried')
         write = method != 'GET'
@@ -317,6 +352,24 @@ class ReplicaAPI:
         if capabilities is not None and 'translation_v1' not in capabilities:
             raise ReplicaError('bridge_upgrade_required', 'Close the old CLI login window, then run replica-studio login to load translation support')
 
+    def require_portrait_transport(self):
+        capabilities = vars(self.session).get('replica_capabilities')
+        if capabilities is not None and 'portrait_upload_v1' not in capabilities:
+            raise ReplicaError('bridge_upgrade_required', 'Close the old CLI login window, then run replica-studio login to load portrait upload support')
+
+    def upload_portrait(self, job_id, source_id, picture):
+        self.require_portrait_transport()
+        job_id, source_id = identifier(job_id), identifier(source_id)
+        data, identity = picture['data'], picture['identity']
+        if (not isinstance(data, bytes) or not 0 < len(data) <= 30 * 1024 * 1024 or
+                len(data) != identity['bytes'] or hashlib.sha256(data).hexdigest() != identity['sha256']):
+            raise ReplicaError('invalid_portrait', 'Portrait bytes do not match the prepared image')
+        result = self.request('POST', '/api/jobs/' + job_id + '/portrait/' + source_id,
+                              files={'file': (identity['name'], data, picture['mime'])})
+        if result.get('id') != job_id or type(result.get('revision')) is not int:
+            raise ReplicaError('result_unknown', 'Portrait upload receipt could not be confirmed')
+        return result
+
     def translation_settings(self):
         self.require_translation_transport()
         return self.settings().get('translation') or {}
@@ -388,6 +441,17 @@ class ReplicaAPI:
                 or not isinstance(expected_sha256, str) or not re.fullmatch(r'[a-f0-9]{64}', expected_sha256)):
             raise ReplicaError('invalid_media', 'Invalid original-media identity')
         address = media_url('/api/jobs/' + identifier(job_id) + '/files/' + quote(filename, safe=''), job_id)
+        return self._media_matches(address, expected_bytes, expected_sha256)
+
+    def portrait_matches(self, job_id, filename, identity):
+        if (not isinstance(filename, str) or not filename or type(identity.get('bytes')) is not int
+                or not 0 < identity['bytes'] <= 30 * 1024 * 1024
+                or not re.fullmatch(r'[a-f0-9]{64}', identity.get('sha256', ''))):
+            raise ReplicaError('invalid_media', 'Invalid portrait identity')
+        address = media_url('/api/jobs/' + identifier(job_id) + '/files/' + quote(filename, safe='/'), job_id)
+        return self._media_matches(address, identity['bytes'], identity['sha256'])
+
+    def _media_matches(self, address, expected_bytes, expected_sha256):
         sha, size = hashlib.sha256(), 0
         deadline = time.monotonic() + 120
         try:

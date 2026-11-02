@@ -304,7 +304,7 @@ def download_many(api, ids, checkpoint, output, *, plan_only=False, on_result=No
 
 
 def parser():
-    p = argparse.ArgumentParser(description='Replica Studio CLI：自动分析、智能换 Logo、可选翻译、状态与下载。')
+    p = argparse.ArgumentParser(description='Replica Studio CLI：自动分析、人物参考图上传、智能换 Logo、可选翻译、状态与下载。')
     p.add_argument('--session-file', type=Path, help='已授权会话的私密 JSON 文件（0600）；也可用项目 .env 中 REPLICA_SESSION_FILE')
     p.add_argument('--checkpoint', type=Path, default=DEFAULT_STATE, help='上传／付费动作／下载断点')
     sub = p.add_subparsers(dest='command', required=True)
@@ -327,6 +327,14 @@ def parser():
     status.add_argument('--analysis', action='store_true', help='包含文档公开的分析视图')
     logo = sub.add_parser('logo', help='多选智能 AI 换 Logo；逐任务入队，不重复已提交付费动作')
     logo.add_argument('ids', nargs='+')
+    characters = sub.add_parser('characters', help='只读列出任务角色ID及当前人物参考图')
+    characters.add_argument('id')
+    portrait = sub.add_parser('portrait', help='上传你提供的人物图并替换指定角色参考图，不生成图片或视频')
+    portrait.add_argument('id')
+    portrait.add_argument('image', type=Path)
+    portrait.add_argument('--source-id', help='多角色任务必须指定；单角色自动选择唯一角色')
+    portrait.add_argument('--replace', action='store_true', help='允许更换此前已确认的参考图；未知上传仍只读核对')
+    portrait.add_argument('--check-only', action='store_true', help='只检查图片与角色映射，不上传或写断点')
     translate = sub.add_parser('translate', help='多任务翻译文字／语音或仅字幕；默认只语音，不强制重做')
     translate.add_argument('ids', nargs='+')
     translate.add_argument('--languages', nargs='+', required=True)
@@ -359,6 +367,12 @@ def execute(args, factory=None):
         return {'operation': 'session', 'authenticated': True, **auth}
     if args.command == 'upload-status':
         return {'operation': 'upload_status', **api.upload_status(args.request_id)}
+    if args.command == 'characters':
+        from ua_workflows.replica_portraits import character_list
+        return character_list(api, args.id)
+    if args.command == 'portrait' and args.check_only:
+        from ua_workflows.replica_portraits import replace_portrait
+        return replace_portrait(api, args.id, args.image, None, source_id=args.source_id, check_only=True)
     if args.command == 'status':
         if args.timeout <= 0 or args.interval <= 0:
             raise ReplicaError('invalid_input', 'Timeout and polling interval must be positive')
@@ -377,6 +391,9 @@ def execute(args, factory=None):
             return upload_many(factory, args.files, checkpoint)
         if args.command == 'logo':
             return logo_many(api, args.ids, checkpoint)
+        if args.command == 'portrait':
+            from ua_workflows.replica_portraits import replace_portrait
+            return replace_portrait(api, args.id, args.image, checkpoint, source_id=args.source_id, replace=args.replace)
         if args.command == 'translate':
             from ua_workflows.replica_translation import translate_many
             return translate_many(api, args.ids, checkpoint, args.languages, args.parts, args.source_language,
@@ -401,7 +418,7 @@ def main(argv=None):
             return 3
         if result.get('pending'):
             return 4
-        if any(not item.get('ok') for item in result.get('results', [])) or result.get('missing') or result.get('skipped'):
+        if result.get('ok') is False or any(not item.get('ok') for item in result.get('results', [])) or result.get('missing') or result.get('skipped'):
             return 2
         return 0
     except (ReplicaError, OSError, ValueError) as error:

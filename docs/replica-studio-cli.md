@@ -2,7 +2,7 @@
 
 按用户提供的 `replica-studio-workbench.openapi.yaml` 封装。业务请求直接通过 HTTP 发送，不点击页面、不依赖先前浏览器 JavaScript 客户端。登录时打开 CLI 自己的专用 Chrome 会话，由用户完成文档规定的 OIDC；随后使用该会话的 APIRequestContext 发请求，不读取或导出 Cookie。默认服务固定为 `https://replica-studio.upupup.today`。
 
-基础 CLI 负责 Replica 自动分析、智能Logo、可选翻译及已有结果下载。另有记录绑定的飞书批处理入口，用于此前173条视频及复刻附件回填；本次翻译封装不自动接入该批次或触发器。
+基础 CLI 负责 Replica 自动分析、指定人物参考图上传、智能Logo、可选翻译及已有结果下载。另有记录绑定的飞书批处理入口，用于此前173条视频及复刻附件回填；本次翻译封装不自动接入该批次或触发器。
 
 ## 命令与接口
 
@@ -13,12 +13,14 @@
 | `upload FILE...` | `POST /api/jobs` | 单线程连续提交全部文件；每文件独立请求ID、1个人物组，`character` 为空，`auto_analyze=true` |
 | `upload-status REQUEST_ID` | `GET /api/source-uploads/{request_id}` | 只读核对原上传结果 |
 | `status ID...` | `GET /api/jobs/{identifier}` | 多任务查询；支持等待分析、Logo或指定语言/内容的翻译完成 |
+| `characters ID` | `GET /api/jobs/{identifier}` | 只读列出任务角色ID和当前人物参考图 |
+| `portrait ID IMAGE` | `POST /api/jobs/{identifier}/portrait/{source_id}` | 上传你提供的图片并设为指定角色当前参考图；不调用生图或视频生成 |
 | `logo ID...` | `POST /api/jobs/{identifier}/actions/logo_replace` | 多选任务逐条提交 `logo_mode=smart`，不重复付费请求 |
 | `translate ID...` | `POST /api/jobs/{identifier}/actions/translate` | 多任务/多语言翻译，支持文字、语音或仅字幕；先只读预检，意图落盘后提交 |
 | `translate --source-video` | `PUT /api/jobs/{identifier}`，然后同上 | 仅显式指定时切换`video_route=source_video`，带最新revision，不启动额外生成 |
 | `download ID...` | `POST /api/jobs/download/files`，再 GET 结果媒体 | 默认仍是原语言Logo结果；`--step translation --languages ...`下载翻译视频和字幕 |
 
-智能换 Logo 前只读 `GET /api/settings` 取得工作区默认值；翻译前读取翻译服务/文字能力/已启用语言，不写回设置、不调整并发或模型。翻译写请求不带force_new，不改变remember_parts偏好。没有添加人物图、视频换人、独立重复分析、完整一键生成或额外拼接命令，HTTP 白名单继续拒绝这些动作。PUT只允许revision与source_video路线两个字段。
+智能换 Logo 前只读 `GET /api/settings` 取得工作区默认值；翻译前读取翻译服务/文字能力/已启用语言，不写回设置、不调整并发或模型。翻译写请求不带force_new，不改变remember_parts偏好。人物参考图上传独立开放；没有添加人物图生成、视频换人生成、独立重复分析、完整一键生成或额外拼接命令，HTTP 白名单继续拒绝这些生成动作。PUT只允许revision与source_video路线两个字段。
 
 上传回执未知时，还应检查实际任务。SDK提供只读`list_jobs()`、`task_history(filter)`、`deleted_jobs()`和`deleted_projects()`，分别使用`GET /api/jobs`、`GET /api/tasks`（仅固定filter）、`GET /api/deleted-characters`、`GET /api/deleted-projects`。先按原文件名、日期/序号和上传时间窗反查候选；有候选时进一步核实原片身份后才可关联，不仅凭同名或序号猜测，不直接重传。历史接口返回条数可能低于全局counts.total，必须报告范围限制；没有查询结果不能证明从未上传或未计费。回收站仅查询，不开放恢复写接口。
 
@@ -142,6 +144,32 @@
 ```sh
 .venv/bin/python -m unittest discover -s tests -p 'test_replica*.py'
 ```
+
+## 使用你提供的人物图替换参考图
+
+`portrait`直接上传已有图片，multipart字段固定为`file`，只替换所选任务角色的参考图。原图字节不缩放、不转码；允许PNG/JPG/JPEG/WebP，最大30 MiB、短边至少320像素，以本地`ffprobe`核对实际格式及尺寸。网站后端会将图片设为当前参考并保留历史；既有生成结果可能按平台规则变为待更新，本命令不重新生成任何图片或视频。
+
+```sh
+# 查看角色映射，只读
+./scripts/replica-studio characters TASK_ID
+
+# 单角色任务自动选中唯一角色
+./scripts/replica-studio portrait TASK_ID "/absolute/path/person.png"
+
+# 多角色任务必须指定要替换谁；其他角色不上传
+./scripts/replica-studio portrait TASK_ID "/absolute/path/person.png" --source-id ROLE_ID
+
+# 仅核对图片及角色映射，不上传、不写断点
+./scripts/replica-studio portrait TASK_ID "/absolute/path/person.png" --source-id ROLE_ID --check-only
+```
+
+实际上传要求自动分析已完成并识别到目标角色，任务当前没有其他生成在运行。同一张图片再次执行会读取当前参考图并比对精确大小与SHA256，确认后复用原上传，不重复POST。以后要换一张新图时显式加`--replace`，保存旧操作记录；多个角色可逐条调用并分别指定`source-id`。
+
+上传前将任务、角色、原图片路径/大小/SHA256/尺寸和原revision写入`portraits`断点。超时、5xx、响应身份不符或回执落盘失败均保留未知；再次执行只查询原任务，并读取该角色当前图片核对原上传字节及更高revision，不重新POST。服务端若转换过图片导致字节不能匹配，会继续保留未知，`--replace`也不能绕过未知写入。核对的是当前参考图，不把它宣称为已恢复原HTTP回执。
+
+专用登录桥新增`portrait_upload_v1`能力。若CLI报`bridge_upgrade_required`，先关闭旧CLI专用登录窗口，再运行`replica-studio login`加载新桥；不读取用户Chrome资料或导出Cookie。普通会话文件沿原方式使用。
+
+这一步不会替换视频中的人物，也不修改文字、口播、Logo、字幕擦除规则或现有批处理范围。后续视频换人命令尚未开放；上传参考图成功不代表换人视频已生成。返回`video_generation_submitted=false`，回执未知退出码为2。
 
 ## 飞书记录批处理
 

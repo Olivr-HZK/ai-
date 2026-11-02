@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 import requests
 
 from ua_workflows.shared.config import PROJECT_ROOT
-from ua_workflows.replica_studio_api import BASE_URL, allowed, media_url, validate_workflow_body
+from ua_workflows.replica_studio_api import BASE_URL, allowed, media_url, validate_workflow_body, portrait_path
 
 RUNTIME = PROJECT_ROOT / 'data/replica-cli'
 CHUNK_SIZE = 8 * 1024 * 1024
@@ -192,7 +192,7 @@ class Broker:
                 user = auth.get('user') or {}
                 return {'authenticated': bool(user.get('id') and user.get('enabled') and auth.get('csrf_token')),
                         'account_id': user.get('id'), 'auth_mode': auth.get('auth_mode'), 'transport': 'cli_owned_http_context',
-                        'capabilities': ['translation_v1']}
+                        'capabilities': ['translation_v1', 'portrait_upload_v1']}
             finally:
                 await response.dispose()
         if value.get('action') != 'request':
@@ -205,6 +205,9 @@ class Broker:
         if media:
             media_url(BASE_URL + path, media[1])
         validate_workflow_body(method, parsed.path, value.get('json'))
+        portrait = bool(portrait_path(parsed.path))
+        if portrait and (not value.get('files') or value.get('form') or 'json' in value):
+            raise ValueError('Portrait replacement requires one multipart image without extra fields')
         headers = value.get('headers') or {}
         if any(key.lower() not in SAFE_HEADERS for key in headers):
             raise ValueError('Unsupported request header')
@@ -212,13 +215,16 @@ class Broker:
         kwargs = {'method': method, 'headers': headers, 'timeout': 180000, 'max_redirects': 0,
                   'max_retries': 0, 'fail_on_status_code': False}
         if value.get('files'):
-            if method != 'POST' or parsed.path != '/api/jobs' or set(value['files']) != {'files'}:
+            field_name = 'file' if portrait else 'files'
+            if method != 'POST' or not (portrait or parsed.path == '/api/jobs') or set(value['files']) != {field_name}:
                 raise ValueError('Unsupported multipart operation')
             multipart = {**value.get('form', {})}
             for field, file in value['files'].items():
                 data = base64.b64decode(file['base64'], validate=True)
-                if len(data) > 100 * 1024 * 1024:
+                if len(data) > (30 if portrait else 100) * 1024 * 1024:
                     raise ValueError('Upload too large')
+                if portrait and (not data or file['mimeType'] not in {'image/png', 'image/jpeg', 'image/webp'}):
+                    raise ValueError('Invalid portrait upload')
                 multipart[field] = {'name': file['name'], 'mimeType': file['mimeType'], 'buffer': data}
             kwargs['multipart'] = multipart
         elif 'json' in value:
