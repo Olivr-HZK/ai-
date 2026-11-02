@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+from functools import wraps
 import json
 import math
 import os
 from pathlib import Path
 import time
+import threading
 
 from ua_workflows.replica_studio_api import ReplicaError, save_private
 
@@ -14,6 +16,14 @@ DEFAULT_TIMEOUTS = {'stall_timeout': 900, 'stage_timeout': 7200, 'unknown_timeou
                     'reconcile_interval': 60}
 UNKNOWN = {'upload_unknown', 'logo_unknown', 'write_unknown', 'attachment_unknown'}
 WATCHED = UNKNOWN | {'uploaded', 'logo_accepted', 'logo_submitting', 'write_intent', 'feishu_upload_intent'}
+
+
+def synchronized(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
 
 
 def timeout_policy(overrides=None):
@@ -30,15 +40,18 @@ class RunHealth:
 
     def __init__(self, root, policy=None, clock=time.time):
         self.root, self.clock = Path(root), clock
+        self._lock = threading.RLock()
         self.policy = timeout_policy(policy)
         path = self.root / 'health.json'
         self.data = json.loads(path.read_text()) if path.exists() else {'version': 1, 'records': {}, 'alerts': {}}
 
+    @synchronized
     def persist(self):
         save_private(self.root / 'health.json', self.data)
         save_private(self.root / 'alerts.json', {
             'checked_at': self.clock(), 'active': list(self.data['alerts'].values()), 'policy': self.policy})
 
+    @synchronized
     def alert(self, code, *, record_id=None, message='', now=None):
         now = self.clock() if now is None else now
         key = code + ':' + (record_id or 'batch')
@@ -53,6 +66,7 @@ class RunHealth:
             print(json.dumps({'phase': 'alert', **value}, ensure_ascii=False), flush=True)
         self.persist()
 
+    @synchronized
     def clear(self, code, record_id=None):
         key = code + ':' + (record_id or 'batch')
         value = self.data['alerts'].pop(key, None)
@@ -61,6 +75,7 @@ class RunHealth:
                 os.chmod(stream.fileno(), 0o600)
                 stream.write(json.dumps({'event': 'resolved', 'resolved_at': self.clock(), **value}, ensure_ascii=False) + '\n')
 
+    @synchronized
     def observe(self, phase, values, delivery_count=0):
         now = self.clock()
         # Poll timestamps/revisions and repeated errors are not progress evidence.
@@ -73,9 +88,14 @@ class RunHealth:
             old = self.data['records'].get(rid)
             changed = old is None or old['signature'] != signature
             entry = {'signature': signature, 'last_progress_at': now if changed else old['last_progress_at'],
+                     'stage': value['stage'], 'stage_started_at': now if not old or old.get('stage') != value['stage'] else old['stage_started_at'],
                      'unknown_since': (old.get('unknown_since') if old and old.get('unknown_since') is not None else now)
                      if value['stage'] in UNKNOWN else None}
             self.data['records'][rid] = entry
+            if phase == 'pipeline' and value['stage'] in WATCHED and now - entry['stage_started_at'] >= self.policy['stage_timeout']:
+                self.alert('record_stage_timeout', record_id=rid, message='Task stage deadline exceeded; no generation replay', now=now)
+            else:
+                self.clear('record_stage_timeout', rid)
             if value['stage'] in WATCHED and now - entry['last_progress_at'] >= self.policy['stall_timeout']:
                 self.alert('record_stalled', record_id=rid, message='No observable task progress; no business request will be replayed', now=now)
             else:
@@ -96,7 +116,7 @@ class RunHealth:
         if self.data.get('signature') != batch_signature:
             self.data.update(signature=batch_signature, last_progress_at=now)
             self.clear('batch_stalled')
-        if now - self.data['phase_started_at'] >= self.policy['stage_timeout']:
+        if phase != 'pipeline' and now - self.data['phase_started_at'] >= self.policy['stage_timeout']:
             self.alert('stage_timeout', message='Stage deadline exceeded; waiting and read-only checks continue', now=now)
         else:
             self.clear('stage_timeout')
@@ -106,6 +126,7 @@ class RunHealth:
             self.clear('batch_stalled')
         self.persist()
 
+    @synchronized
     def unknown_pending(self, values):
         now = self.clock()
         for value in values:
@@ -115,6 +136,7 @@ class RunHealth:
                 return True
         return False
 
+    @synchronized
     def reconciliation_allowed(self, value):
         since = self.data['records'].get(value['record_id'], {}).get('unknown_since')
         return (value['stage'] not in UNKNOWN or since is None

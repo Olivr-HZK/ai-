@@ -157,9 +157,9 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
             'accepted': sum(item['ok'] for item in results), 'stopped': stopped}
 
 
-def logo_many(api, ids, checkpoint, *, on_result=None):
+def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
     ids, results, stopped = selected_ids(ids), [], False
-    options = api.smart_options()
+    options = api.smart_options() if options is None else options
     for job_id in ids:
         try:
             if stopped:

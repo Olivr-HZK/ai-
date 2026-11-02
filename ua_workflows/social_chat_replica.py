@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import time
+import threading
 
 import requests
 import subprocess
@@ -18,6 +19,7 @@ from ua_workflows import social_chat_browser_daily as daily
 from ua_workflows.replica_studio_api import ReplicaAPI, ReplicaError, digest, save_private, step_state
 from ua_workflows.replica_cli import Checkpoint, operation_lock, upload_many, logo_many, download_many
 from ua_workflows.replica_recovery import RunHealth, UNKNOWN, find_uploaded_source, timeout_policy
+from ua_workflows.replica_pipeline import AsyncPipeline
 from ua_workflows.xhs_daily import upload_attachment
 
 SOURCE_FIELD_ID = 'fldRHIjFcO'
@@ -106,6 +108,7 @@ def prepare_rows(rows, schema, target_date, *, record_ids=None):
 
 class State:
     def __init__(self, root):
+        self._mutex = threading.RLock()
         self.root = Path(root).resolve()
         self.scope = json.loads((self.root / 'scope.json').read_text())
         self.items = {item['record_id']: item for item in self.scope['items']}
@@ -120,13 +123,14 @@ class State:
 
     def put(self, record_id, value):
         require(value['record_id'] == record_id, 'State identity mismatch')
-        save_private(self.path(record_id), value)
+        with self._mutex:
+            save_private(self.path(record_id), value)
 
     def all(self):
         return [self.get(record_id) for record_id in self.items]
 
     def summary(self, **extra):
-        with operation_lock(self.root / 'progress'):
+        with self._mutex, operation_lock(self.root / 'progress'):
             values = self.all()
             counts = dict(Counter(item['stage'] for item in values))
             summary = {'target_date': self.scope['target_date'], 'total': len(self.items), 'counts': counts,
@@ -505,21 +509,32 @@ class Runner:
         return self.health.clock() if hasattr(self, 'health') else time.time()
 
     def can_reconcile(self, value):
-        return not hasattr(self, 'health') or self.health.reconciliation_allowed(value)
+        return self.record_available(value['record_id']) and (not hasattr(self, 'health') or self.health.reconciliation_allowed(value))
 
-    def observe(self, phase):
+    def observe(self, phase, **extra):
         if not hasattr(self, 'health'):
             self.health = RunHealth(self.state.root)
         downloads = len(self.checkpoint.data.get('downloads', {})) if hasattr(self, 'checkpoint') else 0
         values = self.state.all()
         self.health.observe(phase, values, downloads)
-        return self.state.summary(scheduling='batch', batch_phase=phase, submit_paused=self.submit_paused,
-                                  reconciliation_pending=self.health.unknown_pending(values))
+        return self.state.summary(scheduling=getattr(self, 'scheduling_mode', 'batch'), batch_phase=phase, submit_paused=self.submit_paused,
+                                  reconciliation_pending=self.health.unknown_pending(values), **extra)
+
+    def record_available(self, record_id):
+        return True
+
+    def stop_requested(self):
+        return (self.state.root / 'pause-requested').exists()
 
     def refresh_feishu(self):
-        if self._owns_feishu and time.monotonic() - self._feishu_auth_at >= 3600:
+        if self._owns_feishu and (self.feishu is None or time.monotonic() - self._feishu_auth_at >= 3600):
             self.feishu = ReplicaFeishu()
             self._feishu_auth_at = time.monotonic()
+
+    def deliver_records(self, values):
+        self.refresh_feishu()
+        backfill(self.state, values, self.feishu, self.route,
+                 on_progress=lambda current: self.observe('backfill_all'))
 
     def reconcile_uploads(self):
         jobs = None
@@ -573,6 +588,10 @@ class Runner:
         # force_new=false. Only a confirmed server interruption is eligible;
         # an unknown POST is never replayed by this path.
         for value in self.state.all():
+            if self.stop_requested():
+                break
+            if not self.record_available(value['record_id']):
+                continue
             if value['stage'] != 'failed' or value.get('last_status') != 'interrupted' or not value.get('job_id'):
                 continue
             job_id = value['job_id']
@@ -605,6 +624,8 @@ class Runner:
 
     def reconcile_writes(self):
         for value in self.state.all():
+            if not self.record_available(value['record_id']):
+                continue
             if value['stage'] in {'write_intent', 'write_unknown'}:
                 if not self.can_reconcile(value):
                     continue
@@ -644,8 +665,10 @@ class Runner:
                             respect_cooldown=True, interval=self.health.policy['reconcile_interval'], should_check=self.can_reconcile,
                             on_progress=lambda: self.observe(self.health.data.get('phase', 'reconcile_unknown')))
 
-    def poll(self):
-        values = [value for value in self.state.all() if value['stage'] in {'uploaded', 'logo_accepted', 'logo_submitting'}]
+    def poll(self, record_ids=None):
+        selected = set(record_ids) if record_ids is not None else None
+        values = [value for value in self.state.all() if value['stage'] in {'uploaded', 'logo_accepted', 'logo_submitting'}
+                  and (selected is None or value['record_id'] in selected)]
         for value in values:
             try:
                 job = self.api.job(value['job_id'])
@@ -699,15 +722,18 @@ class Runner:
                 if hasattr(self, 'health'):
                     self.observe(self.health.data.get('phase', 'wait_all_analyses'))
 
-    def upload_all(self):
+    def upload_all(self, record_ids=None):
         """Prepare each missing source just in time, then submit without a job cap."""
         by_path = {}
+        selected = set(record_ids) if record_ids is not None else None
 
         def paths():
             for value in self.state.all():
-                if self.submit_paused or (self.state.root / 'pause-requested').exists():
+                if self.submit_paused or self.stop_requested():
                     break
                 if value['stage'] not in {'queued', 'source_ready'}:
+                    continue
+                if selected is not None and value['record_id'] not in selected:
                     continue
                 item = self.state.items[value['record_id']]
                 try:
@@ -749,18 +775,25 @@ class Runner:
 
         result = upload_many(lambda: self.api, paths(), self.checkpoint, on_result=uploaded)
         self.submit_paused = result['stopped'] or self.submit_paused
+        return result
 
-    def submit_all_logos(self):
+    def submit_all_logos(self, record_ids=None, *, options=None):
         values = self.state.all()
-        eligible = [value for value in values if value['stage'] == 'analysis_ready']
+        selected = set(record_ids) if record_ids is not None else None
+        eligible = [value for value in values if value['stage'] == 'analysis_ready' and (selected is None or value['record_id'] in selected)]
+        if not eligible:
+            return {'selected': 0, 'results': [], 'stopped': False}
         ids = [value['job_id'] for value in values if value.get('job_id')]
         require(len(ids) == len(set(ids)), 'One Replica job is mapped to more than one Feishu record')
-        save_private(self.state.root / 'analysis-gate.json', {
+        gate_path = self.state.root / 'analysis-gate.json' if selected is None else self.state.root / 'analysis-ready' / (eligible[0]['record_id'] + '.json')
+        save_private(gate_path, {
             'confirmed_at': time.time(), 'total': len(values),
             'eligible_record_ids': [value['record_id'] for value in eligible],
             'excluded': [{key: value.get(key) for key in ('record_id', 'stage', 'error')}
                          for value in values if value['stage'] in TERMINAL and value['stage'] != 'verified'],
-            'all_sources_accounted': True, 'all_nonexception_analyses_ready_or_already_processed': True})
+            'all_sources_accounted': selected is None,
+            'all_nonexception_analyses_ready_or_already_processed': selected is None,
+            'gate_scope': 'batch' if selected is None else 'selected_ready_records'})
         for value in eligible:
             value['stage'] = 'logo_submitting'
             self.state.put(value['record_id'], value)
@@ -779,11 +812,13 @@ class Runner:
             self.state.put(value['record_id'], value)
             self.observe('submit_all_logos')
 
-        result = logo_many(self.api, list(by_id), self.checkpoint, on_result=submitted)
+        result = logo_many(self.api, list(by_id), self.checkpoint, on_result=submitted, options=options)
         self.submit_paused = result['stopped']
+        return result
 
-    def download_all(self):
-        values = [value for value in self.state.all() if value['stage'] == 'logo_ready']
+    def download_all(self, record_ids=None):
+        selected = set(record_ids) if record_ids is not None else None
+        values = [value for value in self.state.all() if value['stage'] == 'logo_ready' and (selected is None or value['record_id'] in selected)]
         by_id = {value['job_id']: value for value in values}
 
         def downloaded(item):
@@ -903,7 +938,11 @@ class Runner:
 
 
 class StagedRunner(Runner):
-    """Compatibility name; all runners now use the same serial staged workflow."""
+    """Explicit whole-batch compatibility scheduler."""
+
+
+class PipelineRunner(AsyncPipeline, Runner):
+    _terminal_stages = TERMINAL
 
 
 def main():
@@ -913,9 +952,9 @@ def main():
     parser.add_argument('--date')
     parser.add_argument('--expected-count', type=int)
     parser.add_argument('--background', action='store_true', help='Run a detached worker with durable log and final verification')
-    parser.add_argument('--scheduling', choices=['batch'], help='兼容选项；默认固定为全量上传、等待全部分析、全量Logo、等待全部Logo、下载回填')
+    parser.add_argument('--scheduling', choices=['pipeline', 'batch'], help='新批默认pipeline：每条完成即推进；batch保留整批阶段等待')
     parser.add_argument('--stall-timeout', type=float, help='无可见进展告警秒数，默认900；不重发生成')
-    parser.add_argument('--stage-timeout', type=float, help='整阶段超时告警秒数，默认7200；继续只读等待')
+    parser.add_argument('--stage-timeout', type=float, help='阶段超时告警秒数，默认7200；pipeline按逐任务阶段计时，batch按整阶段计时')
     parser.add_argument('--unknown-timeout', type=float, help='未知回执只读核对窗口秒数，默认900；超时保留未知')
     parser.add_argument('--reconcile-interval', type=float, help='未知回执核对间隔秒数，默认60')
     args = parser.parse_args()
@@ -962,9 +1001,11 @@ def main():
             try:
                 while True:
                     try:
-                        # Old pipeline scheduling files cannot restore the removed
-                        # local concurrency or job caps. Do not rewrite old evidence.
-                        result = Runner(state, timeouts=policy).run()
+                        scheduling_path = state.root / 'scheduling.json'
+                        mode = json.loads(scheduling_path.read_text()).get('mode') if scheduling_path.exists() else 'pipeline'
+                        require(mode in {'pipeline', 'batch'}, 'Invalid scheduling mode')
+                        runner_type = PipelineRunner if mode == 'pipeline' else Runner
+                        result = runner_type(state, timeouts=policy).run()
                         break
                     except ReplicaError as error:
                         if error.code != 'read_failed' and not (error.status and error.status >= 500):

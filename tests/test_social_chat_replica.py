@@ -736,21 +736,43 @@ class SourceReuseTests(unittest.TestCase):
         self.assertEqual(self.state.get('rec1')['stage'], 'queued')
         decode.assert_not_called()
 
-    def test_main_defaults_to_staged_runner_even_with_legacy_pipeline_file(self):
+    def test_main_uses_new_pipeline_runner_for_pipeline_policy(self):
         from unittest.mock import Mock
         save_private(self.root / 'scheduling.json', {'mode': 'pipeline'})
         fake = Mock()
         fake.run.return_value = {'all_terminal': False, 'pause_requested': True}
-        with patch.object(replica, 'Runner', return_value=fake) as runner, patch('builtins.print'), patch.object(
+        with patch.object(replica, 'PipelineRunner', return_value=fake) as runner, patch('builtins.print'), patch.object(
                 replica.sys, 'argv', ['replica', 'run', '--run-dir', str(self.root)]):
             replica.main()
         runner.assert_called_once()
         fake.run.assert_called_once()
         self.assertEqual(json.loads((self.root / 'scheduling.json').read_text())['mode'], 'pipeline')
 
-    def test_removed_pipeline_option_is_rejected_before_opening_batch(self):
-        with patch('sys.stderr'), patch.object(replica.sys, 'argv', ['replica', 'run', '--run-dir', str(self.root), '--scheduling', 'pipeline']), self.assertRaises(SystemExit):
+    def test_unsupported_scheduling_option_is_rejected_before_opening_batch(self):
+        with patch('sys.stderr'), patch.object(replica.sys, 'argv', ['replica', 'run', '--run-dir', str(self.root), '--scheduling', 'legacy']), self.assertRaises(SystemExit):
             replica.main()
+
+    def test_main_defaults_to_pipeline_without_policy(self):
+        from unittest.mock import Mock
+        fake = Mock()
+        fake.run.return_value = {'all_terminal': False, 'pause_requested': True}
+        with patch.object(replica, 'PipelineRunner', return_value=fake) as runner, patch.object(replica, 'Runner') as batch, patch('builtins.print'), patch.object(
+                replica.sys, 'argv', ['replica', 'run', '--run-dir', str(self.root)]):
+            replica.main()
+        runner.assert_called_once()
+        batch.assert_not_called()
+
+    def test_main_preserves_stored_batch_policy(self):
+        from unittest.mock import Mock
+        save_private(self.root / 'scheduling.json', {'mode': 'batch'})
+        fake = Mock()
+        fake.run.return_value = {'all_terminal': False, 'pause_requested': True}
+        with patch.object(replica, 'Runner', return_value=fake) as runner, patch.object(replica, 'PipelineRunner') as pipeline, patch('builtins.print'), patch.object(
+                replica.sys, 'argv', ['replica', 'run', '--run-dir', str(self.root)]):
+            replica.main()
+        runner.assert_called_once()
+        pipeline.assert_not_called()
+        self.assertEqual(json.loads((self.root / 'scheduling.json').read_text())['mode'], 'batch')
 
 
 if __name__ == '__main__':
