@@ -121,3 +121,51 @@ def test_cli_pre_review_requires_new_policy_and_received_zip(tmp_path):
         cwd=daily.ROOT,capture_output=True,text=True,timeout=20)
     assert result.returncode==2 and 'Receive the original plugin ZIP' in result.stderr
     assert not (tmp_path/'pre-review/plan.json').exists()
+
+
+def test_new_handoff_pins_replication_only_after_verified_ingestion(tmp_path):
+    cfg = daily.load(daily.CONFIG)
+    daily.prepare('2026-10-31', tmp_path, cfg)
+    scope = daily.load(tmp_path / 'scope.json')
+    policy = scope['image_replication_after_ingestion']
+    assert policy == cfg['plugin_handoff']['image_replication_after_ingestion']
+    assert policy['trigger'] == 'after_independent_verified_ingestion'
+    assert policy['attachment_field_id'] == 'fld6ygGkqD'
+    reference = daily.ROOT / policy['brand_reference']['path']
+    assert hashlib.sha256(reference.read_bytes()).hexdigest() == policy['brand_reference']['sha256']
+    task = (tmp_path / 'handoff-task.md').read_text()
+    assert '入库后的下一步' in task and 'image-replication.md' in task
+    assert '原尺寸' in task and '无需用户另行提醒' in task
+    # Intake still has no side effect and does not certify generation or sync.
+    assert not daily.load(tmp_path / 'handoff.json')['feishu_written_by_intake']
+    assert not (tmp_path / 'replicas').exists()
+
+
+def test_replication_policy_is_not_added_to_existing_legacy_scope(tmp_path):
+    cfg = daily.load(daily.CONFIG)
+    legacy = copy.deepcopy(cfg)
+    legacy['plugin_handoff'].pop('image_replication_after_ingestion')
+    daily.prepare('2026-10-31', tmp_path, legacy)
+    files = [tmp_path / name for name in ['scope.json', 'handoff.json', 'handoff-task.md']]
+    original = [p.read_bytes() for p in files]
+    daily.prepare('2026-10-31', tmp_path, cfg)
+    assert [p.read_bytes() for p in files] == original
+    assert 'image_replication_after_ingestion' not in daily.load(files[0])
+
+
+def test_replication_reference_mismatch_fails_before_creating_scope(tmp_path):
+    cfg = copy.deepcopy(daily.load(daily.CONFIG))
+    cfg['plugin_handoff']['image_replication_after_ingestion']['brand_reference']['sha256'] = '0' * 64
+    with pytest.raises(ValueError, match='brand reference changed'):
+        daily.prepare('2026-10-31', tmp_path, cfg)
+    assert not (tmp_path / 'scope.json').exists()
+
+
+def test_existing_handoff_keeps_pinned_replication_when_config_changes(tmp_path):
+    cfg = daily.load(daily.CONFIG)
+    daily.prepare('2026-10-31', tmp_path, cfg)
+    original = (tmp_path / 'scope.json').read_bytes()
+    modified = copy.deepcopy(cfg)
+    modified['plugin_handoff']['image_replication_after_ingestion']['enabled'] = False
+    daily.prepare('2026-10-31', tmp_path, modified)
+    assert (tmp_path / 'scope.json').read_bytes() == original

@@ -75,6 +75,14 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
         'content_review_policy': config['plugin_handoff']['content_review_policy'],
         'collection_complete_21_apps': False, 'auto_browser_collection': False,
         'auto_retry_downloads': False, 'feishu': config['feishu']}
+    if not existing:
+        replication = config['plugin_handoff'].get('image_replication_after_ingestion')
+        if replication and replication.get('enabled'):
+            reference = replication['brand_reference']
+            reference_path = Path(__file__).resolve().parents[1] / reference['path']
+            if not reference_path.is_file() or sha(reference_path) != reference['sha256']:
+                raise ValueError('Approved image replication brand reference changed or is missing')
+            scope['image_replication_after_ingestion'] = json.loads(json.dumps(replication))
     if scope['content_review_policy'] != {
         'version': 'male-display-female-oriented-no-talking-head-v1', 'male_display': 'required',
         'female_oriented_appeal': 'required', 'real_person_talking_head': 'exclude', 'uncertain': 'not_admitted'}:
@@ -112,6 +120,14 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
 视频实际解码、抽六帧并查看，图片逐原图解码/查看，记录决定、理由、证据哈希；六帧不称完整审听。
 通过项同次按scope固定风格版本打标，合并按展示估值降序取scope.ranking规定的前100条（不足取实际通过数）。'''
     review_steps += '\n本批固定交付范围：' + label(scope['ranking']) + '。展示估值只决定排序和同模板代表；不隐式套用前100/前10%限制。'
+    replication = scope.get('image_replication_after_ingestion', {})
+    if replication.get('enabled'):
+        review_steps += f'''
+入库后的下一步（本批已固定启用）：独立读回确认原素材入表成功后，无需用户另行提醒，继续为本批成功入表的全部图片做afizzy品牌复刻并回填。
+先读取skills/social-chat-browser-daily/references/image-replication.md。只处理本批已核验的图片/原图，不处理视频、试玩、未入选项；以原记录ID、广告ID、完整广告主及原附件名/源SHA256对应。
+使用内置image_gen逐张做品牌区域替换，参考{replication['brand_reference']['path']}（SHA256 {replication['brand_reference']['sha256']}），保留人物、画风、构图及全部非品牌文案。允许仅裁均匀外边和恢复原尺寸，不需为此重复请示。
+成品检查通过后写既有复刻附件字段{replication['attachment_field_id']}，不覆盖原竞品附件或其他业务字段。保留生成/上传回执，读回token、名称和精确大小；完成项不重生成/重上传，安全拦截或未知请求留账、不原样盲重试。
+原素材入库和图片复刻分别报告状态及数量；无图片明确为不适用，复刻部分失败不回滚已核验入库，不将排队状态当完成。'''
     prompt = f'''# {target} 插件每日最新素材 · 手动交接
 
 当前：{receipt['status']}；已登记{len(packages)}份ZIP。prepare只登记文件，不表示已审核、入表或完成全量采集。

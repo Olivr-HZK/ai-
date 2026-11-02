@@ -14,7 +14,27 @@
     },
     "auto_browser_collection": false,
     "auto_retry_downloads": false,
-    "collection_complete_21_apps": false
+    "collection_complete_21_apps": false,
+    "image_replication_after_ingestion": {
+      "enabled": true,
+      "version": "afizzy-brand-only-after-ingestion-v1",
+      "trigger": "after_independent_verified_ingestion",
+      "media_type": "图片",
+      "brand": "afizzy",
+      "generator": "built-in-image_gen",
+      "attachment_field_id": "fld6ygGkqD",
+      "attachment_field_name": "复刻附件",
+      "brand_reference": {
+        "path": "skills/social-chat-browser-daily/assets/afizzy-approved-brand.png",
+        "sha256": "790c03c04c9620488eb42d84c827b555e734dfb69d63901adf123a1a527f2232"
+      },
+      "preserve_non_brand_content": true,
+      "restore_original_size": true,
+      "local_postprocessing": "uniform_outer_padding_crop_and_resize_only",
+      "safety_rejection": "record_and_skip_without_identical_retry",
+      "resume": "reuse_verified_outputs_and_remote_attachments",
+      "history": "new_batches_only"
+    }
   },
   "date_semantics": "first_discovered_on_target_date",
   "ranking": {
