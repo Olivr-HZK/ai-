@@ -4,7 +4,7 @@
 <body>
   <header><span>GDD / MEDIA</span><h1>把灵感带走。</h1><p>图片、视频与 Playable，汇总成一个 ZIP</p></header>
   <main>
-    <section class="task-panel"><label for="task-list">下载任务</label><select id="task-list" aria-label="下载任务"></select><p id="task-hint">每批独立保存地址、ZIP 和报告；下载按队列执行。</p></section>
+    <section class="task-panel"><label for="task-list">下载任务</label><select id="task-list" aria-label="下载任务"></select><p id="task-hint">每批独立保存地址、ZIP 和报告；下载按队列执行。</p><button id="refresh-state" type="button">刷新插件状态</button><p id="refresh-message" role="status">重新读取当前页卡片、已选清单和任务进度，保留已有任务。</p></section>
     <div class="range"><label for="task-name">新任务名称</label><input id="task-name" type="text" maxlength="60" placeholder="可选，如 zeta 10月22日"></div>
     <div class="types"><label><input id="image" type="checkbox" checked> 图片</label><label><input id="video" type="checkbox" checked> 视频</label><label><input id="playable" type="checkbox" checked> Playable</label></div>
     <p style="color:#526681;font-size:12px">Playable 获取原 HTML；外部依赖未打包，打开可能需要联网。</p>
@@ -21,6 +21,7 @@
     <button id="new-selection" style="width:100%;margin-bottom:6px">清空清单并选择下一批</button>
     <section id="cart" hidden><strong id="cart-count"></strong><ul id="cart-pages"></ul><button id="clear-cart">清空跨页清单</button></section>
     <p id="scope" style="color:#526681">从左到右、从上到下编号；点击卡片左上角勾选。</p>
+    <p id="ready-hint" role="status"></p>
     <button id="start" class="primary">一键打包 ZIP</button>
     <p id="message" role="status">请先登录广大大并打开素材页面。</p>
     <section id="progress" hidden>
@@ -38,7 +39,7 @@
       <button id="report" style="width:100%;margin:8px 0">查看下载报告.md</button>
       <details><summary>失败详情</summary><ul id="errors"></ul></details>
     </section>
-<footer>v1.14.1 · 每个任务一个 ZIP 和下载报告.md。<br>采址结束后即可继续选择下一批。<br>下载按队列执行，停止和重试只影响所选任务。<br>详情关闭确认与短暂读取异常会有限等待。<br>自动翻页支持首次发现日期截止。</footer>
+<footer>v1.15.2 · 每个任务一个 ZIP 和下载报告.md。<br>按钮不可用时，可点击顶部「刷新插件状态」。<br>采址结束后即可继续选择下一批；下载按队列执行。<br>自动翻页支持暂停续采及首次发现日期截止。</footer>
   </main>
   <script type="module" src="popup.js"></script>
 </body>

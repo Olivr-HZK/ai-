@@ -133,9 +133,98 @@ export async function collectMedia(showNumbers = false) {
   const activePages=[...document.querySelectorAll('.ant-pagination-item-active')].filter(e=>e.getClientRects().length);
   const number=activePages.length===1?Number(activePages[0].getAttribute('title') || activePages[0].textContent.trim()):activePages.length?null:1;
   const pageNumber=Number.isInteger(number) && number>0?number:null;
-  const visible=e=>e.getClientRects().length && getComputedStyle(e).visibility!=='hidden';
-  const newest=[...document.querySelectorAll('span,button,[role="tab"]')].filter(e=>visible(e) && e.textContent.trim()==='最新创意' && ![...e.children].some(c=>c.textContent.trim()==='最新创意'));
-  const selected=e=>e?.classList.contains('text-blue-600') || e?.getAttribute('aria-selected')==='true' || e?.getAttribute('aria-pressed')==='true';
-  const newestFirst=newest.length===1 && (selected(newest[0]) || selected(newest[0].parentElement));
-  return {items, missing, cardKeys, cardDates, newestFirst, pageNumber, selectionActive, selectedCardNumbers, cardCount:cards.length, matchedCards, videoCards, imageCards, playableCards, unsupported, limitReached:false};
+  // This function is serialized into the page: keep the sort reader local.
+  // Read the rendered control's selection, never infer order from card dates,
+  // a label alone, an internal sort code, or a hover/focus utility class.
+  function readSort() {
+    const normalize=e=>String(e?.textContent || '').replace(/[\s\u200b-\u200d\ufeff]/g,'').replace(/[↓↑▼▲▾▴⌄⌃]/g,'');
+    const labels=new Set(['最新创意','热门创意','最热创意','热门素材','展示估值','最多展示','最长投放','投放天数','最新发现','最近发现','最后发现','相关性']);
+    const excluded=e=>!!e.closest('.shadow-common-light.bg-white,.ant-pagination,[role="dialog"],.ant-modal-content,.ant-drawer-content,[role="tooltip"],#gdd-download-selection-toolbar');
+    const visible=e=>{
+      if(!e?.getClientRects().length || excluded(e))return false;
+      for(let p=e;p;p=p.parentElement){
+        const s=getComputedStyle(p);
+        if(p.hidden || p.hasAttribute('inert') || p.getAttribute('aria-hidden')==='true' || s.display==='none' || ['hidden','collapse'].includes(s.visibility))return false;
+      }
+      return true;
+    };
+    const blue=value=>{
+      const m=String(value).match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)/i);
+      return !!m && (m[4]===undefined || +m[4]>=0.8) && +m[3]>100 && +m[3]>+m[1]*1.2 && +m[3]>+m[2]*1.05;
+    };
+    function observe(leaf) {
+      const label=normalize(leaf),nodes=[];
+      for(let p=leaf;p && p!==document.body && nodes.length<5;p=p.parentElement){
+        const same=normalize(p)===label,repeated=p.matches('button,label,[role="tab"],[role="radio"],[role="option"]') && normalize(p).split(label).join('')==='';
+        if(!same && !repeated)break;
+        nodes.push(p);
+      }
+      const positive=[],negative=[],inputs=new Set();let classSelected=false,accent=false;
+      for(const p of nodes){
+        for(const attr of ['aria-selected','aria-pressed','aria-checked','data-selected','data-active']){
+          const value=p.getAttribute(attr);
+          if(value==='true')positive.push(attr);
+          if(value==='false')negative.push(attr);
+        }
+        const state=p.getAttribute('data-state');
+        if(['active','selected','checked','on'].includes(state))positive.push('data-state');
+        if(['inactive','unselected','unchecked','off'].includes(state))negative.push('data-state');
+        for(const token of p.classList){
+          if(/^(?:(?:is-)?(?:active|selected|checked)|ant-radio(?:-button)?-wrapper-checked|ant-tabs-tab-active|ant-select-item-option-selected)$/.test(token))classSelected=true;
+          if(/^text-(?:blue|sky)-(?:400|500|600|700)$/.test(token))classSelected=true;
+        }
+        if(p.matches('.ant-select-selection-item,.ant-select-selection-selected-value') && p.closest('.ant-select'))positive.push('select-value');
+        for(const input of p.querySelectorAll('input[type="radio"]'))inputs.add(input);
+        if(p.tagName==='LABEL' && p.getAttribute('for')){
+          const input=document.getElementById(p.getAttribute('for'));
+          if(input?.matches('input[type="radio"]'))inputs.add(input);
+        }
+        const style=getComputedStyle(p);
+        if(blue(style.color) || blue(style.backgroundColor))accent=true;
+      }
+      for(const input of inputs)(input.checked?positive:negative).push('radio');
+      const state=positive.length && negative.length?'conflict':positive.length?'selected':negative.length?'unselected':classSelected?'selected':'unknown';
+      return {label,nodes,anchor:nodes.at(-1),state,accent,evidence:positive[0] || (negative.length?'explicit-unselected':classSelected?'selected-class':null)};
+    }
+    const records=[],anchors=new Set();
+    for(const leaf of document.querySelectorAll('span,button,div,label,a,[role="tab"],[role="radio"],[role="option"]')){
+      const label=normalize(leaf);
+      if(!labels.has(label) || !visible(leaf) || [...leaf.children].some(c=>normalize(c)===label))continue;
+      const row=observe(leaf);
+      if(!anchors.has(row.anchor)){anchors.add(row.anchor);records.push(row);}
+    }
+    const peers=row=>{
+      let parent=row.anchor?.parentElement;
+      for(let depth=0;parent && parent!==document.body && depth<3;depth++,parent=parent.parentElement){
+        if(String(parent.textContent || '').length>300)break;
+        const group=records.filter(r=>parent.contains(r.anchor));
+        if(group.some(r=>r.label!==row.label))return group;
+      }
+      return [row];
+    };
+    // A distinctive rendered accent is useful when a site's CSS token changes.
+    // It needs a nearby alternative sort control with a neutral appearance.
+    for(const row of records)if(row.state==='unknown' && row.accent && peers(row).some(p=>p.label!==row.label && !p.accent)){
+      row.state='selected';row.evidence='distinct-control-color';
+    }
+    // Native and Ant selects expose their current value rather than an active
+    // tab. Closed native options themselves have no rendered client rects.
+    const native=[];
+    for(const select of document.querySelectorAll('select')){
+      if(!visible(select))continue;
+      const options=[...select.options];
+      if(!options.some(o=>normalize(o)==='最新创意'))continue;
+      const chosen=options.filter(o=>o.selected);
+      native.push({label:chosen.length===1?normalize(chosen[0]):null,state:chosen.length===1?'selected':'conflict',evidence:'native-select'});
+    }
+    const latest=records.filter(r=>r.label==='最新创意'),chosen=latest.filter(r=>r.state==='selected');
+    const selectedNative=native.filter(r=>r.state==='selected' && r.label==='最新创意');
+    const alternative=latest.flatMap(peers).find(r=>r.label!=='最新创意' && r.state==='selected') || native.find(r=>r.label && r.label!=='最新创意');
+    const count=latest.length+native.length;
+    const conflict=latest.some(r=>r.state==='conflict') || native.some(r=>r.state==='conflict') || chosen.length+selectedNative.length>1 || !!alternative && chosen.length+selectedNative.length>0;
+    const confirmed=!conflict && chosen.length+selectedNative.length===1;
+    return {status:conflict?'ambiguous':confirmed?'confirmed':alternative?'other-sort':count?'unconfirmed':'not-found',selectedLabel:confirmed?'最新创意':alternative?.label || null,candidateCount:count,evidence:confirmed?(chosen[0] || selectedNative[0]).evidence:null};
+  }
+  const sortState=readSort(),newestFirst=sortState.status==='confirmed';
+  return {items, missing, cardKeys, cardDates, newestFirst, sortState, pageNumber, selectionActive, selectedCardNumbers, cardCount:cards.length, matchedCards, videoCards, imageCards, playableCards, unsupported, limitReached:false};
 }

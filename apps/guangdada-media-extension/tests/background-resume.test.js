@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Worker} from 'node:worker_threads';
+import {sortFixtureScan} from './helpers/sort-fixture.js';
 
 async function harness(t,data={}){
   const worker=new Worker(new URL('./helpers/background-harness.js',import.meta.url),{workerData:data});t.after(()=>worker.terminate());
@@ -14,6 +15,43 @@ async function harness(t,data={}){
 const start=async h=>{const r=await h.send({type:'start',tabId:1,mode:'pages',untilEnd:true,kinds:['image','video'],firstDiscoveredSince:'2026-10-24',autoResolveExternal:true});assert.equal(r.ok,true,r.error);return r.job.id;};
 const read=(state,id)=>state.storage['mediaTask:'+id];
 async function advanceUntil(h,predicate,max=80){for(let i=0;i<max;i++){const s=await h.state();if(predicate(s))return s;await h.advance(250);}throw new Error('Offline state did not reach expectation');}
+
+test('date task accepts the actual serialized collector result from a selected Ant radio wrapper',async t=>{
+  const scan=await sortFixtureScan('<label class="ant-radio-button-wrapper-checked"><span><input type="radio" checked></span><span>最新创意</span></label>');
+  const h=await harness(t,{sim:{lastPage:1,scans:{1:scan}}});
+  const r=await h.send({type:'start',tabId:1,mode:'pages',untilEnd:true,kinds:['image'],firstDiscoveredSince:'2026-11-02'});
+  assert.equal(r.ok,true,r.error);await h.advance(6000);const j=read(await h.state(),r.job.id);assert.equal(j.stopReason,'last-page');assert.equal(j.collection.completedPages.length,1);assert.equal(j.items.length,1);assert.equal(j.selections[0].dateStatus,'included');
+});
+
+test('date start rejects an actual different-sort scan before creating a task or requesting media',async t=>{
+  const scan=await sortFixtureScan('<select><option selected>展示估值</option><option>最新创意</option></select>');
+  const h=await harness(t,{sim:{scans:{1:scan}}});
+  const r=await h.send({type:'start',tabId:1,mode:'pages',untilEnd:true,kinds:['image'],firstDiscoveredSince:'2026-11-02'});
+  assert.equal(r.ok,false);assert.match(r.error,/展示估值/);const s=await h.state();assert.equal(s.sim.runs.length,0);assert.equal(s.sim.nextClicks,0);assert.equal(s.storage.job,undefined);
+});
+
+test('date continuation uses the same sort reader; a wrong sort keeps the original checkpoint',async t=>{
+  const selected=await sortFixtureScan('<div class="ant-select"><span class="ant-select-selection-item">最新创意</span></div>'),other=await sortFixtureScan('<span>最新创意</span>');
+  const h=await harness(t,{sim:{lastPage:1,scans:{1:selected}}});
+  const r=await h.send({type:'start',tabId:1,mode:'pages',untilEnd:true,kinds:['image'],firstDiscoveredSince:'2026-11-02'}),id=r.job.id;
+  await h.send({type:'pause-collection',id});await h.configure({scans:{1:other}});let answer=await h.send({type:'resume-collection',id,tabId:1});assert.equal(answer.ok,false);assert.match(answer.error,/最新创意/);assert.equal(read(await h.state(),id).phase,'collection-paused');
+  await h.configure({scans:{1:selected}});answer=await h.send({type:'resume-collection',id,tabId:1});assert.equal(answer.ok,true,answer.error);await h.advance(6000);const j=read(await h.state(),id);assert.equal(j.stopReason,'last-page');assert.equal(j.collection.resumeCount,1);assert.equal(j.items.length,1);
+});
+
+test('a real sort verdict change during collection pauses and retains saved addresses before another click',async t=>{
+  const selected=await sortFixtureScan('<div class="text-blue-500">最新创意</div>'),other=await sortFixtureScan('<div><button aria-selected="false">最新创意</button><button aria-selected="true">展示估值</button></div>');
+  const h=await harness(t,{sim:{scans:{1:selected}}});
+  const r=await h.send({type:'start',tabId:1,mode:'pages',untilEnd:true,kinds:['image'],firstDiscoveredSince:'2026-11-02'}),id=r.job.id;
+  await h.configure({scans:{1:other}});await h.advance(1000);const s=await h.state(),j=read(s,id);assert.equal(j.phase,'collection-paused');assert.match(j.collectionError,/展示估值/);assert.equal(j.collectionDiagnostic.sortStatus,'other-sort');assert.equal(j.items.length,1);assert.equal(j.items[0].url,selected.items[0].url);assert.equal(s.sim.nextClicks,0);assert.equal(s.sim.runs.length,0);
+});
+
+test('the fixed sort reader still honors an inclusive date cutoff on a later page',async t=>{
+  const html='<div class="ant-select"><span class="ant-select-selection-item">最新创意</span></div>';
+  const first=await sortFixtureScan(html),second=await sortFixtureScan(html,{date:'2026-11-01',adId:'older-ad'});second.pageNumber=2;
+  const h=await harness(t,{sim:{lastPage:3,scans:{1:first,2:second}}});
+  const r=await h.send({type:'start',tabId:1,mode:'pages',untilEnd:true,kinds:['image'],firstDiscoveredSince:'2026-11-02'});assert.equal(r.ok,true,r.error);await h.advance(10000);
+  const s=await h.state(),j=read(s,r.job.id);assert.equal(j.stopReason,'date-cutoff');assert.equal(j.dateCutoff.pageNumber,2);assert.equal(j.dateCutoff.firstDiscovered,'2026-11-01');assert.equal(j.items.length,1);assert.equal(j.items[0].adId,'sort-fixture-ad');assert.equal(s.sim.nextClicks,1);assert.equal(s.sim.runs.length,0);
+});
 
 test('actual worker manually pauses without media, persists across restart and resumes the same task',async t=>{
   const h=await harness(t),id=await start(h);assert.equal((await h.send({type:'pause-collection',id})).ok,true);let s=await h.state();assert.equal(read(s,id).phase,'collection-paused');assert.equal(s.sim.runs.length,0);assert.equal(read(s,id).collection.completedPages.length,0);
@@ -118,4 +156,18 @@ test('ending a paused task without eligible addresses keeps a report and does no
   const first={pageNumber:1,cardKeys:['video'],cardDates:[{date:'2026-10-24',source:'visible_card_date_range'}],newestFirst:true,cardCount:1,items:[],missing:[{adId:'video',cardIndex:1,kind:'video'}]};
   const h=await harness(t,{sim:{permissions:true,scans:{1:first}}});const r=await h.send({type:'start',tabId:1,mode:'pages',untilEnd:true,kinds:['image']});assert.equal(r.ok,true,r.error);const id=r.job.id;
   await h.send({type:'pause-collection',id});const ended=await h.send({type:'download-collected',id});assert.equal(ended.ok,true,ended.error);const s=await h.state();assert.equal(read(s,id).phase,'failed');assert.equal(read(s,id).selections.length,1);assert.equal(read(s,id).collectionIncomplete,true);assert.equal(s.sim.runs.length,0);assert.equal(read(s,id).downloadId,undefined);assert.equal((await h.send({type:'resume-collection',id,tabId:1})).ok,false);
+});
+
+test('refresh-state answers during a held detail without releasing the collector or changing the cart',async t=>{
+  const first={pageNumber:1,cardKeys:['detail'],cardDates:[{date:'2026-10-24',source:'visible_card_date_range'}],newestFirst:true,cardCount:1,items:[],missing:[{adId:'detail',cardIndex:1,kind:'video'}]};
+  const cart={active:true,entries:[{adId:'saved',pageNumber:8,cardIndex:4,url:'https://cdn.example/saved.png'}]};
+  const h=await harness(t,{storage:{selectionCarts:{1:cart}},sim:{detailsReady:false,scans:{1:first}}}),id=await start(h);await h.advance(6000);const before=await h.state();assert.equal(read(before,id).collection.stage,'details');
+  const r=await h.send({type:'refresh-state',tabId:1});assert.equal(r.ok,true,r.error);assert.equal(r.collector,id);assert.deepEqual(r.basket,cart);const after=await h.state();assert.equal(read(after,id).phase,'collecting');assert.deepEqual(read(after,id).selections,read(before,id).selections);assert.equal(after.sim.reads.length,before.sim.reads.length);assert.equal(after.sim.closeClicks,0);assert.equal(after.sim.runs.length,0);
+});
+
+test('refresh-state keeps an active ZIP writer but reconciles a lost download-complete observation',async t=>{
+  const h=await harness(t,{sim:{permissions:true,lastPage:1}}),id=await start(h);await h.advance(5000);const before=await h.state();assert.equal(read(before,id).phase,'fetching');
+  assert.equal((await h.send({type:'refresh-state',tabId:1})).ok,true);assert.equal((await h.state()).sim.owner,id);
+  const packed=await h.rpc('send',{message:{type:'zip-ready',id,url:'blob:chrome-extension://offline-extension/archive'},sender:{id:'offline-extension',url:'chrome-extension://offline-extension/offscreen.html'}});assert.equal(packed.ok,true,packed.error);assert.equal(read(await h.state(),id).phase,'downloading');
+  await h.configure({downloadStates:{1:'complete'}});const mark=(await h.state()).sim.reads.length;const refreshed=await h.send({type:'refresh-state',tabId:1});assert.equal(refreshed.ok,true,refreshed.error);assert.equal(refreshed.job.phase,'complete');assert.equal(refreshed.collector,null);const after=await h.state();assert.equal(after.sim.runs.length,1);assert.equal(after.sim.cancels.length,0);assert.equal(after.sim.reads.length,mark);assert.deepEqual(read(after,id).selections,read(before,id).selections);
 });

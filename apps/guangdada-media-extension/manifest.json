@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "广大大 · 页面媒体下载",
-  "version": "1.15.0",
+  "version": "1.15.2",
   "description": "翻页采集可暂停保留断点、恢复原页继续；多任务独立保存地址与ZIP，支持日期截止和下载队列。",
   "minimum_chrome_version": "120",
   "permissions": [

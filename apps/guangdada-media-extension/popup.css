@@ -5,3 +5,4 @@
 #date-since{width:155px;min-width:0}#date-row label{font-size:12px}
 .task-panel{background:#eaf0fc;padding:12px;border-radius:10px;margin-bottom:14px}.task-panel label{font-weight:650}.task-panel select{width:100%;margin-top:6px;padding:8px;border:1px solid #ccd8ee;border-radius:6px;font:inherit}.task-panel p{font-size:12px;color:#526681;margin:6px 0 0}#task-name{width:205px;min-width:0}
 #collection-controls{background:#fff4dc;padding:12px;border-radius:8px;margin:10px 0}#collection-controls button{width:100%;margin:4px 0}#collection-checkpoint{font-size:12px;white-space:pre-line;color:#745221;margin:6px 0}
+#refresh-state{width:100%;margin-top:10px}#refresh-message{white-space:pre-line;overflow-wrap:anywhere}#ready-hint{color:#97591b;font-size:12px;white-space:pre-line}#ready-hint:empty{display:none}

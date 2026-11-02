@@ -11,8 +11,15 @@ export function dateLimit(value) {
   if(!date)throw new Error('请选择有效的最早首次发现日期（YYYY-MM-DD）。');
   return date;
 }
+export function sortStatusText(scan) {
+  if(scan?.newestFirst===true)return '已确认「最新创意」排序。';
+  const state=scan?.sortState;
+  return state?.status==='not-found'?'未识别到列表的「最新创意」排序控件。':state?.status==='ambiguous'?'排序控件的选中状态存在冲突，尚未确认「最新创意」。':state?.status==='other-sort'?`当前识别到「${state.selectedLabel}」排序；日期截止需要「最新创意」。`:state?.status==='unconfirmed'?'已找到「最新创意」，但尚未确认它处于选中状态。':'';
+}
 export function requireNewest(scan) {
-  if(scan.newestFirst!==true)throw Object.assign(new Error('日期截止需要按从新到旧采集；请先在广大大列表选择「最新创意」，再开始。'),{code:'DATE_SORT_REQUIRED'});
+  if(scan.newestFirst===true)return;
+  const state=scan.sortState,reason=sortStatusText(scan);
+  throw Object.assign(new Error(reason?`${reason} 请确认网页已选中「最新创意」，等待页面加载后刷新插件状态，再开始。`:'日期截止需要按从新到旧采集；请先在广大大列表选择「最新创意」，再开始。'),{code:'DATE_SORT_REQUIRED',...(state?{diagnostic:{action:'sort-read',script:'collectMedia',sortStatus:state.status,selectedSort:state.selectedLabel,candidateCount:state.candidateCount}}:{})});
 }
 export function datePlan(scan, since, pageNumber) {
   if(!calendarDate(since))throw new Error('无效日期截止值');

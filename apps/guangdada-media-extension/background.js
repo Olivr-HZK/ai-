@@ -546,6 +546,14 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if(internal && message.type==='select-task'){
     read(message.id).then(async job=>{if(!job || !message.id)throw new Error('找不到此任务');await taskStore.focus(job);return state();}).then(value=>respond({ok:true,...value}),error=>respond({ok:false,error:error.message}));return true;
   }
+  if(internal && message.type==='refresh-state'){
+    // Bypass long page/detail collection work. Reconcile download observations
+    // under the existing writer lock, without unlocking an active collector.
+    transferLocked(async()=>{
+      for(const job of await taskStore.all())if(running(job) && job.phase!=='collecting')await reconcile(job);
+      return {ok:true,...await state(),basket:Number.isInteger(message.tabId)?await getCart(message.tabId):null};
+    }).then(respond,error=>respond({ok:false,error:error.message}));return true;
+  }
   if(internal && message.type==='stop'){
     read(message.id).then(job=>{
       if(job?.phase==='collecting'){

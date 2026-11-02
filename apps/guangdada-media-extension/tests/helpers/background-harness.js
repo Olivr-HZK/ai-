@@ -84,7 +84,7 @@ globalThis.chrome={
     throw new Error('Unmodeled script '+name);
   }},
   permissions:{async contains(){return sim.permissions;},onAdded:events()},
-  downloads:{async search({id}){return [{id,state:'in_progress'}];},async cancel(id){sim.cancels.push(id);},async download(){return 1;},onChanged:events()},
+  downloads:{async search({id}){return [{id,state:sim.downloadStates?.[id] || 'in_progress'}];},async cancel(id){sim.cancels.push(id);},async download(){return 1;},onChanged:events()},
   offscreen:{async createDocument(){},async closeDocument(){sim.owner=null;}},
   alarms:{async create(){},async clear(){},onAlarm:events()},action:{async setBadgeText(){}}
 };
@@ -92,7 +92,7 @@ await import('../../background.js');await settle();
 parentPort.on('message',async({id,command,...data})=>{
   try{
     let result;
-    if(command==='send')result=await dispatch(data.message);
+    if(command==='send')result=await dispatch(data.message,data.sender);
     else if(command==='fire'){void dispatch(data.message).then(r=>{sim.fireResult=r;});result={sent:true};}
     else if(command==='advance'){await advance(data.ms);result={time};}
     else if(command==='configure'){Object.assign(sim,clone(data.patch));if(!sim.holdContext && releaseContext){releaseContext();releaseContext=null;}result={ok:true};}
