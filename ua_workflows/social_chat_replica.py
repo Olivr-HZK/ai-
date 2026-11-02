@@ -17,13 +17,14 @@ import sys
 from ua_workflows import social_chat_browser_daily as daily
 from ua_workflows.replica_studio_api import ReplicaAPI, ReplicaError, digest, save_private, step_state
 from ua_workflows.replica_cli import Checkpoint, operation_lock, upload_many, logo_many, download_many
+from ua_workflows.replica_recovery import RunHealth, UNKNOWN, find_uploaded_source, timeout_policy
 from ua_workflows.xhs_daily import upload_attachment
 
 SOURCE_FIELD_ID = 'fldRHIjFcO'
 TARGET_FIELD_ID = 'fld6ygGkqD'
 APP = 'Adz4bj9ECaCCJrsgkj7coheYn3c'
 TABLE = 'tblwhAqPfQoBXK3Q'
-TERMINAL = {'verified', 'skipped_existing', 'failed', 'needs_review', 'source_failed', 'write_unknown', 'upload_unknown', 'logo_unknown'}
+TERMINAL = {'verified', 'skipped_existing', 'failed', 'needs_review', 'source_failed'} | UNKNOWN
 
 
 class ReplicaFeishu(daily.Feishu):
@@ -130,6 +131,16 @@ class State:
             counts = dict(Counter(item['stage'] for item in values))
             summary = {'target_date': self.scope['target_date'], 'total': len(self.items), 'counts': counts,
                        'verified': counts.get('verified', 0), 'all_terminal': all(item['stage'] in TERMINAL for item in values), **extra}
+            previous = self.root / 'progress.json'
+            if previous.exists():
+                old_summary = json.loads(previous.read_text())
+                for key in ('scheduling', 'batch_phase', 'reconciliation_pending'):
+                    if key in old_summary:
+                        summary.setdefault(key, old_summary[key])
+            alerts = self.root / 'alerts.json'
+            if alerts.exists():
+                summary['active_alerts'] = json.loads(alerts.read_text()).get('active', [])
+                summary['needs_attention'] = bool(summary['active_alerts'])
             save_private(self.root / 'progress.json', summary)
             return summary
 
@@ -256,10 +267,18 @@ def download_sources(state, client=None):
     return state.summary()
 
 
-def backfill(state, values, client, route):
-    updates, expected = [], {}
-    before = {}
+def backfill(state, values, client, route, *, on_progress=None):
+    updates, expected, before = [], {}, {}
+
+    def persist(value):
+        state.put(value['record_id'], value)
+        if on_progress is not None:
+            on_progress(value)
+
     for value in values:
+        # Only the reconciliation path may handle an uncertain prior operation.
+        if value['stage'] in {'write_intent', 'write_unknown', 'feishu_upload_intent', 'attachment_unknown'}:
+            continue
         record_id = value['record_id']
         item, receipt = state.items[record_id], value['output']
         path = Path(receipt['path'])
@@ -275,34 +294,51 @@ def backfill(state, values, client, route):
                 value.update(stage='verified')
             else:
                 value.update(stage='skipped_existing')
-            state.put(record_id, value)
+            persist(value)
             continue
         if not token:
             value.update(stage='feishu_upload_intent')
-            state.put(record_id, value)
-            token = upload_attachment(client, {'feishu': {'app_token': APP}}, path, receipt['name'])
+            persist(value)
+            try:
+                token = upload_attachment(client, {'feishu': {'app_token': APP}}, path, receipt['name'])
+            except (requests.RequestException, TimeoutError):
+                value.update(stage='attachment_unknown', error='Attachment upload receipt unknown; verified local result retained; no automatic POST replay')
+                persist(value)
+                continue
+            require(isinstance(token, str) and token, 'Attachment upload returned no valid token')
             value.update(stage='feishu_uploaded', feishu_token=token)
-            state.put(record_id, value)
-        # Read immediately before writing; protect another writer's new attachment.
+            persist(value)
         row = record(client, route, record_id)
         check_record(row, item, state.scope)
         if row['fields'].get(state.scope['target_field']):
             value.update(stage='skipped_existing')
-            state.put(record_id, value)
+            persist(value)
             continue
         before[record_id] = row
-        value.update(stage='write_intent')
-        state.put(record_id, value)
         expected[record_id] = value
         updates.append({'record_id': record_id, 'fields': {state.scope['target_field']: [{'file_token': token}]}})
     if not updates:
         return
     batch_id = str(time.time_ns())
+    journal_path = state.root / 'write-audit' / (batch_id + '-dispatch.json')
     save_private(state.root / 'write-audit' / (batch_id + '-before.json'), list(before.values()))
+    journal = {'version': 2, 'batch_id': batch_id, 'phase': 'prepared',
+               'records': {rid: {'file_token': v['feishu_token'], 'name': v['output']['name'], 'size': v['output']['size']}
+                           for rid, v in expected.items()}}
+    save_private(journal_path, journal)
+    for value in expected.values():
+        value.update(stage='write_intent', write_batch_id=batch_id)
+        persist(value)
+    # Only a durable prepared journal proves no POST was dispatched. After this
+    # boundary even a process death before the call is conservatively unknown.
+    journal.update(phase='dispatching', dispatched_at=time.time())
+    save_private(journal_path, journal)
     try:
         client.call('POST', route + '/records/batch_update', json={'records': updates})
-    except Exception:
-        pass  # Reconcile each row below; do not blindly repeat an uncertain write.
+        journal['phase'] = 'accepted'
+    except Exception as error:
+        journal.update(phase='unknown', error=type(error).__name__)
+    save_private(journal_path, journal)
     after = []
     for record_id, value in expected.items():
         row = record(client, route, record_id)
@@ -311,9 +347,10 @@ def backfill(state, values, client, route):
         attachment = next((a for a in row['fields'].get(state.scope['target_field'], []) if a['file_token'] == value['feishu_token']), None)
         if attachment and attachment['name'] == value['output']['name'] and attachment['size'] == value['output']['size']:
             value.update(stage='verified', remote_name=attachment['name'], remote_size=attachment['size'])
+            value.pop('error', None)
         else:
             value.update(stage='write_unknown', error='Remote attachment write could not be confirmed')
-        state.put(record_id, value)
+        persist(value)
     save_private(state.root / 'write-audit' / (batch_id + '-after.json'), after)
 
 
@@ -326,38 +363,58 @@ def stable_fields(value):
     return value
 
 
-def reconcile_logos(state, api=None):
+def reconcile_logos(state, api=None, *, checkpoint=None, clock=time.time, respect_cooldown=False, interval=60,
+                    should_check=None, on_progress=None):
     """Read back uncertain Logo requests; never submits or retries generation."""
-    checkpoint = json.loads((state.root / 'cli-state.json').read_text())
+    checkpoint = checkpoint or json.loads((state.root / 'cli-state.json').read_text())
     api = api or ReplicaAPI.configured(expected_account=checkpoint['account_id'])
     require(api.authenticate()['account_id'] == checkpoint['account_id'], 'Logo reconciliation account changed')
     results = []
     for value in state.all():
         if value['stage'] != 'logo_unknown':
             continue
+        if should_check is not None and not should_check(value):
+            continue
+        if respect_cooldown and clock() < value.get('logo_check_after', 0):
+            continue
         job_id = value['job_id']
         prior = checkpoint['logos'].get(job_id)
         require(prior is not None, 'Unknown Logo has no original intent to reconcile')
-        job = api.job(job_id)
+        try:
+            job = api.job(job_id)
+        except ReplicaError as error:
+            if error.code in {'authentication_required', 'account_changed'}:
+                raise
+            value.update(logo_check_after=clock() + interval, reconcile_error=error.code)
+            state.put(value['record_id'], value)
+            if on_progress is not None:
+                on_progress()
+            results.append({'record_id': value['record_id'], 'job_id': job_id, 'stage': value['stage'], 'read_error': error.code})
+            continue
         require(job.get('id') == job_id, 'Logo reconciliation task identity mismatch')
         view = job.get('logo_replace_view') or {}
         condition = step_state(job, 'logo')
-        proof = {'checked_at': time.time(), 'job': job, 'prior_stage': prior.get('stage'), 'prior_revision': prior.get('revision')}
+        prior_revision = (prior.get('continuation') or {}).get('revision', prior.get('revision', 0))
+        same_action = job.get('last_action') == 'logo_replace' and job.get('revision', 0) > prior_revision
+        proof = {'checked_at': clock(), 'job': job, 'prior_stage': prior.get('stage'), 'prior_revision': prior_revision}
         save_private(state.root / 'logo-reconciliation' / (job_id + '.json'), proof)
-        if condition == 'ready' and view.get('result_file'):
+        value.update(logo_check_after=clock() + interval, last_status=job.get('status'), last_message=job.get('message'))
+        if same_action and condition == 'ready' and view.get('result_file'):
             value.update(stage='logo_ready', visual_review_flagged=bool(view.get('flagged')),
                          visual_review_message=view.get('warning') or job.get('message'), recovered_logo_readonly=True)
             value.pop('error', None)
-        elif condition == 'running' and job.get('last_action') == 'logo_replace' and job.get('revision', 0) > prior.get('revision', 0):
+        elif same_action and condition == 'running':
             value.update(stage='logo_accepted', recovered_logo_readonly=True)
             value.pop('error', None)
-        elif condition == 'error':
+        elif same_action and condition == 'error':
             value.update(stage='failed', error=job.get('error') or job.get('message') or 'Confirmed server Logo failure')
-        elif condition in {'review', 'ready'}:
+        elif same_action and condition in {'review', 'ready'}:
             value.update(stage='needs_review', error=job.get('message') or 'No verified Logo result')
         # Unconfirmed state remains quarantined; the worker's checkpoint is never
         # rewritten here because its live process owns that file.
         state.put(value['record_id'], value)
+        if on_progress is not None:
+            on_progress()
         results.append({'record_id': value['record_id'], 'job_id': job_id, 'stage': value['stage'], 'server_status': job.get('status')})
     return {'operation': 'reconcile_logos', 'results': results}
 
@@ -421,7 +478,7 @@ def verify(state, client=None, *, remote_samples=3):
                             for value in values if value['stage'] in TERMINAL and value['stage'] not in {'verified', 'skipped_existing'}]
     result['integrity_passed'] = not mismatches and not changed and before.keys() == after.keys() and len(verified) == sum(v['stage'] == 'verified' for v in values)
     result['all_requested_results_written'] = len(verified) == len(state.items)
-    uncertain = any(value['stage'] in {'write_unknown', 'upload_unknown', 'logo_unknown'} for value in values)
+    uncertain = any(value['stage'] in UNKNOWN for value in values)
     authorized_exceptions = (state.root / 'exception-policy.json').exists()
     result['verification_passed'] = result['integrity_passed'] and result['all_terminal'] and not uncertain and (result['all_requested_results_written'] or authorized_exceptions)
     save_private(state.root / 'verification.json', result)
@@ -429,8 +486,10 @@ def verify(state, client=None, *, remote_samples=3):
 
 
 class Runner:
-    def __init__(self, state, api_factory=None, feishu=None):
+    def __init__(self, state, api_factory=None, feishu=None, *, timeouts=None, clock=time.time, wait=time.sleep):
         self.state = state
+        self.health = RunHealth(state.root, timeouts, clock)
+        self.wait = wait
         self.factory = api_factory or ReplicaAPI.configured
         self.api = self.factory()
         auth = self.api.authenticate()
@@ -442,33 +501,72 @@ class Runner:
         require(fields_by_id(self.feishu.listing(self.route + '/fields')) == (state.scope['source_field'], state.scope['target_field']), 'Attachment schema changed')
         self.submit_paused = False
 
+    def now(self):
+        return self.health.clock() if hasattr(self, 'health') else time.time()
+
+    def can_reconcile(self, value):
+        return not hasattr(self, 'health') or self.health.reconciliation_allowed(value)
+
+    def observe(self, phase):
+        if not hasattr(self, 'health'):
+            self.health = RunHealth(self.state.root)
+        downloads = len(self.checkpoint.data.get('downloads', {})) if hasattr(self, 'checkpoint') else 0
+        values = self.state.all()
+        self.health.observe(phase, values, downloads)
+        return self.state.summary(scheduling='batch', batch_phase=phase, submit_paused=self.submit_paused,
+                                  reconciliation_pending=self.health.unknown_pending(values))
+
     def refresh_feishu(self):
         if self._owns_feishu and time.monotonic() - self._feishu_auth_at >= 3600:
             self.feishu = ReplicaFeishu()
             self._feishu_auth_at = time.monotonic()
 
     def reconcile_uploads(self):
+        jobs = None
         for value in self.state.all():
             if value['stage'] not in {'failed', 'upload_unknown'}:
                 continue
-            if time.time() < value.get('upload_check_after', 0):
+            if not self.can_reconcile(value):
+                continue
+            if self.now() < value.get('upload_check_after', 0):
                 continue
             key = hashlib.sha256(str(Path(value.get('source_path', '')).resolve()).encode()).hexdigest()
             prior = self.checkpoint.get('uploads', key)
             if not prior or prior['stage'] not in {'upload_unknown', 'upload_intent'}:
                 continue
+            result = None
             try:
                 result = self.api.upload_status(prior['request_id'])
-                prior.update(stage='uploaded', ids=result['ids'])
-                self.checkpoint.put('uploads', key, prior)
-                value.update(stage='uploaded', job_id=result['ids'][0], request_id=prior['request_id'])
-                value.pop('error', None)
             except ReplicaError as error:
+                if error.code in {'authentication_required', 'account_changed'}:
+                    raise
                 value.update(stage='upload_unknown', error=error.code, request_id=prior['request_id'])
-                # A persistent unknown must not hold up every polling cycle.
-                # This is only a read cooldown, never permission to resend.
-                value['upload_check_after'] = time.time() + 300
+                if error.code == 'result_unknown':
+                    claimed = {v['job_id'] for v in self.state.all() if v.get('job_id')}
+                    try:
+                        if jobs is None:
+                            jobs = self.api.list_jobs()
+                        result, proof = find_uploaded_source(self.api, prior, claimed, jobs=jobs)
+                        save_private(self.state.root / 'upload-reconciliation' / (value['record_id'] + '.json'),
+                                     {'checked_at': self.now(), 'original_request_id': prior['request_id'], **proof})
+                    except ReplicaError as lookup_error:
+                        if lookup_error.code in {'authentication_required', 'account_changed'}:
+                            raise
+                        value['reconcile_error'] = lookup_error.code
+                interval = self.health.policy['reconcile_interval'] if hasattr(self, 'health') else 60
+                value['upload_check_after'] = self.now() + interval
+            if result:
+                claimed = {v['job_id'] for v in self.state.all() if v.get('job_id') and v['record_id'] != value['record_id']}
+                require(len(result['ids']) == 1 and result['ids'][0] not in claimed, 'Recovered upload belongs to another record')
+                prior.update(stage='uploaded', ids=result['ids'], recovered_readonly=True,
+                             receipt_confirmed=result.get('receipt_confirmed', True))
+                self.checkpoint.put('uploads', key, prior)
+                value.update(stage='uploaded', job_id=result['ids'][0], request_id=prior['request_id'],
+                             original_receipt_confirmed=result.get('receipt_confirmed', True))
+                value.pop('error', None)
             self.state.put(value['record_id'], value)
+            if hasattr(self, 'health'):
+                self.observe(self.health.data.get('phase', 'reconcile_unknown'))
 
     def continue_interrupted_logos(self):
         # The site's Continue button uses this same action with pending.settings,
@@ -507,7 +605,11 @@ class Runner:
 
     def reconcile_writes(self):
         for value in self.state.all():
-            if value['stage'] == 'write_intent':
+            if value['stage'] in {'write_intent', 'write_unknown'}:
+                if not self.can_reconcile(value):
+                    continue
+                if self.now() < value.get('write_check_after', 0):
+                    continue
                 row = record(self.feishu, self.route, value['record_id'])
                 check_record(row, self.state.items[value['record_id']], self.state.scope)
                 found = next((a for a in row['fields'].get(self.state.scope['target_field'], [])
@@ -515,12 +617,32 @@ class Runner:
                 receipt = value['output']
                 if found and found['name'] == receipt['name'] and found['size'] == receipt['size']:
                     value.update(stage='verified', remote_name=found['name'], remote_size=found['size'])
+                    value.pop('error', None)
                 else:
-                    value.update(stage='write_unknown', error='Interrupted write not confirmed; no automatic replay')
+                    batch_id = value.get('write_batch_id', '')
+                    require(not batch_id or re.fullmatch(r'[0-9]+', batch_id), 'Invalid write batch journal identity')
+                    path = self.state.root / 'write-audit' / (batch_id + '-dispatch.json')
+                    journal = json.loads(path.read_text()) if batch_id and path.exists() else {}
+                    identity = {'file_token': value.get('feishu_token'), 'name': receipt['name'], 'size': receipt['size']}
+                    unsent = (journal.get('version') == 2 and journal.get('batch_id') == batch_id
+                              and journal.get('phase') == 'prepared' and journal.get('records', {}).get(value['record_id']) == identity)
+                    if unsent and not row['fields'].get(self.state.scope['target_field']):
+                        value.update(stage='feishu_uploaded')
+                        value.pop('error', None)
+                        value.pop('write_batch_id', None)
+                    else:
+                        value.update(stage='write_unknown', error='Interrupted write not confirmed; no automatic replay',
+                                     write_check_after=self.now() + (self.health.policy['reconcile_interval'] if hasattr(self, 'health') else 60))
                 self.state.put(value['record_id'], value)
             elif value['stage'] == 'feishu_upload_intent':
-                value.update(stage='needs_review', error='Interrupted attachment upload; no token receipt')
+                value.update(stage='attachment_unknown', error='Interrupted attachment upload; verified local result retained, no token receipt and no POST replay')
                 self.state.put(value['record_id'], value)
+
+    def reconcile_unknown_logos(self):
+        if any(value['stage'] == 'logo_unknown' and self.can_reconcile(value) and self.now() >= value.get('logo_check_after', 0) for value in self.state.all()):
+            reconcile_logos(self.state, self.api, checkpoint=self.checkpoint.data, clock=self.now,
+                            respect_cooldown=True, interval=self.health.policy['reconcile_interval'], should_check=self.can_reconcile,
+                            on_progress=lambda: self.observe(self.health.data.get('phase', 'reconcile_unknown')))
 
     def poll(self):
         values = [value for value in self.state.all() if value['stage'] in {'uploaded', 'logo_accepted', 'logo_submitting'}]
@@ -531,6 +653,12 @@ class Runner:
                 value.pop('poll_error', None)
                 stage = 'analysis' if value['stage'] == 'uploaded' else 'logo'
                 condition = step_state(job, stage)
+                if value['stage'] == 'logo_submitting':
+                    intent = self.checkpoint.get('logos', value['job_id'])
+                    if intent and intent.get('stage') != 'logo_accepted':
+                        revision = (intent.get('continuation') or {}).get('revision', intent.get('revision', 0))
+                        if job.get('last_action') != 'logo_replace' or job.get('revision', 0) <= revision:
+                            condition = 'waiting'
                 value.update(project_id=job.get('project_id'), last_status=job.get('status'), last_message=job.get('message'))
                 if condition == 'ready':
                     value['stage'] = 'analysis_ready' if stage == 'analysis' else 'logo_ready'
@@ -561,11 +689,15 @@ class Runner:
                     else:
                         value['stage'] = 'analysis_ready'
                 self.state.put(value['record_id'], value)
+                if hasattr(self, 'health'):
+                    self.observe(self.health.data.get('phase', 'wait_all_analyses'))
             except ReplicaError as error:
                 if error.code in {'authentication_required', 'account_changed'}:
                     self.submit_paused = True
                 value['poll_error'] = error.code
                 self.state.put(value['record_id'], value)
+                if hasattr(self, 'health'):
+                    self.observe(self.health.data.get('phase', 'wait_all_analyses'))
 
     def upload_all(self):
         """Prepare each missing source just in time, then submit without a job cap."""
@@ -613,6 +745,7 @@ class Runner:
             self.state.put(value['record_id'], value)
             if item.get('code') in {'not_submitted', 'result_unknown', 'authentication_required', 'account_changed', 'local_io_failed'}:
                 self.submit_paused = True
+            self.observe('upload_all')
 
         result = upload_many(lambda: self.api, paths(), self.checkpoint, on_result=uploaded)
         self.submit_paused = result['stopped'] or self.submit_paused
@@ -631,30 +764,44 @@ class Runner:
         for value in eligible:
             value['stage'] = 'logo_submitting'
             self.state.put(value['record_id'], value)
-        result = logo_many(self.api, [value['job_id'] for value in eligible], self.checkpoint)
-        by_id = {item['id']: item for item in result['results']}
-        for value in eligible:
-            item = by_id[value['job_id']]
+        by_id = {value['job_id']: value for value in eligible}
+
+        def submitted(item):
+            value = by_id[item['id']]
             if item.get('ok'):
                 value['stage'] = 'logo_ready' if item['code'] == 'already_done' else 'logo_accepted'
             elif item.get('code') == 'not_submitted':
                 value['stage'] = 'analysis_ready'
             else:
-                value.update(stage='logo_unknown' if item.get('code') in {'result_unknown', 'logo_unknown', 'logo_intent'} else 'failed', error=item.get('code'))
+                prior = self.checkpoint.get('logos', value['job_id']) or {}
+                uncertain = item.get('code') in {'result_unknown', 'logo_unknown', 'logo_intent'} or prior.get('stage') in {'logo_intent', 'logo_unknown'}
+                value.update(stage='logo_unknown' if uncertain else 'failed', error=item.get('code'))
             self.state.put(value['record_id'], value)
+            self.observe('submit_all_logos')
+
+        result = logo_many(self.api, list(by_id), self.checkpoint, on_result=submitted)
         self.submit_paused = result['stopped']
 
     def download_all(self):
         values = [value for value in self.state.all() if value['stage'] == 'logo_ready']
+        by_id = {value['job_id']: value for value in values}
+
+        def downloaded(item):
+            if item.get('ok'):
+                value = by_id[item['id']]
+                value.update(stage='downloaded', output={k: item[k] for k in ('path', 'name', 'size', 'sha256', 'full_decode_passed')})
+                self.state.put(value['record_id'], value)
+            self.observe('download_all')
+
         try:
-            result = download_many(self.api, [value['job_id'] for value in values], self.checkpoint, self.state.root / 'results')
+            result = download_many(self.api, [value['job_id'] for value in values], self.checkpoint, self.state.root / 'results', on_result=downloaded)
         except ReplicaError as error:
             if error.status != 400:
                 raise
             result = {'results': []}
             for value in values:
                 try:
-                    single = download_many(self.api, [value['job_id']], self.checkpoint, self.state.root / 'results')
+                    single = download_many(self.api, [value['job_id']], self.checkpoint, self.state.root / 'results', on_result=downloaded)
                     result['results'].extend(single['results'])
                 except ReplicaError as individual:
                     if individual.status != 400:
@@ -677,53 +824,82 @@ class Runner:
             self.api.authenticate()
         except ReplicaError as error:
             self.submit_paused = True
-            return self.state.summary(submit_paused=True, health_error=error.code, scheduling='batch')
+            self.health.alert(error.code, message='Replica session unavailable; no new business action submitted')
+            summary = self.observe(self.health.data.get('phase', 'initialization_wait'))
+            return {**summary, 'health_error': error.code}
         self.submit_paused = False
+        self.observe(self.health.data.get('phase', 'initialization'))
+        for code in ('authentication_required', 'account_changed'):
+            self.health.clear(code)
         self.reconcile_uploads()
+        self.reconcile_unknown_logos()
         self.reconcile_writes()
         values = self.state.all()
         if any(value['stage'] in {'queued', 'source_ready'} for value in values):
             phase = 'upload_all'
+            self.observe(phase)
             self.upload_all()
         elif any(value['stage'] == 'uploaded' for value in values):
             phase = 'wait_all_analyses'
+            self.observe(phase)
             self.poll()
         elif any(value['stage'] == 'analysis_ready' for value in values):
             phase = 'submit_all_logos'
+            self.observe(phase)
             self.submit_all_logos()
         else:
             self.continue_interrupted_logos()
             values = self.state.all()
             if any(value['stage'] in {'logo_accepted', 'logo_submitting'} for value in values):
                 phase = 'wait_all_logos'
+                self.observe(phase)
                 self.poll()
             elif any(value['stage'] == 'logo_ready' for value in values):
                 phase = 'download_all'
+                self.observe(phase)
                 save_private(self.state.root / 'logo-gate.json', {
                     'confirmed_at': time.time(), 'all_nonexception_logos_finished': True,
                     'ready_record_ids': [value['record_id'] for value in values if value['stage'] == 'logo_ready']})
                 self.download_all()
             else:
-                phase = 'backfill_all'
+                phase = 'reconcile_unknown' if any(value['stage'] in UNKNOWN for value in values) else 'backfill_all'
+                self.observe(phase)
                 ready = [value for value in values if value['stage'] in {'downloaded', 'feishu_uploaded'}]
                 # Official Bitable batch_update accepts at most 500 records.
                 # This is a write payload bound, not an in-flight processing cap.
                 for start in range(0, len(ready), 500):
                     self.refresh_feishu()
-                    backfill(self.state, ready[start:start + 500], self.feishu, self.route)
-        summary = self.state.summary(scheduling='batch', batch_phase=phase, submit_paused=self.submit_paused)
+                    backfill(self.state, ready[start:start + 500], self.feishu, self.route,
+                             on_progress=lambda value: self.observe('backfill_all'))
+        for code in ('read_failed', 'network_wait'):
+            self.health.clear(code)
+        summary = self.observe(phase)
         print(json.dumps({'phase': 'staged_processing', **summary}, ensure_ascii=False), flush=True)
         return summary
 
     def run(self):
         with operation_lock(self.state.root / 'batch-run'):
             while True:
-                summary = self.tick()
-                if summary.get('pause_requested') or summary['all_terminal']:
+                try:
+                    summary = self.tick()
+                except (requests.Timeout, requests.ConnectionError):
+                    self.health.alert('network_wait', message='Transport interrupted; resume from durable receipts, never replay uncertain POSTs')
+                    summary = {**self.observe(self.health.data.get('phase', 'service_wait')), 'health_error': 'read_failed'}
+                except ReplicaError as error:
+                    if error.code not in {'read_failed', 'authentication_required', 'account_changed'} and not (error.status and error.status >= 500):
+                        raise
+                    self.health.alert(error.code, message='HTTP workflow waiting; business write intents retained')
+                    summary = {**self.observe(self.health.data.get('phase', 'service_wait')), 'health_error': error.code}
+                if summary.get('pause_requested') or (summary['all_terminal'] and not self.health.unknown_pending(self.state.all())):
+                    if summary['all_terminal'] and not any(v['stage'] in UNKNOWN for v in self.state.all()):
+                        summary = self.observe('complete')
                     return summary
                 if summary.get('health_error') in {'authentication_required', 'account_changed'}:
                     return summary
-                time.sleep(30 if summary.get('health_error') else 8)
+                delay = 30 if summary.get('health_error') else 8
+                if summary['all_terminal'] and summary.get('reconciliation_pending'):
+                    delay = min(30, self.health.policy['reconcile_interval'])
+                self.wait(delay)
 
 
 class StagedRunner(Runner):
@@ -738,7 +914,18 @@ def main():
     parser.add_argument('--expected-count', type=int)
     parser.add_argument('--background', action='store_true', help='Run a detached worker with durable log and final verification')
     parser.add_argument('--scheduling', choices=['batch'], help='兼容选项；默认固定为全量上传、等待全部分析、全量Logo、等待全部Logo、下载回填')
+    parser.add_argument('--stall-timeout', type=float, help='无可见进展告警秒数，默认900；不重发生成')
+    parser.add_argument('--stage-timeout', type=float, help='整阶段超时告警秒数，默认7200；继续只读等待')
+    parser.add_argument('--unknown-timeout', type=float, help='未知回执只读核对窗口秒数，默认900；超时保留未知')
+    parser.add_argument('--reconcile-interval', type=float, help='未知回执核对间隔秒数，默认60')
     args = parser.parse_args()
+    overrides = {key: getattr(args, key) for key in ('stall_timeout', 'stage_timeout', 'unknown_timeout', 'reconcile_interval') if getattr(args, key) is not None}
+    if overrides:
+        require(args.action in {'run', 'resume'}, 'Timeout options only apply to run/resume')
+        policy_path = Path(args.run_dir) / 'timeout-policy.json'
+        prior = json.loads(policy_path.read_text()) if policy_path.exists() else {}
+        policy = timeout_policy({**prior, **overrides})
+        save_private(policy_path, policy)
     if args.scheduling:
         require(args.action in {'run', 'resume'}, 'Scheduling can only be changed for run/resume')
         state = State(args.run_dir)
@@ -767,6 +954,9 @@ def main():
         if args.action == 'download-sources':
             result = download_sources(state)
         elif args.action == 'run':
+            policy_path = state.root / 'timeout-policy.json'
+            policy = timeout_policy(json.loads(policy_path.read_text()) if policy_path.exists() else None)
+            health = RunHealth(state.root, policy)
             worker = {'pid': os.getpid(), 'started_at': time.time(), 'phase': 'running'}
             save_private(state.root / 'worker.json', worker)
             try:
@@ -774,12 +964,15 @@ def main():
                     try:
                         # Old pipeline scheduling files cannot restore the removed
                         # local concurrency or job caps. Do not rewrite old evidence.
-                        result = Runner(state).run()
+                        result = Runner(state, timeouts=policy).run()
                         break
                     except ReplicaError as error:
                         if error.code != 'read_failed' and not (error.status and error.status >= 500):
                             raise
                         print(json.dumps({'phase': 'service_wait', 'health_error': error.code, **state.summary()}, ensure_ascii=False), flush=True)
+                        health = RunHealth(state.root, policy)
+                        health.alert(error.code, message='Initialization read failed; no business action replayed')
+                        health.observe(health.data.get('phase', 'initialization_wait'), state.all())
                         time.sleep(30)
                 if result['all_terminal']:
                     for attempt in range(3):
@@ -792,6 +985,8 @@ def main():
                             time.sleep(10)
                 worker.update(phase='complete' if result.get('verification_passed') else 'paused' if result.get('pause_requested') else 'needs_attention', finished_at=time.time(), summary=result)
             except BaseException as error:
+                health = RunHealth(state.root, policy)
+                health.alert(getattr(error, 'code', type(error).__name__), message='Worker needs attention; durable receipts and unknown intents retained')
                 worker.update(phase='needs_attention', finished_at=time.time(), error=getattr(error, 'code', type(error).__name__))
                 raise
             finally:

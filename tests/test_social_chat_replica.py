@@ -362,6 +362,7 @@ class ReplicaBackfillTests(unittest.TestCase):
             logos = 0
 
             def authenticate(self): return {'account_id': self.account}
+            def list_jobs(self): return []
             def upload(self, path, request_id):
                 self.uploads += 1
                 return {'ids': ['job-source'], 'request_id': request_id}
@@ -422,6 +423,7 @@ class StagedSchedulingTests(unittest.TestCase):
                 self.analysis_done, self.errors = set(), set()
 
             def authenticate(self): return {'account_id': self.account}
+            def list_jobs(self): return []
             def upload(self, path, request_id):
                 job_id = 'job-' + path.stem
                 self.uploads.append(job_id)

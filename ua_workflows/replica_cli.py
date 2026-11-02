@@ -108,7 +108,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
             record = old
         else:
             record = old or {'identity': identity, 'request_id': secrets.token_hex(16)}
-            record['stage'] = 'upload_intent'
+            record.update(stage='upload_intent', dispatch_started_at=time.time())
             try:
                 checkpoint.put('uploads', key, record)
             except OSError:
@@ -117,7 +117,8 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
             try:
                 result = api.upload(path, record['request_id'])
             except ReplicaError as error:
-                record.update(stage='upload_unknown' if error.code == 'result_unknown' else 'upload_rejected', error=error.code)
+                record.update(stage='upload_unknown' if error.code == 'result_unknown' else 'upload_rejected', error=error.code,
+                              dispatch_finished_at=time.time())
                 try:
                     checkpoint.put('uploads', key, record)
                 except OSError:
@@ -130,7 +131,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
                     if error.code in {'authentication_required', 'account_changed'}:
                         stopped = True
                     raise
-        record.update(stage='uploaded', ids=result['ids'])
+        record.update(stage='uploaded', ids=result['ids'], dispatch_finished_at=time.time())
         try:
             checkpoint.put('uploads', key, record)
         except OSError:
@@ -156,49 +157,58 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
             'accepted': sum(item['ok'] for item in results), 'stopped': stopped}
 
 
-def logo_many(api, ids, checkpoint):
+def logo_many(api, ids, checkpoint, *, on_result=None):
     ids, results, stopped = selected_ids(ids), [], False
     options = api.smart_options()
     for job_id in ids:
-        if stopped:
-            results.append({'id': job_id, 'ok': False, 'code': 'not_submitted'})
-            continue
-        record = checkpoint.get('logos', job_id)
-        if record:
-            results.append({'id': job_id, 'ok': record['stage'] == 'logo_accepted', 'code': record['stage'], 'reused': True})
-            continue
         try:
-            job = api.job(job_id)
-            if job.get('source_kind') == 'playable':
-                results.append({'id': job_id, 'ok': False, 'code': 'playable_not_supported'})
+            if stopped:
+                results.append({'id': job_id, 'ok': False, 'code': 'not_submitted'})
                 continue
-            if (job.get('logo_replace_view') or {}).get('state') in {'replaced', 'no_logo'}:
-                results.append({'id': job_id, 'ok': True, 'code': 'already_done'})
-                continue
-            if step_state(job, 'analysis') != 'ready':
-                results.append({'id': job_id, 'ok': False, 'code': 'analysis_not_ready'})
-                continue
-            record = {'stage': 'logo_intent', 'options': options, 'revision': job['revision']}
-            try:
-                checkpoint.put('logos', job_id, record)
-            except OSError:
-                stopped = True
-                raise
-            result = api.smart_logo(job, options)
-            record.update(stage='logo_accepted', receipt=result)
-            checkpoint.put('logos', job_id, record)
-            results.append({'id': job_id, 'ok': True, 'code': 'accepted', 'receipt': result})
-        except Exception as error:
+            record = checkpoint.get('logos', job_id)
             if record:
-                record.update(stage='logo_unknown' if getattr(error, 'code', '') == 'result_unknown' else 'logo_needs_review',
-                              error=getattr(error, 'code', 'local_io_failed'))
+                results.append({'id': job_id, 'ok': record['stage'] == 'logo_accepted', 'code': record['stage'], 'reused': True})
+                continue
+            dispatched = False
+            try:
+                job = api.job(job_id)
+                if job.get('source_kind') == 'playable':
+                    results.append({'id': job_id, 'ok': False, 'code': 'playable_not_supported'})
+                    continue
+                if (job.get('logo_replace_view') or {}).get('state') in {'replaced', 'no_logo'}:
+                    results.append({'id': job_id, 'ok': True, 'code': 'already_done'})
+                    continue
+                if step_state(job, 'analysis') != 'ready':
+                    results.append({'id': job_id, 'ok': False, 'code': 'analysis_not_ready'})
+                    continue
+                record = {'stage': 'logo_intent', 'options': options, 'revision': job['revision']}
                 try:
                     checkpoint.put('logos', job_id, record)
                 except OSError:
                     stopped = True
-            if getattr(error, 'code', '') in {'result_unknown', 'authentication_required', 'account_changed'}:
-                stopped = True
-            results.append({'id': job_id, **error_result(error)})
+                    raise
+                dispatched = True
+                result = api.smart_logo(job, options)
+                record.update(stage='logo_accepted', receipt=result)
+                checkpoint.put('logos', job_id, record)
+                results.append({'id': job_id, 'ok': True, 'code': 'accepted', 'receipt': result})
+            except Exception as error:
+                if record:
+                    uncertain = getattr(error, 'code', '') == 'result_unknown' or (dispatched and isinstance(error, OSError))
+                    record.update(stage='logo_unknown' if uncertain else 'logo_needs_review',
+                                  error=getattr(error, 'code', 'local_io_failed'))
+                    try:
+                        checkpoint.put('logos', job_id, record)
+                    except OSError:
+                        stopped = True
+                    if uncertain:
+                        stopped = True
+                if getattr(error, 'code', '') in {'result_unknown', 'authentication_required', 'account_changed'}:
+                    stopped = True
+                results.append({'id': job_id, **error_result(error)})
+        finally:
+            if on_result is not None and results and results[-1]['id'] == job_id:
+                on_result(results[-1])
     return {'operation': 'smart_logo', 'results': results, 'selected': len(ids), 'stopped': stopped}
 
 
@@ -246,7 +256,7 @@ def decode_video(path):
         raise ReplicaError('invalid_media', 'Downloaded video failed full decoding')
 
 
-def download_many(api, ids, checkpoint, output, *, plan_only=False):
+def download_many(api, ids, checkpoint, output, *, plan_only=False, on_result=None):
     ids = selected_ids(ids)
     plan = api.download_plan(ids)
     if plan_only:
@@ -254,36 +264,41 @@ def download_many(api, ids, checkpoint, output, *, plan_only=False):
     output, results = Path(output).expanduser().resolve(), []
     for project in plan.get('projects', []):
         for file in project.get('files', []):
-            if file.get('text') is not None:
-                continue
-            address = urlsplit(urljoin(BASE_URL + '/', file.get('url', '')))
-            parts = address.path.split('/')
-            job_id = parts[3] if len(parts) >= 6 and parts[1:3] == ['api', 'jobs'] and parts[4] == 'files' else None
-            if job_id not in ids:
-                raise ReplicaError('invalid_media', 'Download plan contains an unselected task')
-            name = file.get('name')
-            if not isinstance(name, str) or Path(name).name != name or '\\' in name or Path(name).suffix.lower() not in {'.mp4', '.mov', '.webm', '.mkv'}:
-                raise ReplicaError('invalid_media', 'Download plan contains an unsupported filename')
-            key = hashlib.sha256(json.dumps([job_id, file['url'], name, file.get('bytes')]).encode()).hexdigest()
-            previous = checkpoint.get('downloads', key)
-            if previous:
-                saved = Path(previous['path'])
-                if saved.is_file() and saved.stat().st_size == previous['size'] and digest(saved) == previous['sha256']:
-                    results.append({'id': job_id, 'ok': True, **previous, 'reused': True})
-                    continue
-            destination = output / job_id / name
-            index = 2
-            while destination.exists():
-                destination = output / job_id / f'{Path(name).stem}_{index}{Path(name).suffix}'
-                index += 1
+            previous_count = len(results)
             try:
-                receipt = api.download(job_id, file, destination)
-                decode_video(destination)
-                receipt['full_decode_passed'] = True
-                checkpoint.put('downloads', key, receipt)
-                results.append({'id': job_id, 'ok': True, **receipt})
-            except Exception as error:
-                results.append({'id': job_id, 'name': name, **error_result(error)})
+                if file.get('text') is not None:
+                    continue
+                address = urlsplit(urljoin(BASE_URL + '/', file.get('url', '')))
+                parts = address.path.split('/')
+                job_id = parts[3] if len(parts) >= 6 and parts[1:3] == ['api', 'jobs'] and parts[4] == 'files' else None
+                if job_id not in ids:
+                    raise ReplicaError('invalid_media', 'Download plan contains an unselected task')
+                name = file.get('name')
+                if not isinstance(name, str) or Path(name).name != name or '\\' in name or Path(name).suffix.lower() not in {'.mp4', '.mov', '.webm', '.mkv'}:
+                    raise ReplicaError('invalid_media', 'Download plan contains an unsupported filename')
+                key = hashlib.sha256(json.dumps([job_id, file['url'], name, file.get('bytes')]).encode()).hexdigest()
+                previous = checkpoint.get('downloads', key)
+                if previous:
+                    saved = Path(previous['path'])
+                    if saved.is_file() and saved.stat().st_size == previous['size'] and digest(saved) == previous['sha256']:
+                        results.append({'id': job_id, 'ok': True, **previous, 'reused': True})
+                        continue
+                destination = output / job_id / name
+                index = 2
+                while destination.exists():
+                    destination = output / job_id / f'{Path(name).stem}_{index}{Path(name).suffix}'
+                    index += 1
+                try:
+                    receipt = api.download(job_id, file, destination)
+                    decode_video(destination)
+                    receipt['full_decode_passed'] = True
+                    checkpoint.put('downloads', key, receipt)
+                    results.append({'id': job_id, 'ok': True, **receipt})
+                except Exception as error:
+                    results.append({'id': job_id, 'name': name, **error_result(error)})
+            finally:
+                if on_result is not None and len(results) > previous_count:
+                    on_result(results[-1])
     return {'operation': 'download', 'results': results, 'saved': sum(x['ok'] for x in results),
             'skipped': plan.get('skipped', []), 'missing': plan.get('missing', 0)}
 

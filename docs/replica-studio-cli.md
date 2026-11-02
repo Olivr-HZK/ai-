@@ -170,7 +170,7 @@
 
 长批次可在`run`末尾加`--background`，日志为`worker.log`，进程及完成/待处理状态为`worker.json`，实时数量为`progress.json`。所有记录完成或明确异常后执行远端附件及其他字段核验，保存`verification.json`。`pause --run-dir ...`会在当前操作结束后暂停；上传时每文件之间检查暂停请求。`resume --run-dir ...`从同一scope和断点继续，不启动第二份worker；不同时启动多个处理进程。
 
-已完成和已入队任务沿原ID继续，不重置断点。未知上传仅核对原请求ID，未确认回执每5分钟再查，避免每轮阻塞其他任务；404仍不证明未提交，不能据此重传。需要按任务列表/历史反查时参见前文只读接口说明。已明确中断的智能Logo沿站点原“继续”机制最多恢复一次；未知生成不得当作中断重放。异常仍单独保留，未确认项不会被报告为成功。
+已完成和已入队任务沿原ID继续，不重置断点。未知上传先核对原请求ID并按下节规则自动反查，未确认回执默认每60秒再查，避免每轮阻塞其他任务；404仍不证明未提交，不能据此重传。需要按任务列表/历史反查时参见前文只读接口说明。已明确中断的智能Logo沿站点原“继续”机制最多恢复一次；未知生成不得当作中断重放。异常仍单独保留，未确认项不会被报告为成功。
 
 对`logo_unknown`可使用`reconcile-logos --run-dir ...`：只认证和GET原任务，有明确完成或接受证据才恢复状态，没有证据仍保持未知，不POST、不强制重做，也不改写活跃worker的CLI断点。响应保存在`logo-reconciliation/`。
 
@@ -182,3 +182,31 @@
 .venv/bin/python -m unittest discover -s tests -p 'test_replica*.py'
 .venv/bin/python -m unittest discover -s tests -p test_social_chat_replica.py
 ```
+
+## 异常恢复与超时告警
+
+串行分阶段顺序保持不变；以下恢复不会自动重传原片、强制重新生成、转码或改变服务端设置。
+
+- 飞书附件收到token后保持`feishu_uploaded`，先完成附件准备，再建立写表发送记录。一个附件上传网络中断会保留为`attachment_unknown`并告警，其余已确认token的结果继续交付。未知附件上传保留本地成品，不猜token、不自动重放媒体POST。
+- `write-audit/*-dispatch.json`记录版本、批次、逐行token/名称/大小，以及`prepared`、`dispatching`、`accepted`或`unknown`。只有匹配的新版`prepared`记录能证明尚未派发，恢复后复用原token进行首次写入；达到`dispatching`边界后的操作即使目标字段暂空也只读核对，不重放。旧意图缺少此证据时保留未知。断点及发送记录同时同步文件内容和目录项。
+- 写入后GET超时、代理连接中断或临时5xx在同一worker内等待恢复；重读原行发现匹配附件即可确认成功。GET鉴权刷新沿原规则，POST仍不自动重试。登录失效/账号改变需用户处理，会保存告警并停止新增业务动作。
+- 上传回执未知时先查原请求ID，仍未知则自动查当前任务列表。同一轮共用列表快照；只有唯一同名候选在原提交时间窗内，且通过原视频精确大小与SHA256核对、未绑定其他记录，才能关联找回；这种关联保留`original_receipt_confirmed=false`，不伪称原上传回执已恢复。候选原片通过文档规定的媒体GET流式核哈希，不另存副本。多候选不猜测，缺少原提交时间的历史意图不自动绑定；服务端已转换原片导致哈希无法一致时也保留未知并告警。没有结果不能证明未上传或未计费。
+- `logo_unknown`自动进入原任务只读核对。只有同Logo动作、更高revision及真实产物/明确运行证据才恢复下载或等待；旧revision、其他动作或没有证据均保持未知。主worker不重放生成；独立`reconcile-logos`入口继续保留，且不覆盖活跃worker的CLI断点。
+- 未知回执在有限窗口内自动只读核对，不阻止已确认任务继续交付。窗口耗尽仍保持未知、标为需要处理，不改成成功或处理失败；重新启动不会重置这段计时。没有可查token的`attachment_unknown`直接要求处理，不空转等待。
+
+可在`run`或`resume`覆盖超时参数，均为正的有限秒数，保存在运行目录`timeout-policy.json`供后台和重启复用：
+
+```sh
+.venv/bin/python -m ua_workflows.social_chat_replica run --run-dir data/replica-feishu-NEW --stall-timeout 900 --stage-timeout 7200 --unknown-timeout 900 --reconcile-interval 60
+```
+
+| 参数 | 默认 | 含义 |
+|---|---:|---|
+| `--stall-timeout` | 900秒 | 批次或在处理任务没有可见进展时告警 |
+| `--stage-timeout` | 7200秒 | 整个阶段超过时限告警；继续等待已有服务端任务 |
+| `--unknown-timeout` | 900秒 | 未知回执的自动只读核对窗口；耗尽后保留未知 |
+| `--reconcile-interval` | 60秒 | 未知回执的再次核对间隔 |
+
+告警写入`alerts.json`（当前告警）、`alerts.jsonl`（产生/解除事件）和stdout结构化事件；`health.json`保存阶段开始、最后进展和未知起始时间，`status`暴露`active_alerts`、`needs_attention`和`reconciliation_pending`。相同告警不重复刷屏，恢复进展后解除对应告警。成功提交、下载和附件交付逐项更新`progress.json`，不再等整批完成才刷新。重复查询时间、轮询错误和无实质变化的revision不算进展。
+
+超时不会取消云端任务、跳过仍在运行的任务或自动重新POST生成；整批仍受最慢任务影响。告警在有界HTTP调用之间检查，进程彻底退出或主机休眠时需外部巡检发现；CLI本身不创建调度、发送群聊或邮件。122项原回归之外，新增离线故障测试覆盖发送边界、附件中断隔离、迟到回执、候选身份/歧义、自动Logo找回、跨重启计时及告警解除，均禁止网络连接；不构成新的线上故障演练。

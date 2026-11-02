@@ -12,7 +12,7 @@ import re
 import stat
 import time
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 import requests
 
@@ -95,6 +95,13 @@ def save_private(path, value):
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(path)
+    # The dispatch journal must survive a crash after the rename and before a
+    # business POST. Sync the directory entry as well as the temporary contents.
+    directory = os.open(path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def media_url(value, job_id):
@@ -372,6 +379,31 @@ class ReplicaAPI:
             partial.unlink(missing_ok=True)
             raise
         return {'path': str(destination), 'name': name, 'size': size, 'sha256': sha.hexdigest()}
+
+    def source_matches(self, job_id, filename, expected_bytes, expected_sha256):
+        """Hash a candidate's documented original-media GET without storing a copy."""
+        if (not isinstance(filename, str) or Path(filename).name != filename or '\\' in filename
+                or filename in {'', '.', '..'} or '%' in filename or type(expected_bytes) is not int
+                or not 0 < expected_bytes <= 100 * 1024 * 1024
+                or not isinstance(expected_sha256, str) or not re.fullmatch(r'[a-f0-9]{64}', expected_sha256)):
+            raise ReplicaError('invalid_media', 'Invalid original-media identity')
+        address = media_url('/api/jobs/' + identifier(job_id) + '/files/' + quote(filename, safe=''), job_id)
+        sha, size = hashlib.sha256(), 0
+        deadline = time.monotonic() + 120
+        try:
+            with self.session.get(address, stream=True, timeout=(20, 180), allow_redirects=False) as response:
+                if response.status_code != 200:
+                    raise ReplicaError('read_failed', 'Candidate source could not be read', response.status_code)
+                for block in response.iter_content(1024 * 1024):
+                    if time.monotonic() > deadline:
+                        raise ReplicaError('read_failed', 'Candidate source verification deadline exceeded; no task selected')
+                    size += len(block)
+                    if size > expected_bytes:
+                        return False
+                    sha.update(block)
+        except requests.RequestException:
+            raise ReplicaError('read_failed', 'Candidate source read interrupted; no task selected') from None
+        return size == expected_bytes and sha.hexdigest() == expected_sha256
 
 
 def step_state(job, stage):
