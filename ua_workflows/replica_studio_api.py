@@ -7,7 +7,9 @@ No business-page automation, external browser-profile access, cookie export or p
 from __future__ import annotations
 
 import hashlib
+from email.utils import parsedate_to_datetime
 import json
+import math
 import os
 import re
 import stat
@@ -54,9 +56,26 @@ def validate_workflow_body(method, path, body):
 
 
 class ReplicaError(RuntimeError):
-    def __init__(self, code, message, status=None):
+    def __init__(self, code, message, status=None, *, retry_after=None, request_not_applied=False, retryable=False):
         super().__init__(message)
         self.code, self.status = code, status
+        self.retry_after = retry_after
+        self.request_not_applied = request_not_applied
+        self.retryable = retryable
+
+
+def retry_after_seconds(value, *, now=None):
+    """Accept Retry-After seconds or an HTTP date; ignore malformed values."""
+    if not isinstance(value, str):
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            seconds = parsedate_to_datetime(value).timestamp() - (time.time() if now is None else now)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return max(0, seconds) if math.isfinite(seconds) else None
 
 
 def identifier(value):
@@ -262,40 +281,65 @@ class ReplicaAPI:
                 if retry and attempt < 2:
                     self.wait(2 * (attempt + 1))
                     continue
-                raise ReplicaError('result_unknown' if write else 'read_failed', 'Replica request could not be confirmed') from None
-            if response.status_code in {401, 403}:
-                self.csrf = None
-                if self.device_auth and response.status_code == 403:
-                    message = 'Device-authorized request was denied'
-                    try:
-                        detail = response.json().get('detail')
-                    except (ValueError, TypeError, AttributeError):
-                        detail = None
-                    if isinstance(detail, str) and detail:
-                        for secret in (vars(self.session).get('_bearer'), self.csrf):
-                            if secret:
-                                detail = detail.replace(secret, '[redacted]')
-                        detail = re.sub(r'(?i)\bbearer\s+\S+', 'Bearer [redacted]', detail)
-                        message += ': ' + ''.join(c if c.isprintable() else ' ' for c in detail)[:400]
-                    raise ReplicaError('permission_denied', message, 403)
-                raise ReplicaError('authentication_required', 'Replica session is missing, expired or not authorized', response.status_code)
+                raise ReplicaError('result_unknown' if write and not safe_retry else 'read_failed', 'Replica request could not be confirmed') from None
+            if response.status_code in {401, 403, 429}:
+                raise self.response_error(response, write=write)
+            if response.status_code == 503 and write and not retry:
+                # Only an explicit server "not processed" contract can make
+                # an upload safe to retry. Generic 5xx remains unknown.
+                raise self.response_error(response, write=True)
             if response.status_code >= 500 and retry and attempt < 2:
+                hint = retry_after_seconds(response.headers.get('Retry-After'))
+                if hint is not None:
+                    # Let the scheduler persist the wait instead of sleeping
+                    # inside an HTTP call, so pause and other lanes can proceed.
+                    raise ReplicaError('read_failed', 'Replica service temporarily unavailable', response.status_code,
+                                       retry_after=hint)
                 self.wait(2 * (attempt + 1))
                 continue
             if not 200 <= response.status_code < 300:
-                raise ReplicaError('result_unknown' if write and response.status_code >= 500 else 'http_error',
-                                   f'Replica API returned HTTP {response.status_code}', response.status_code)
+                raise self.response_error(response, write=write and not safe_retry)
             try:
                 data = response.json()
             except (ValueError, TypeError):
-                raise ReplicaError('result_unknown' if write else 'read_failed', 'Replica response is not valid JSON') from None
+                raise ReplicaError('result_unknown' if write and not safe_retry else 'read_failed', 'Replica response is not valid JSON') from None
             if method == 'GET' and path in {'/api/jobs', '/api/deleted-projects', '/api/deleted-characters'}:
                 if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
                     raise ReplicaError('read_failed', 'Replica task list is not a JSON object array')
                 return data
             if not isinstance(data, dict):
-                raise ReplicaError('result_unknown' if write else 'read_failed', 'Replica response is not a JSON object')
+                raise ReplicaError('result_unknown' if write and not safe_retry else 'read_failed', 'Replica response is not a JSON object')
             return data
+
+    def response_error(self, response, *, write=False, media=False):
+        status = response.status_code
+        hint = retry_after_seconds(response.headers.get('Retry-After'))
+        try:
+            data = response.json()
+            detail = data.get('detail') if isinstance(data, dict) else None
+        except (ValueError, TypeError, AttributeError):
+            detail = None
+        if status in {401, 403}:
+            csrf, self.csrf = self.csrf, None
+            if self.device_auth and status == 403:
+                message = 'Device-authorized request was denied'
+                if isinstance(detail, str) and detail:
+                    for secret in (vars(self.session).get('_bearer'), csrf):
+                        if secret:
+                            detail = detail.replace(secret, '[redacted]')
+                    detail = re.sub(r'(?i)\bbearer\s+\S+', 'Bearer [redacted]', detail)
+                    message += ': ' + ''.join(c if c.isprintable() else ' ' for c in detail)[:400]
+                return ReplicaError('permission_denied', message, status)
+            return ReplicaError('authentication_required', 'Replica session is missing, expired or not authorized', status)
+        if status == 429:
+            return ReplicaError('rate_limited', 'Replica rate limit; wait before further requests', status,
+                                retry_after=hint, request_not_applied=write)
+        if (status == 503 and write and isinstance(detail, str) and '工作区正在准备' in detail
+                and 'Retry-After' in response.headers):
+            return ReplicaError('temporarily_rejected', 'Workspace preparing; server explicitly did not process this request',
+                                status, retry_after=hint, request_not_applied=True)
+        return ReplicaError('read_failed' if media else 'result_unknown' if write and status >= 500 else 'http_error',
+                            f'Replica API returned HTTP {status}', status, retry_after=hint)
 
     def authenticate(self):
         if self.device_auth:
@@ -354,7 +398,8 @@ class ReplicaAPI:
             result = self.request('GET', '/api/source-uploads/' + upload_id)
         except ReplicaError as error:
             if error.status == 404 or error.status == 503 or error.code == 'read_failed':
-                raise ReplicaError('result_unknown', 'Original upload cannot yet be confirmed; no repeated upload', error.status) from None
+                raise ReplicaError('result_unknown', 'Original upload cannot yet be confirmed; no repeated upload', error.status,
+                                   retry_after=error.retry_after) from None
             raise
         return self.validate_upload(result, upload_id)
 
@@ -463,17 +508,17 @@ class ReplicaAPI:
         try:
             with self.session.get(url, stream=True, timeout=(20, 180), allow_redirects=False) as response:
                 if response.status_code != 200:
-                    raise ReplicaError('read_failed', f'Replica media returned HTTP {response.status_code}', response.status_code)
+                    raise self.response_error(response, media=True)
                 with partial.open('wb') as stream:
                     os.chmod(partial, 0o600)
                     for block in response.iter_content(1024 * 1024):
                         size += len(block)
                         if size > expected:
-                            raise ReplicaError('invalid_media', 'Media exceeds declared byte size')
+                            raise ReplicaError('invalid_media', 'Media exceeds declared byte size', retryable=True)
                         sha.update(block)
                         stream.write(block)
             if size != expected:
-                raise ReplicaError('invalid_media', 'Media byte size does not match the download plan')
+                raise ReplicaError('invalid_media', 'Media byte size does not match the download plan', retryable=True)
             partial.replace(destination)
         except Exception:
             partial.unlink(missing_ok=True)
@@ -504,7 +549,7 @@ class ReplicaAPI:
         try:
             with self.session.get(address, stream=True, timeout=(20, 180), allow_redirects=False) as response:
                 if response.status_code != 200:
-                    raise ReplicaError('read_failed', 'Candidate source could not be read', response.status_code)
+                    raise self.response_error(response, media=True)
                 for block in response.iter_content(1024 * 1024):
                     if time.monotonic() > deadline:
                         raise ReplicaError('read_failed', 'Candidate source verification deadline exceeded; no task selected')

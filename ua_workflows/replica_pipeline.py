@@ -8,12 +8,13 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 import copy
+import json
 import threading
 
 import requests
 
-from ua_workflows.replica_recovery import UNKNOWN
-from ua_workflows.replica_studio_api import ReplicaError
+from ua_workflows.replica_recovery import UNKNOWN, retry_delay
+from ua_workflows.replica_studio_api import ReplicaError, save_private
 
 
 class AsyncPipeline:
@@ -31,6 +32,25 @@ class AsyncPipeline:
         self._loop = None
         self._events = {}
         self._role = 'control'
+        retry_path = self.state.root / 'service-retry.json'
+        self._lane_retries = json.loads(retry_path.read_text()) if retry_path.exists() else {}
+
+    def _defer_lane(self, error, *, role=None):
+        role = self._role if role is None else role
+        with self._guard:
+            old = self._lane_retries.get(role, {})
+            attempt = old.get('attempts', 0) + 1
+            self._lane_retries[role] = {
+                'attempts': attempt, 'retry_at': self.now() + retry_delay(attempt, getattr(error, 'retry_after', None)),
+                'code': getattr(error, 'code', 'read_failed'), 'http_status': getattr(error, 'status', None)}
+            save_private(self.state.root / 'service-retry.json', self._lane_retries)
+        self.health.alert(role + '_network_wait', message='Temporary service error; durable cooldown before retry')
+
+    def _clear_lane_retry(self):
+        with self._guard:
+            if self._lane_retries.pop(self._role, None) is not None:
+                save_private(self.state.root / 'service-retry.json', self._lane_retries)
+        self.health.clear(self._role + '_network_wait')
 
     def record_available(self, record_id):
         with self._guard:
@@ -92,12 +112,16 @@ class AsyncPipeline:
     def _check_submission(result):
         for item in result.get('results', []):
             code = item.get('reason') or item.get('code')
-            if code in {'authentication_required', 'account_changed', 'permission_denied', 'read_failed'}:
-                raise ReplicaError(code, 'Pipeline submission waiting; original identities retained')
+            if code in {'authentication_required', 'account_changed', 'permission_denied', 'read_failed',
+                        'rate_limited', 'temporarily_rejected'}:
+                raise ReplicaError(code, 'Pipeline submission waiting; original identities retained', item.get('http_status'),
+                                   retry_after=item.get('retry_after'))
 
     def _upload_once(self):
         for item in self.state.all():
             if item['stage'] not in {'queued', 'source_ready'}:
+                continue
+            if self.now() < item.get('upload_check_after', 0):
                 continue
             with self._claim(item['record_id'], {'queued', 'source_ready'}) as value:
                 if value is None:
@@ -115,7 +139,6 @@ class AsyncPipeline:
         self.reconcile_uploads()
         self.reconcile_unknown_logos()
         self.reconcile_writes()
-        self.continue_interrupted_logos()
         options = None
         # Each completed record advances before the next record is polled.
         for item in self.state.all():
@@ -151,7 +174,7 @@ class AsyncPipeline:
                 if value['stage'] == 'logo_ready':
                     self.download_all([rid])
                     value = self.state.get(rid)
-                    if value['stage'] == 'logo_ready':
+                    if value['stage'] == 'logo_ready' and not value.get('download_check_after'):
                         value['download_check_after'] = self.now() + self.health.policy['reconcile_interval']
                         self.state.put(rid, value)
                 if value['stage'] in {'downloaded', 'feishu_uploaded'} and not self.stop_requested():
@@ -176,6 +199,12 @@ class AsyncPipeline:
                 self._outcome['paused'] = True
                 self._request_stop()
                 break
+            with self._guard:
+                remaining = self._lane_retries.get(role, {}).get('retry_at', 0) - self.now()
+            if remaining > 0:
+                # Other lanes' progress must not wake a rate-limited lane early.
+                await asyncio.sleep(min(remaining, 1))
+                continue
             event = self._events[role]
             event.clear()
             retry = False
@@ -191,13 +220,14 @@ class AsyncPipeline:
                 finally:
                     with self._guard:
                         self._running.discard(role)
-                self.health.clear(role + '_network_wait')
+                if worked:
+                    lane._clear_lane_retry()
             except (requests.Timeout, requests.ConnectionError) as error:
-                self.health.alert(role + '_network_wait', message='Network interrupted; resume only from durable receipts')
+                self._defer_lane(error, role=role)
                 worked, retry = False, True
             except ReplicaError as error:
-                if error.code == 'read_failed' or (error.status and error.status >= 500):
-                    self.health.alert(role + '_network_wait', message='Read unavailable; no business POST replay')
+                if error.code in {'read_failed', 'rate_limited', 'temporarily_rejected'} or (error.status and error.status >= 500):
+                    self._defer_lane(error, role=role)
                     worked, retry = False, True
                 else:
                     self.health.alert(error.code, message='Pipeline needs attention; in-flight requests will finish before exit')
@@ -214,6 +244,8 @@ class AsyncPipeline:
                 break
             if role != 'control' and worked:
                 continue
+            if retry:
+                continue  # The durable cooldown at the top controls this wait.
             try:
                 await asyncio.wait_for(event.wait(), timeout=30 if retry else self.poll_interval)
             except asyncio.TimeoutError:

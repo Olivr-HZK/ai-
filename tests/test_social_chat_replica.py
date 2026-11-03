@@ -171,23 +171,25 @@ class ReplicaBackfillTests(unittest.TestCase):
         runner.api.smart_logo.return_value = {'id': 'job-1', 'status': 'queued'}
         return runner
 
-    def test_confirmed_interrupted_logo_continues_once_with_same_settings(self):
+    def test_confirmed_interrupted_logo_remains_failed_without_continuation(self):
         runner = self.interrupted_runner()
-        runner.continue_interrupted_logos()
-        runner.continue_interrupted_logos()
-        runner.api.smart_logo.assert_called_once()
-        self.assertEqual(runner.api.smart_logo.call_args.args[1], {'logo_mode': 'smart', 'use_defaults': True})
-        self.assertEqual(self.state.get('rec1')['stage'], 'logo_accepted')
+        runner.poll()
+        runner.poll()
+        runner.api.smart_logo.assert_not_called()
+        self.assertEqual(self.state.get('rec1')['stage'], 'failed')
 
     def test_unknown_logo_post_is_not_replayed_as_continuation(self):
         runner = self.interrupted_runner('logo_unknown')
-        runner.continue_interrupted_logos()
+        runner.poll()
         runner.api.smart_logo.assert_not_called()
 
-    def test_interrupted_logo_settings_cannot_change(self):
+    def test_newly_interrupted_logo_is_skipped_even_with_pending_settings(self):
         runner = self.interrupted_runner()
         runner.api.job.return_value['logo_replace_view']['pending']['settings']['remove_watermarks'] = True
-        with self.assertRaises(ValueError): runner.continue_interrupted_logos()
+        self.state.put('rec1', {'record_id': 'rec1', 'stage': 'logo_accepted', 'job_id': 'job-1'})
+        runner.poll()
+        runner.poll()
+        self.assertEqual(self.state.get('rec1')['stage'], 'failed')
         runner.api.smart_logo.assert_not_called()
 
     def test_completed_without_result_file_is_not_written_as_replica(self):

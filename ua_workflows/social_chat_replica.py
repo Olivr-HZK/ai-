@@ -18,7 +18,7 @@ import sys
 from ua_workflows import social_chat_browser_daily as daily
 from ua_workflows.replica_studio_api import ReplicaAPI, ReplicaError, digest, save_private, step_state
 from ua_workflows.replica_cli import Checkpoint, operation_lock, upload_many, logo_many, download_many
-from ua_workflows.replica_recovery import RunHealth, UNKNOWN, find_uploaded_source, timeout_policy
+from ua_workflows.replica_recovery import RunHealth, UNKNOWN, find_uploaded_source, timeout_policy, retry_delay
 from ua_workflows.replica_pipeline import AsyncPipeline
 from ua_workflows.xhs_daily import upload_attachment
 
@@ -387,12 +387,14 @@ def reconcile_logos(state, api=None, *, checkpoint=None, clock=time.time, respec
         try:
             job = api.job(job_id)
         except ReplicaError as error:
-            if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
+            if error.code in {'authentication_required', 'account_changed', 'permission_denied', 'rate_limited'}:
                 raise
-            value.update(logo_check_after=clock() + interval, reconcile_error=error.code)
+            value.update(logo_check_after=clock() + max(interval, error.retry_after or 0), reconcile_error=error.code)
             state.put(value['record_id'], value)
             if on_progress is not None:
                 on_progress()
+            if error.status and error.status >= 500:
+                raise
             results.append({'record_id': value['record_id'], 'job_id': job_id, 'stage': value['stage'], 'read_error': error.code})
             continue
         require(job.get('id') == job_id, 'Logo reconciliation task identity mismatch')
@@ -555,9 +557,14 @@ class Runner:
             try:
                 result = self.api.upload_status(prior['request_id'])
             except ReplicaError as error:
-                if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
+                if error.code in {'authentication_required', 'account_changed', 'permission_denied', 'rate_limited'}:
                     raise
                 value.update(stage='upload_unknown', error=error.code, request_id=prior['request_id'])
+                if error.status and error.status >= 500:
+                    interval = self.health.policy['reconcile_interval'] if hasattr(self, 'health') else 60
+                    value['upload_check_after'] = self.now() + max(interval, error.retry_after or 0)
+                    self.state.put(value['record_id'], value)
+                    raise
                 if error.code == 'result_unknown':
                     claimed = {v['job_id'] for v in self.state.all() if v.get('job_id')}
                     try:
@@ -567,7 +574,7 @@ class Runner:
                         save_private(self.state.root / 'upload-reconciliation' / (value['record_id'] + '.json'),
                                      {'checked_at': self.now(), 'original_request_id': prior['request_id'], **proof})
                     except ReplicaError as lookup_error:
-                        if lookup_error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
+                        if lookup_error.code in {'authentication_required', 'account_changed', 'permission_denied', 'rate_limited'}:
                             raise
                         value['reconcile_error'] = lookup_error.code
                 interval = self.health.policy['reconcile_interval'] if hasattr(self, 'health') else 60
@@ -584,45 +591,6 @@ class Runner:
             self.state.put(value['record_id'], value)
             if hasattr(self, 'health'):
                 self.observe(self.health.data.get('phase', 'reconcile_unknown'))
-
-    def continue_interrupted_logos(self):
-        # The site's Continue button uses this same action with pending.settings,
-        # force_new=false. Only a confirmed server interruption is eligible;
-        # an unknown POST is never replayed by this path.
-        for value in self.state.all():
-            if self.stop_requested():
-                break
-            if not self.record_available(value['record_id']):
-                continue
-            if value['stage'] != 'failed' or value.get('last_status') != 'interrupted' or not value.get('job_id'):
-                continue
-            job_id = value['job_id']
-            prior = self.checkpoint.get('logos', job_id)
-            if not prior or prior['stage'] != 'logo_accepted' or prior.get('continuation'):
-                continue
-            job = self.api.job(job_id)
-            view = job.get('logo_replace_view') or {}
-            pending = view.get('pending') or {}
-            options = pending.get('settings') or {}
-            if job.get('status') != 'interrupted' or job.get('last_action') != 'logo_replace' or pending.get('status') != 'interrupted' or options.get('logo_mode') != 'smart':
-                continue
-            require(all(prior['options'].get(key) == item for key, item in options.items()), 'Interrupted Logo settings differ from original intent')
-            prior['continuation'] = {'stage': 'intent', 'revision': job['revision'], 'options': options}
-            self.checkpoint.put('logos', job_id, prior)
-            value['stage'] = 'logo_submitting'
-            self.state.put(value['record_id'], value)
-            try:
-                receipt = self.api.smart_logo(job, {**options, 'use_defaults': True})
-                prior['continuation'].update(stage='accepted', receipt=receipt)
-                self.checkpoint.put('logos', job_id, prior)
-                value.update(stage='logo_accepted')
-                value.pop('error', None)
-            except ReplicaError as error:
-                prior['continuation'].update(stage='unknown', error=error.code)
-                self.checkpoint.put('logos', job_id, prior)
-                value.update(stage='logo_unknown', error=error.code)
-                self.submit_paused = True
-            self.state.put(value['record_id'], value)
 
     def reconcile_writes(self):
         for value in self.state.all():
@@ -672,10 +640,13 @@ class Runner:
         values = [value for value in self.state.all() if value['stage'] in {'uploaded', 'logo_accepted', 'logo_submitting'}
                   and (selected is None or value['record_id'] in selected)]
         for value in values:
+            if self.now() < value.get('poll_check_after', 0):
+                continue
             try:
                 job = self.api.job(value['job_id'])
                 require(job.get('id') == value['job_id'], 'Replica polling task identity changed')
                 value.pop('poll_error', None)
+                value.pop('poll_check_after', None)
                 stage = 'analysis' if value['stage'] == 'uploaded' else 'logo'
                 condition = step_state(job, stage)
                 if value['stage'] == 'logo_submitting':
@@ -720,9 +691,14 @@ class Runner:
                 if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                     self.submit_paused = True
                 value['poll_error'] = error.code
+                if error.code in {'read_failed', 'rate_limited'} or (error.status and error.status >= 500):
+                    value['poll_check_after'] = self.now() + retry_delay(1, error.retry_after)
                 self.state.put(value['record_id'], value)
                 if hasattr(self, 'health'):
                     self.observe(self.health.data.get('phase', 'wait_all_analyses'))
+                if (error.code in {'authentication_required', 'account_changed', 'permission_denied', 'rate_limited', 'read_failed'}
+                        or (error.status and error.status >= 500)):
+                    raise
 
     def upload_all(self, record_ids=None):
         """Prepare each missing source just in time, then submit without a job cap."""
@@ -734,6 +710,8 @@ class Runner:
                 if self.submit_paused or self.stop_requested():
                     break
                 if value['stage'] not in {'queued', 'source_ready'}:
+                    continue
+                if self.now() < value.get('upload_check_after', 0):
                     continue
                 if selected is not None and value['record_id'] not in selected:
                     continue
@@ -762,14 +740,19 @@ class Runner:
             if item.get('ok'):
                 value.update(stage='uploaded', job_id=item['ids'][0], request_id=item['request_id'])
                 value.pop('error', None)
-            elif item.get('code') == 'not_submitted':
+            elif item.get('code') in {'not_submitted', 'retry_wait'}:
                 value['stage'] = 'source_ready'
+                if item.get('retry_after') is not None:
+                    value['upload_check_after'] = self.now() + item['retry_after']
             else:
                 key = hashlib.sha256(item['path'].encode()).hexdigest()
                 prior = self.checkpoint.get('uploads', key) or {}
-                uncertain = item.get('code') == 'result_unknown' or prior.get('stage') in {'upload_intent', 'upload_unknown'}
-                value.update(stage='upload_unknown' if uncertain else 'failed',
-                             error=item.get('code'))
+                if prior.get('stage') == 'upload_retry' and prior.get('request_not_applied'):
+                    value.update(stage='source_ready', upload_check_after=prior['retry_at'],
+                                 error=item.get('code'), request_id=prior['request_id'])
+                else:
+                    uncertain = item.get('code') == 'result_unknown' or prior.get('stage') in {'upload_intent', 'upload_unknown'}
+                    value.update(stage='upload_unknown' if uncertain else 'failed', error=item.get('code'))
             self.state.put(value['record_id'], value)
             if item.get('code') in {'not_submitted', 'result_unknown', 'authentication_required', 'account_changed', 'permission_denied', 'local_io_failed'}:
                 self.submit_paused = True
@@ -820,7 +803,11 @@ class Runner:
 
     def download_all(self, record_ids=None):
         selected = set(record_ids) if record_ids is not None else None
-        values = [value for value in self.state.all() if value['stage'] == 'logo_ready' and (selected is None or value['record_id'] in selected)]
+        values = [value for value in self.state.all() if value['stage'] == 'logo_ready'
+                  and self.now() >= value.get('download_check_after', 0)
+                  and (selected is None or value['record_id'] in selected)]
+        if not values:
+            return
         by_id = {value['job_id']: value for value in values}
 
         def downloaded(item):
@@ -848,11 +835,24 @@ class Runner:
             files = [item for item in result['results'] if item['id'] == value['job_id'] and item.get('ok')]
             if len(files) == 1:
                 value.update(stage='downloaded', output={k: files[0][k] for k in ('path', 'name', 'size', 'sha256', 'full_decode_passed')})
+                value.pop('download_check_after', None)
+                value.pop('error', None)
             else:
                 value['download_attempts'] = value.get('download_attempts', 0) + 1
-                if value['download_attempts'] >= 3:
-                    value.update(stage='failed', error='Replica download could not be verified')
+                failure = next((item for item in result['results'] if item['id'] == value['job_id']), {})
+                code, status = failure.get('code'), failure.get('http_status')
+                value.update(error=code or 'Replica download plan contains no result', download_http_status=status)
+                temporary = (failure.get('retryable') is True
+                             or code in {'read_failed', 'rate_limited'} and (status is None or status >= 500 or status == 429)
+                             or status is not None and status >= 500)
+                if temporary or code in {'authentication_required', 'permission_denied', 'account_changed'}:
+                    value['download_check_after'] = self.now() + retry_delay(value['download_attempts'], failure.get('retry_after'))
+                else:
+                    value['stage'] = 'needs_review' if code in {'invalid_media', 'local_io_failed'} else 'failed'
             self.state.put(value['record_id'], value)
+            if not files and code in {'authentication_required', 'permission_denied', 'account_changed', 'rate_limited'}:
+                raise ReplicaError(code, 'Result delivery waiting; verified task and file identities retained', status,
+                                   retry_after=failure.get('retry_after'))
 
     def tick(self):
         if (self.state.root / 'pause-requested').exists():
@@ -863,7 +863,7 @@ class Runner:
             self.submit_paused = True
             self.health.alert(error.code, message='Replica session unavailable; no new business action submitted')
             summary = self.observe(self.health.data.get('phase', 'initialization_wait'))
-            return {**summary, 'health_error': error.code}
+            return {**summary, 'health_error': error.code, 'retry_after': error.retry_after}
         self.submit_paused = False
         self.observe(self.health.data.get('phase', 'initialization'))
         for code in ('authentication_required', 'account_changed', 'permission_denied'):
@@ -885,7 +885,6 @@ class Runner:
             self.observe(phase)
             self.submit_all_logos()
         else:
-            self.continue_interrupted_logos()
             values = self.state.all()
             if any(value['stage'] in {'logo_accepted', 'logo_submitting'} for value in values):
                 phase = 'wait_all_logos'
@@ -923,10 +922,12 @@ class Runner:
                     self.health.alert('network_wait', message='Transport interrupted; resume from durable receipts, never replay uncertain POSTs')
                     summary = {**self.observe(self.health.data.get('phase', 'service_wait')), 'health_error': 'read_failed'}
                 except ReplicaError as error:
-                    if error.code not in {'read_failed', 'authentication_required', 'account_changed', 'permission_denied'} and not (error.status and error.status >= 500):
+                    if error.code not in {'read_failed', 'authentication_required', 'account_changed', 'permission_denied',
+                                           'rate_limited', 'temporarily_rejected'} and not (error.status and error.status >= 500):
                         raise
                     self.health.alert(error.code, message='HTTP workflow waiting; business write intents retained')
-                    summary = {**self.observe(self.health.data.get('phase', 'service_wait')), 'health_error': error.code}
+                    summary = {**self.observe(self.health.data.get('phase', 'service_wait')), 'health_error': error.code,
+                               'retry_after': error.retry_after}
                 if summary.get('pause_requested') or (summary['all_terminal'] and not self.health.unknown_pending(self.state.all())):
                     if summary['all_terminal'] and not any(v['stage'] in UNKNOWN for v in self.state.all()):
                         summary = self.observe('complete')
@@ -934,6 +935,7 @@ class Runner:
                 if summary.get('health_error') in {'authentication_required', 'account_changed', 'permission_denied'}:
                     return summary
                 delay = 30 if summary.get('health_error') else 8
+                delay = max(delay, summary.get('retry_after') or 0)
                 if summary['all_terminal'] and summary.get('reconciliation_pending'):
                     delay = min(30, self.health.policy['reconcile_interval'])
                 self.wait(delay)
@@ -1002,21 +1004,35 @@ def main():
             save_private(state.root / 'worker.json', worker)
             try:
                 while True:
+                    retry_path = state.root / 'initialization-retry.json'
+                    initialization = json.loads(retry_path.read_text()) if retry_path.exists() else {}
+                    remaining = initialization.get('retry_at', 0) - time.time()
+                    if remaining > 0:
+                        if (state.root / 'pause-requested').exists():
+                            result = state.summary(pause_requested=True)
+                            break
+                        time.sleep(min(30, remaining))
+                        continue
                     try:
                         scheduling_path = state.root / 'scheduling.json'
                         mode = json.loads(scheduling_path.read_text()).get('mode') if scheduling_path.exists() else 'pipeline'
                         require(mode in {'pipeline', 'batch'}, 'Invalid scheduling mode')
                         runner_type = PipelineRunner if mode == 'pipeline' else Runner
-                        result = runner_type(state, timeouts=policy).run()
+                        runner = runner_type(state, timeouts=policy)
+                        if initialization:
+                            save_private(retry_path, {'retry_at': 0, 'attempts': 0, 'recovered_at': time.time()})
+                        result = runner.run()
                         break
                     except ReplicaError as error:
-                        if error.code != 'read_failed' and not (error.status and error.status >= 500):
+                        if error.code not in {'read_failed', 'rate_limited', 'temporarily_rejected'} and not (error.status and error.status >= 500):
                             raise
+                        attempt = initialization.get('attempts', 0) + 1
+                        save_private(retry_path, {'retry_at': time.time() + retry_delay(attempt, error.retry_after),
+                                                  'attempts': attempt, 'code': error.code, 'http_status': error.status})
                         print(json.dumps({'phase': 'service_wait', 'health_error': error.code, **state.summary()}, ensure_ascii=False), flush=True)
                         health = RunHealth(state.root, policy)
                         health.alert(error.code, message='Initialization read failed; no business action replayed')
                         health.observe(health.data.get('phase', 'initialization_wait'), state.all())
-                        time.sleep(30)
                 if result['all_terminal']:
                     for attempt in range(3):
                         try:

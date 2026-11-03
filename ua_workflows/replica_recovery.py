@@ -18,6 +18,14 @@ UNKNOWN = {'upload_unknown', 'logo_unknown', 'write_unknown', 'attachment_unknow
 WATCHED = UNKNOWN | {'uploaded', 'logo_accepted', 'logo_submitting', 'write_intent', 'feishu_upload_intent'}
 
 
+def retry_delay(attempt, hint=None):
+    """Bound local backoff while honoring a longer server Retry-After."""
+    delay = min(60, 2 ** min(max(1, attempt), 6))
+    if isinstance(hint, (int, float)) and math.isfinite(hint) and hint >= 0:
+        delay = max(delay, hint)
+    return delay
+
+
 def synchronized(method):
     @wraps(method)
     def locked(self, *args, **kwargs):
@@ -92,11 +100,14 @@ class RunHealth:
                      'unknown_since': (old.get('unknown_since') if old and old.get('unknown_since') is not None else now)
                      if value['stage'] in UNKNOWN else None}
             self.data['records'][rid] = entry
-            if phase == 'pipeline' and value['stage'] in WATCHED and now - entry['stage_started_at'] >= self.policy['stage_timeout']:
+            watched = (value['stage'] in WATCHED
+                       or value['stage'] == 'source_ready' and value.get('upload_check_after') is not None
+                       or value['stage'] == 'logo_ready' and value.get('download_attempts', 0) > 0)
+            if phase == 'pipeline' and watched and now - entry['stage_started_at'] >= self.policy['stage_timeout']:
                 self.alert('record_stage_timeout', record_id=rid, message='Task stage deadline exceeded; no generation replay', now=now)
             else:
                 self.clear('record_stage_timeout', rid)
-            if value['stage'] in WATCHED and now - entry['last_progress_at'] >= self.policy['stall_timeout']:
+            if watched and now - entry['last_progress_at'] >= self.policy['stall_timeout']:
                 self.alert('record_stalled', record_id=rid, message='No observable task progress; no business request will be replayed', now=now)
             else:
                 self.clear('record_stalled', rid)

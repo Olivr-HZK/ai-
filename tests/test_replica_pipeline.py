@@ -276,17 +276,17 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_uploads_continue_without_inflight_limit(self):
         # Extend the offline scope beyond the historical 15-task cap.
-        rows=[fixtures.row('rec'+str(n)) for n in range(20)]
+        rows=[fixtures.row('rec'+str(n)) for n in range(100)]
         save_private(self.root/'scope.json',flow.prepare_rows(rows,fixtures.SCHEMA,'2026-10-29'))
         state=flow.State(self.root)
         for row in rows:
             rid=row['record_id'];path=self.root/(rid+'.mp4');path.write_bytes(b'src')
             state.put(rid,{'record_id':rid,'stage':'source_ready','source_path':str(path),'source_sha256':digest(path)})
         self.state=state;self.runner=flow.PipelineRunner(state,api_factory=self.backend.factory,feishu=fixtures.Feishu(rows),poll_interval=.01)
-        self.start();await self.until(lambda:len(self.backend.uploads)==20)
+        self.start();await self.until(lambda:len(self.backend.uploads)==100)
         save_private(self.root/'pause-requested',{'requested':True});self.runner._events['control'].set()
         await asyncio.wait_for(self.task,8)
-        self.assertEqual(len(set(self.backend.uploads)),20)
+        self.assertEqual(len(set(self.backend.uploads)),100)
         self.assertEqual(self.backend.max_uploads,1)
 
     async def test_changed_lane_account_stops_before_source_submission(self):

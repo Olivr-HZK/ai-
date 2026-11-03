@@ -16,6 +16,8 @@ import threading
 import time
 from urllib.parse import urljoin, urlsplit
 
+import requests
+
 from ua_workflows.replica_studio_api import (
     BASE_URL, ReplicaAPI, ReplicaError, digest, identifier, save_private, step_state,
 )
@@ -58,7 +60,16 @@ def operation_lock(path):
 
 def error_result(error):
     if isinstance(error, ReplicaError):
-        return {'ok': False, 'code': error.code, 'message': str(error), 'http_status': error.status}
+        value = {'ok': False, 'code': error.code, 'message': str(error), 'http_status': error.status}
+        if error.retry_after is not None:
+            value['retry_after'] = error.retry_after
+        if error.request_not_applied:
+            value['request_not_applied'] = True
+        if error.retryable:
+            value['retryable'] = True
+        return value
+    if isinstance(error, requests.RequestException):
+        return {'ok': False, 'code': 'read_failed', 'message': 'Media transport interrupted'}
     if isinstance(error, OSError):
         return {'ok': False, 'code': 'local_io_failed', 'message': 'Local file operation failed'}
     return {'ok': False, 'code': 'invalid_input', 'message': 'Input or response could not be validated'}
@@ -97,19 +108,31 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
                 auth = api.authenticate()
             except ReplicaError as error:
                 stopped = True
-                if error.code in {'read_failed', 'authentication_required', 'account_changed', 'permission_denied'}:
-                    return {'ok': False, 'path': value, 'code': 'not_submitted', 'reason': error.code}
+                if error.code in {'read_failed', 'authentication_required', 'account_changed', 'permission_denied',
+                                  'rate_limited', 'temporarily_rejected'}:
+                    return {**error_result(error), 'path': value, 'code': 'not_submitted', 'reason': error.code}
                 raise
             if auth['account_id'] != checkpoint.account:
                 stopped = True
                 raise ReplicaError('account_changed', 'Upload account changed')
-        if old and old.get('stage') != 'upload_not_submitted':
+        retryable = old and old.get('stage') == 'upload_retry' and old.get('request_not_applied') is True
+        if retryable and time.time() < old.get('retry_at', 0):
+            return {'ok': False, 'path': value, 'code': 'retry_wait',
+                    'retry_after': old['retry_at'] - time.time(), 'request_not_applied': True}
+        if old and old.get('stage') != 'upload_not_submitted' and not retryable:
             # A previous intent always uses a read-only reconciliation; no second POST is sent.
             result = api.upload_status(old['request_id'])
             record = old
         else:
             record = old or {'identity': identity, 'request_id': secrets.token_hex(16)}
-            record.update(stage='upload_intent', dispatch_started_at=time.time())
+            if retryable:
+                record.setdefault('rejected_attempts', []).append({k: record.get(k) for k in
+                    ('dispatch_started_at', 'dispatch_finished_at', 'error', 'http_status', 'request_not_applied')})
+            record.update(stage='upload_intent', dispatch_started_at=time.time(),
+                          attempts=record.get('attempts', 0) + 1)
+            # Old rejection proof cannot authorize replay of this new dispatch.
+            record.pop('request_not_applied', None)
+            record.pop('retry_at', None)
             try:
                 checkpoint.put('uploads', key, record)
             except OSError:
@@ -118,8 +141,13 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
             try:
                 result = api.upload(path, record['request_id'])
             except ReplicaError as error:
-                record.update(stage='upload_unknown' if error.code == 'result_unknown' else 'upload_rejected', error=error.code,
+                safe_retry = error.request_not_applied and error.code in {'rate_limited', 'temporarily_rejected'}
+                record.update(stage='upload_retry' if safe_retry else 'upload_unknown' if error.code == 'result_unknown' else 'upload_rejected', error=error.code,
+                              http_status=error.status,
                               dispatch_finished_at=time.time())
+                if safe_retry:
+                    from ua_workflows.replica_recovery import retry_delay
+                    record.update(request_not_applied=True, retry_at=time.time() + retry_delay(record['attempts'], error.retry_after))
                 try:
                     checkpoint.put('uploads', key, record)
                 except OSError:
@@ -129,7 +157,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
                     stopped = True
                     result = api.upload_status(record['request_id'])
                 else:
-                    if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
+                    if error.code in {'authentication_required', 'account_changed', 'permission_denied', 'rate_limited', 'temporarily_rejected'}:
                         stopped = True
                     raise
         record.update(stage='uploaded', ids=result['ids'], dispatch_finished_at=time.time())
@@ -148,7 +176,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
         try:
             item = upload_one(value)
         except Exception as error:
-            if isinstance(error, ReplicaError) and error.code in {'result_unknown', 'authentication_required', 'account_changed', 'permission_denied'}:
+            if isinstance(error, ReplicaError) and error.code in {'result_unknown', 'authentication_required', 'account_changed', 'permission_denied', 'rate_limited', 'temporarily_rejected'}:
                 stopped = True
             item = {'path': value, **error_result(error)}
         results.append(item)
@@ -204,7 +232,7 @@ def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
                         stopped = True
                     if uncertain:
                         stopped = True
-                if getattr(error, 'code', '') in {'result_unknown', 'authentication_required', 'account_changed', 'permission_denied'}:
+                if getattr(error, 'code', '') in {'result_unknown', 'authentication_required', 'account_changed', 'permission_denied', 'rate_limited', 'temporarily_rejected'}:
                     stopped = True
                 results.append({'id': job_id, **error_result(error)})
         finally:
