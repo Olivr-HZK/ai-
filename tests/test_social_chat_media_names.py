@@ -24,19 +24,21 @@ def test_bad_names_rejected(sequence, advertiser, suffix, part):
 
 
 def test_named_upload_does_not_reuse_wrong_date_rank_or_legacy_token(tmp_path, monkeypatch):
-    path=tmp_path/'source.webm';path.write_bytes(b'original unchanged media')
+    from PIL import Image
+    path=tmp_path/'source.png';Image.new('RGB',(16,24),'blue').save(path)
+    original=path.read_bytes()
     sha=delivery.window.sha(path);cfg={'feishu':{'app_token':'isolated'}};calls=[]
     cache={'isolated|'+sha:{'file_token':'legacy-name','sha256':sha,'size':path.stat().st_size}}
     def fake_upload(client,config,path,name):calls.append(name);return 'token-'+str(len(calls))
     monkeypatch.setattr(delivery,'upload',fake_upload)
     def named(day,rank=1):return delivery.upload_selected(None,cfg,path,target_date=day,sequence=rank,
         advertiser='Tipsy Chat',source_sha256=sha,cache=cache)
-    one=named('2026-10-26');assert one['name']=='2026-10-26-001-Tipsy Chat.webm'
+    one=named('2026-10-26');assert one['name']=='2026-10-26-001-Tipsy Chat.png'
     assert one['file_token']!='legacy-name'
     assert named('2026-10-26')==one and len(calls)==1
     assert named('2026-10-27')['file_token']!=one['file_token']
     assert named('2026-10-26',2)['file_token']!=one['file_token']
-    assert len(calls)==3 and path.read_bytes()==b'original unchanged media'
+    assert len(calls)==3 and path.read_bytes()==original
     assert cache['isolated|'+sha]['file_token']=='legacy-name'
 
 

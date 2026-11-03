@@ -93,6 +93,10 @@ def fixture_index(tmp_path):
         path=tmp_path/name;path.write_bytes(data)
         return {'path':str(path),'sha256':hashlib.sha256(data).hexdigest()}
     source=evidence('source.bin',b'isolated fixture, not a decoded media claim')
+    video=tmp_path/'source.mp4'
+    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=blue:s=16x24:d=0.08',
+                    '-c:v','libx264','-pix_fmt','yuv420p',str(video)],check=True,capture_output=True)
+    source={'path':str(video),'sha256':hashlib.sha256(video.read_bytes()).hexdigest()}
     frames=[dict(evidence(f'frame-{n}.png',f'isolated frame {n}'.encode()),fraction=f) for n,f in enumerate(POLICY['frame_fractions'])]
     manifest=tmp_path/'manifest.json';manifest.write_text(json.dumps({'source':source,'frames':frames}))
     r=row('one', decision='exclude',review_reason='old reason',review={'decision':'exclude'})

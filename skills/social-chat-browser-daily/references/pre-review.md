@@ -1,12 +1,12 @@
 # 先去重，再按产品一次联合审核
 
-新scope固定`processing_policy.version=dedupe-first-joint-review-v2`、`ranking.mode=all`。四道筛选：①插件报告的明确重投标签；②日内CLIP0.9向量；③目标日前7自然日跨日向量；④按产品一次六帧主体/风格/模板联合审核。第四道结束后保留每个合格同模板组的最高估值代表，全部合格项排序、打包、入表，不截前100/前10%。旧v1及历史scope保留原规则与哈希，25号旧86条不自动重算。
+新scope固定`processing_policy.version=dedupe-first-joint-review-v2`、`ranking.mode=all`。四道筛选：①横屏原素材及插件报告的明确重投标签；②日内CLIP0.9向量；③目标日前7自然日跨日向量；④按产品一次六帧主体/风格/模板联合审核。第四道结束后保留每个合格同模板组的最高估值代表，全部合格项排序、打包、入表，不截前100/前10%。旧v1及历史scope保留原规则与哈希，25号旧86条不自动重算。
 
 ## 实际入口与输入
 
-`prepare`仍仅接收ZIP，不能把收件算作去重、审核或入表。核对原报告/重投/媒体映射后，标准化为JSON列表（或`{"records":[...]}`）。每项字段：唯一`id`、`day`目标素材日期、`kind`视频/图片、实际`app`完整名称、`os`iOS/Android、`app_id`已知才填、数值`value`展示估值、`sources`原文件path/sha256列表、`proxy`代理图path/sha256。路径为实际本地绝对路径。所有非重投已下载项都进入，不预先筛掉原`decision=exclude/review`。
+`prepare`仍仅接收ZIP，不能把收件算作去重、审核或入表。核对原报告/重投/媒体映射后，标准化为JSON列表（或`{"records":[...]}`）。每项字段：唯一`id`、`day`目标素材日期、`kind`视频/图片、实际`app`完整名称、`os`iOS/Android、`app_id`已知才填、数值`value`展示估值、`sources`原文件path/sha256列表、`proxy`代理图path/sha256。路径为实际本地绝对路径。原索引保留所有已下载项及原文件映射；新scope另固定`media_orientation_policy=non-landscape-original-media-v1`，先从实际原文件取显示尺寸，横屏剔除、未知暂缓，只有剩余项需要封面向量。不预先按旧`decision=exclude/review`删除候选。
 
-视频代理为原站封面，缺封面时用3%真实帧；图片代理为第一张原图（多图限制须披露，实际审核仍看全部）。原有`frames`六项与`manifest/manifest_sha256`可携带供复用。先剔除明确重投；`relaunch=confirmed/true/重投`或插件结构化`relaunch.value=true`不会进入去重。未见重投标签仍为未知，不填假false。历史只取前7自然日的本地非重投媒体，不限已入表或审核通过；无数据日期单列，不假装覆盖完整7天。
+视频代理为原站封面，缺封面时用3%真实帧；图片代理为第一张原图（多图限制须披露，实际审核仍看全部）。原有`frames`六项与`manifest/manifest_sha256`可携带供复用。第一道先剔除明确重投及横屏；宽>高为横屏，方形保留，计入视频旋转/SAR、图片EXIF。多图逐张检查、任一横屏整条剔除，原图不齐或尺寸未知暂缓；结果和源SHA256保存在`media_orientation_filter`逐项账。旧scope未固定此规则时不自动迁移。`relaunch=confirmed/true/重投`或插件结构化`relaunch.value=true`不会进入去重。未见重投标签仍为未知，不填假false。历史只取前7自然日的本地非重投媒体，不限已入表或审核通过；无数据日期单列，不假装覆盖完整7天。
 
 向量缓存目录每张图为`<proxy_sha256>.json`：`image_sha256`、非空`model_fingerprint`和512维数值`vector`；全部须同一已核实本机CLIP ViT-B/32模型。复用须核对同图SHA及模型身份，缺失先用本机模型计算；不采用来源未知的裸向量，不调用OpenRouter。入口不联网计算、不获取媒体，不调用旧VE爬虫。
 
@@ -17,7 +17,7 @@
   --embedding-cache /同模型的本机向量缓存目录
 ```
 
-目标日从本批scope读取；显式`--date`必须与scope相同。要求已接收原ZIP，`--apply`不适用。输出`pre-review/plan.json`：两轮逐项去重账、缺失历史日/身份、按App/系统分组的`review_queue`，状态仅`JOINT_REVIEW_PENDING`。拒绝缺目标App身份、缺估值/向量、混模型缓存或变更图像；不把这些项当零或独立新素材。
+目标日从本批scope读取；显式`--date`必须与scope相同。要求已接收原ZIP，`--apply`不适用。输出`pre-review/plan.json`：第一道尺寸剔除/暂缓账、两轮逐项去重账、缺失历史日/身份、按App/系统分组的`review_queue`，状态仅`JOINT_REVIEW_PENDING`。拒绝缺目标App身份、缺估值/向量、混模型缓存或变更图像；不把这些项当零或独立新素材。
 
 ## 便携历史向量包
 

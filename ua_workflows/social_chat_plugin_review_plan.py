@@ -160,10 +160,16 @@ def plan(target, records, vectors, policy=None):
             'review_certified': False}
 
 
-def prepare_queue(target, index, cache, output, policy=None, history_vector_pack=None):
+def prepare_queue(target, index, cache, output, policy=None, history_vector_pack=None, orientation_policy=None):
     index, cache, output = Path(index), Path(cache), Path(output)
     document = json.loads(index.read_text())
     records = document if isinstance(document, list) else document['records']
+    orientation_decisions = None
+    if orientation_policy is not None:
+        from ua_workflows.social_chat_media_orientation import POLICY as ORIENTATION_POLICY, filter_current
+        if orientation_policy != ORIENTATION_POLICY:
+            raise ValueError('Unsupported media orientation policy')
+        records, orientation_decisions = filter_current(target, records)
     vectors, fingerprints, blobs = {}, set(), {}
     for row in records:
         age = (date.fromisoformat(target) - date.fromisoformat(row['day'])).days
@@ -182,10 +188,12 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
         if blob.get('image_sha256') != digest or not blob.get('model_fingerprint'):
             raise ValueError('Embedding lacks bound image/model identity: ' + row['id'])
         fingerprints.add(blob['model_fingerprint']);vectors[row['id']] = blob['vector']
-    if len(fingerprints) != 1:
+    if len(fingerprints) != 1 and not (orientation_decisions is not None and not vectors):
         raise ValueError('Dedupe requires one verified CLIP model fingerprint')
     history_receipt = None
     if history_vector_pack:
+        if not fingerprints:
+            raise ValueError('History vector pack requires a verified current model fingerprint')
         from ua_workflows.social_chat_clip_vectors import read_bundle
         bundle = read_bundle(history_vector_pack, next(iter(fingerprints)))
         existing = {r['id']:r for r in records}
@@ -202,6 +210,10 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
         history_receipt = {'sha256':sha(history_vector_pack),'source_records':bundle['manifest']['records'],
                            'source_vectors':bundle['manifest']['vectors'],'images_required':False}
     result = plan(target, records, vectors, policy)
+    if orientation_decisions is not None:
+        result['media_orientation_filter'] = {'policy': orientation_policy,
+            'counts': dict(Counter(d['status'] for d in orientation_decisions.values())),
+            'decisions': orientation_decisions}
     if history_receipt:
         result['history_vector_pack'] = history_receipt
     # Freeze only the survivors for one combined human review; no style/template
@@ -229,7 +241,7 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
         for field in ('review', 'decision', 'review_reason', 'previous_top100'):
             row.pop(field, None)
     result['index_sha256'] = sha(index)
-    result['model_fingerprint'] = next(iter(fingerprints))
+    result['model_fingerprint'] = next(iter(fingerprints), None)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2))
     return {k: v for k, v in result.items() if k not in ('review_queue', 'decisions', 'policy')}

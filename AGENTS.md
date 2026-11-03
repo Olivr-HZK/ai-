@@ -1,5 +1,12 @@
 # Agent 工作日志
 
+## 2026-11-03 [广大大] 横屏第一道剔除与入表/复刻复查
+
+- 按用户要求，新批第一道先剔除明确重投及横屏。新增独立原媒体尺寸探测/CLI，实际读取图片EXIF、视频旋转与SAR后的显示宽高，宽>高排除，方形保留；未知、缺文件、源SHA不符暂缓，多图任一横屏整条排除。首次筛选先于封面向量加载，单列尺寸剔除/暂缓账，不改旧批结果或旧scope。
+- 新交接scope固定media_orientation_policy。入表共用upload_selected上传和缓存token复用前实际复查；mixed sync整批检查在任何远端schema/附件动作前并落盘。视频复刻新scope在原片上传前复查，成品回填前也检查；图片生成与回填前执行尺寸CLI并核对源SHA，skill和交接说明同步，主语言在联合审核时获取。
+- 128项相关回归通过，含真实PNG/JPEG EXIF、FFmpeg旋转/SAR视频、横竖方形、损坏/缺失原件、混合多图、先于向量剔除、缓存token不能绕过、入表前无远端调用、视频复刻前及成品回填拦截、新批规则固定与旧scope恢复不迁移。源码/已安装skill校验及diff检查通过；无真实采集、生成、上传、写表、群消息或历史批次重算，未提交推送。
+
+
 ## 2026-10-23 [社交竞品] Skill统一男性主体与排除真人/女性主体
 
 - 用户明确后续统一男性角色主体、排除真人及女性主体。新批content_review_policy=male-character-no-real-person-v1；仅未见真人且primary_subject=male可keep，真人或female必须exclude，mixed/none/uncertain或真人AI不确定阻止排名。图片和视频均适用，旧无真人/口播记录不能认证男性主体。

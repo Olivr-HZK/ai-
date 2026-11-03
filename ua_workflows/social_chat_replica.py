@@ -167,6 +167,8 @@ def prepare(root, target_date, client=None, *, expected_count=None, record_ids=N
         return State(root)
     if expected_count is not None:
         require(len(scope['items']) == expected_count, 'Live pending record count changed; review scope before generating')
+    from ua_workflows.social_chat_media_orientation import POLICY as ORIENTATION_POLICY
+    scope['media_orientation_policy'] = json.loads(json.dumps(ORIENTATION_POLICY))
     save_private(root / 'fields-before.json', schema)
     save_private(root / 'records-before.json', rows)
     save_private(root / 'scope.json', scope)
@@ -287,6 +289,14 @@ def backfill(state, values, client, route, *, on_progress=None):
         item, receipt = state.items[record_id], value['output']
         path = Path(receipt['path'])
         require(receipt.get('full_decode_passed') and path.is_file() and path.stat().st_size == receipt['size'] and digest(path) == receipt['sha256'], 'Unverified replica cannot be written')
+        if state.scope.get('media_orientation_policy'):
+            from ua_workflows.social_chat_media_orientation import OrientationError, require_non_landscape
+            try:
+                value['orientation_before_backfill'] = require_non_landscape(path, receipt['sha256'])
+            except OrientationError as error:
+                value.update(stage='needs_review', error=error.code, orientation_before_backfill=error.evidence)
+                persist(value)
+                continue
         row = record(client, route, record_id)
         check_record(row, item, state.scope)
         old = row['fields'].get(state.scope['target_field']) or []
@@ -723,11 +733,18 @@ class Runner:
                     value = self.state.get(item['record_id'])
                     if value['stage'] != 'source_ready':
                         continue
+                    if self.state.scope.get('media_orientation_policy'):
+                        from ua_workflows.social_chat_media_orientation import POLICY as ORIENTATION_POLICY, require_non_landscape
+                        require(self.state.scope['media_orientation_policy'] == ORIENTATION_POLICY, 'Unsupported media orientation policy')
+                        value['orientation_before_replication'] = require_non_landscape(value['source_path'], value['source_sha256'])
+                        self.state.put(value['record_id'], value)
                 except (ReplicaError, requests.RequestException):
                     # Reads can be retried on the next tick; no upload intent exists.
                     raise
                 except (OSError, ValueError) as error:
                     value.update(stage='source_failed', error=getattr(error, 'code', type(error).__name__))
+                    if hasattr(error, 'evidence'):
+                        value['orientation_before_replication'] = error.evidence
                     self.state.put(value['record_id'], value)
                     continue
                 path = str(Path(value['source_path']).resolve())

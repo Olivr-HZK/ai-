@@ -44,6 +44,17 @@
       "safety_rejection": "record_and_skip_without_identical_retry",
       "resume": "reuse_verified_outputs_and_remote_attachments",
       "history": "new_batches_only"
+    },
+    "media_orientation_policy": {
+      "version": "non-landscape-original-media-v1",
+      "landscape": "exclude",
+      "square": "keep",
+      "unknown": "pending",
+      "checkpoints": [
+        "before_cover_dedupe",
+        "before_ingestion",
+        "before_replication"
+      ]
     }
   },
   "date_semantics": "first_discovered_on_target_date",

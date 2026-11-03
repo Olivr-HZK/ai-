@@ -83,6 +83,12 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
         'collection_complete_21_apps': False, 'auto_browser_collection': False,
         'auto_retry_downloads': False, 'feishu': config['feishu']}
     if not existing:
+        from ua_workflows.social_chat_media_orientation import POLICY as ORIENTATION_POLICY
+        orientation = config['plugin_handoff'].get('media_orientation_policy')
+        if orientation is not None:
+            if orientation != ORIENTATION_POLICY:
+                raise ValueError('Unsupported media orientation policy')
+            scope['media_orientation_policy'] = json.loads(json.dumps(orientation))
         template_policy = config['plugin_handoff'].get('previous_day_template_dedupe')
         if template_policy is not None:
             if template_policy != PREVIOUS_DAY_TEMPLATE_POLICY:
@@ -135,6 +141,10 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
 视频实际解码、抽六帧并查看，图片逐原图解码/查看，记录决定、理由、证据哈希；六帧不称完整审听。
 通过项同次按scope固定风格版本打标，合并按展示估值降序取scope.ranking规定的前100条（不足取实际通过数）。'''
     review_steps += '\n本批固定交付范围：' + label(scope['ranking']) + '。展示估值只决定排序和同模板代表；不隐式套用前100/前10%限制。'
+    if scope.get('media_orientation_policy'):
+        review_steps = review_steps.replace('第一道筛选直接按插件报告中的明确重投标签剔除', '第一道先按原文件显示尺寸剔除横屏、暂缓尺寸未知项，并按插件报告中的明确重投标签剔除')
+        review_steps = review_steps.replace('对全部已下载非重投素材做日内向量去重', '对第一道通过的已下载素材做日内向量去重')
+        review_steps += '\n第一步先剔除明确重投和横屏：读取实际原文件显示尺寸，计入视频旋转/SAR及图片EXIF，宽>高排除，方形保留；尺寸未知暂缓，多图逐张核验。随后才做封面向量去重。入表前和进入视频/图片复刻前各重新核对本阶段源文件尺寸及SHA256，不是横屏才可进入；未知也拦截，不能凭旧审核标记或网页缩略图放行。'
     template_policy = scope.get('previous_day_template_dedupe')
     if template_policy:
         expected = {**PREVIOUS_DAY_TEMPLATE_POLICY,

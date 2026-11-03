@@ -118,11 +118,14 @@ def upload_selected(client, config, path, *, target_date, sequence, advertiser, 
     from ua_workflows.social_chat_media_names import media_filename
     path = Path(path)
     window.require(window.sha(path) == source_sha256, 'Media changed before upload')
+    from ua_workflows.social_chat_media_orientation import require_non_landscape
+    orientation = require_non_landscape(path, source_sha256)
     name = media_filename(target_date, sequence, advertiser, path.suffix, part)
     key = config['feishu']['app_token'] + '|' + source_sha256 + '|' + name
     if key not in cache:
         token = upload(client, config, path, name)
-        cache[key] = {'file_token': token, 'sha256': source_sha256, 'size': path.stat().st_size, 'name': name}
+        cache[key] = {'file_token': token, 'sha256': source_sha256, 'size': path.stat().st_size, 'name': name,
+                      'orientation': orientation}
     saved = cache[key]
     window.require(saved.get('name') == name and saved.get('sha256') == source_sha256
                    and saved.get('size') == path.stat().st_size and saved.get('file_token'), 'Named attachment cache mismatch')
@@ -188,6 +191,15 @@ def delivery(base, result, candidates):
 def sync(run_dir, config, client=None, apply=False):
     base = Path(run_dir).resolve()
     result = window.select(base, config)  # Always revalidate actual evidence.
+    from ua_workflows.social_chat_media_orientation import inspect_media
+    orientation_checks = []
+    for card in result['items']:
+        root = Path(card['source_collection'])
+        sources = [(root / i['path'], i['sha256']) for i in card['image_files']] if card['media_type'] == '图片' else [(root / card['local_source'], card['source_sha256'])]
+        orientation_checks.append({'ad_id': card['ad_id'], 'evidence': [inspect_media(p, s) for p,s in sources]})
+    daily.save(base / 'orientation-before-ingestion.json', {'checkpoint': 'before_ingestion', 'items': orientation_checks})
+    window.require(all(item['evidence'] and all(e['status'] == 'eligible' for e in item['evidence']) for item in orientation_checks),
+                   'Landscape or unverified media dimensions before ingestion')
     if apply:
         client = client or daily.Feishu()
         attachment_field = resolve_field(config, client.listing(daily.table_route(config) + '/fields'))['field_name']
