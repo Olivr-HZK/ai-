@@ -11,6 +11,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from urllib.parse import urljoin, urlsplit
@@ -96,7 +97,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
                 auth = api.authenticate()
             except ReplicaError as error:
                 stopped = True
-                if error.code in {'read_failed', 'authentication_required', 'account_changed'}:
+                if error.code in {'read_failed', 'authentication_required', 'account_changed', 'permission_denied'}:
                     return {'ok': False, 'path': value, 'code': 'not_submitted', 'reason': error.code}
                 raise
             if auth['account_id'] != checkpoint.account:
@@ -128,7 +129,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
                     stopped = True
                     result = api.upload_status(record['request_id'])
                 else:
-                    if error.code in {'authentication_required', 'account_changed'}:
+                    if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                         stopped = True
                     raise
         record.update(stage='uploaded', ids=result['ids'], dispatch_finished_at=time.time())
@@ -147,7 +148,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
         try:
             item = upload_one(value)
         except Exception as error:
-            if isinstance(error, ReplicaError) and error.code in {'result_unknown', 'authentication_required', 'account_changed'}:
+            if isinstance(error, ReplicaError) and error.code in {'result_unknown', 'authentication_required', 'account_changed', 'permission_denied'}:
                 stopped = True
             item = {'path': value, **error_result(error)}
         results.append(item)
@@ -203,7 +204,7 @@ def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
                         stopped = True
                     if uncertain:
                         stopped = True
-                if getattr(error, 'code', '') in {'result_unknown', 'authentication_required', 'account_changed'}:
+                if getattr(error, 'code', '') in {'result_unknown', 'authentication_required', 'account_changed', 'permission_denied'}:
                     stopped = True
                 results.append({'id': job_id, **error_result(error)})
         finally:
@@ -234,7 +235,7 @@ def status_many(api, ids, *, stage=None, timeout=3600, interval=3.5, include_ana
                     pending.remove(job_id)
             except ReplicaError as error:
                 results[job_id] = {'id': job_id, **error_result(error)}
-                if error.code in {'authentication_required', 'account_changed'}:
+                if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                     return {'operation': 'status', 'results': list(results.values()), 'pending': sorted(pending), 'state': 'authentication_required'}
                 if not stage:
                     pending.remove(job_id)
@@ -305,13 +306,21 @@ def download_many(api, ids, checkpoint, output, *, plan_only=False, on_result=No
 
 def parser():
     p = argparse.ArgumentParser(description='Replica Studio CLI：自动分析、人物参考图上传、智能换 Logo、可选翻译、状态与下载。')
-    p.add_argument('--session-file', type=Path, help='已授权会话的私密 JSON 文件（0600）；也可用项目 .env 中 REPLICA_SESSION_FILE')
+    credentials = p.add_mutually_exclusive_group()
+    credentials.add_argument('--token-file', type=Path, help='设备授权令牌文件（0600）；默认 ~/.config/replica-studio/cli.json')
+    credentials.add_argument('--session-file', type=Path, help='兼容旧 Cookie 会话文件（0600）')
+    p.add_argument('--auth-mode', choices=['device', 'browser'], help='默认device设备授权；browser显式使用旧登录桥')
     p.add_argument('--checkpoint', type=Path, default=DEFAULT_STATE, help='上传／付费动作／下载断点')
     sub = p.add_subparsers(dest='command', required=True)
-    login = sub.add_parser('login', help='打开CLI专用SSO窗口；登录后业务仅发送HTTP请求，不导出Cookie')
-    login.add_argument('--timeout', type=float, default=600, help='等待用户完成SSO的秒数')
-    login.add_argument('--probe', action='store_true', help='仅核对文档OIDC入口，不打开登录窗口')
-    sub.add_parser('session', help='验证当前 HTTP 会话，返回认证状态，不输出 Cookie/CSRF')
+    login = sub.add_parser('login', help='设备授权登录：浏览器批准本机后，CLI持久保存令牌并直接HTTP调用')
+    login.add_argument('--timeout', type=float, default=600, help='等待用户批准设备授权的秒数')
+    login.add_argument('--probe', action='store_true', help='兼容诊断：仅核对旧OIDC入口，不启动设备授权')
+    login.add_argument('--label', help='本机令牌的名称')
+    login.add_argument('--no-browser', action='store_true', help='显示授权地址与短码，不自动打开浏览器')
+    login.add_argument('--legacy-browser', action='store_true', help='显式使用旧CLI专用Chrome登录桥')
+    sub.add_parser('session', help='验证当前认证，返回账号状态，不输出令牌/Cookie/CSRF')
+    sub.add_parser('whoami', help='查询当前认证账号；不输出原始令牌或会话值')
+    sub.add_parser('logout', help='仅删除本机设备令牌；服务端撤销请到工作台 /cli 页面')
     upload = sub.add_parser('upload', help='单线程连续提交全部文件，每文件1组、自动分析，由服务端排队处理')
     upload.add_argument('files', nargs='+', type=Path)
     uploaded = sub.add_parser('upload-status', help='只读核对原上传标识；404不代表未发生')
@@ -327,6 +336,7 @@ def parser():
     status.add_argument('--analysis', action='store_true', help='包含文档公开的分析视图')
     logo = sub.add_parser('logo', help='多选智能 AI 换 Logo；逐任务入队，不重复已提交付费动作')
     logo.add_argument('ids', nargs='+')
+    logo.add_argument('--yes', action='store_true', help='设备授权模式下确认提交付费智能Logo动作')
     characters = sub.add_parser('characters', help='只读列出任务角色ID及当前人物参考图')
     characters.add_argument('id')
     portrait = sub.add_parser('portrait', help='上传你提供的人物图并替换指定角色参考图，不生成图片或视频')
@@ -342,6 +352,7 @@ def parser():
     translate.add_argument('--source-language')
     translate.add_argument('--source-video', action='store_true', help='明确改用可用的原视频剧情部分，不生成人物图或换人')
     translate.add_argument('--check-only', action='store_true', help='只读预检，不切换路线或提交翻译')
+    translate.add_argument('--yes', action='store_true', help='设备授权模式下确认提交付费翻译动作')
     download = sub.add_parser('download', help='多选下载Logo或翻译视频／字幕，不另行拼接或生成')
     download.add_argument('ids', nargs='+')
     download.add_argument('--step', choices=['logo', 'translation'], default='logo')
@@ -352,19 +363,39 @@ def parser():
 
 
 def execute(args, factory=None):
-    factory = factory or (lambda: ReplicaAPI.configured(session_file=args.session_file))
+    factory = factory or (lambda: ReplicaAPI.configured(token_file=args.token_file, session_file=args.session_file,
+                                                       auth_mode=args.auth_mode, confirm_paid=getattr(args, 'yes', False)))
     if args.command == 'login':
         if args.probe:
             return ReplicaAPI().login_start()
         if args.timeout <= 0:
             raise ReplicaError('invalid_input', 'Login timeout must be positive')
-        from ua_workflows.replica_auth_bridge import start_login
-        status = start_login(timeout=args.timeout)
-        return {'operation': 'login', 'cli_authenticated': bool(status.get('authenticated')), **status}
+        if args.legacy_browser or args.auth_mode == 'browser':
+            if args.token_file:
+                raise ReplicaError('invalid_input', 'Legacy browser login does not write a CLI token file')
+            from ua_workflows.replica_auth_bridge import start_login
+            status = start_login(timeout=args.timeout)
+            return {'operation': 'login', 'cli_authenticated': bool(status.get('authenticated')), **status}
+        if args.session_file:
+            raise ReplicaError('invalid_input', 'Device login saves a token file; omit --session-file')
+        from ua_workflows.replica_device_auth import start_device_login
+        def show_approval(value):
+            print('请在浏览器核对授权码 ' + value['user_code'] + ' 后批准本机：\n' + value['verification_uri'],
+                  file=sys.stderr, flush=True)
+        return start_device_login(path=args.token_file, label=args.label, timeout=args.timeout,
+                                  no_browser=args.no_browser, on_prompt=show_approval)
+    if args.command == 'logout':
+        if args.session_file:
+            raise ReplicaError('invalid_input', 'logout only removes a device token, not a legacy session')
+        from ua_workflows.replica_device_auth import logout
+        return logout(args.token_file)
     api = factory()
     auth = api.authenticate()
-    if args.command == 'session':
+    if args.command in {'session', 'whoami'}:
         return {'operation': 'session', 'authenticated': True, **auth}
+    if (auth.get('auth_mode') == 'device' and args.command in {'logo', 'translate'}
+            and not getattr(args, 'check_only', False) and not args.yes):
+        raise ReplicaError('confirmation_required', 'Device-authorized paid actions require --yes')
     if args.command == 'upload-status':
         return {'operation': 'upload_status', **api.upload_status(args.request_id)}
     if args.command == 'characters':
@@ -423,7 +454,7 @@ def main(argv=None):
         return 0
     except (ReplicaError, OSError, ValueError) as error:
         print(json.dumps(error_result(error), ensure_ascii=False))
-        return 3 if getattr(error, 'code', '') in {'authentication_required', 'account_changed'} else 2
+        return 3 if getattr(error, 'code', '') in {'authentication_required', 'account_changed', 'permission_denied', 'authorization_denied'} else 2
 
 
 if __name__ == '__main__':

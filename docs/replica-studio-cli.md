@@ -1,6 +1,6 @@
 # Replica Studio 接口 CLI
 
-按用户提供的 `replica-studio-workbench.openapi.yaml` 封装。业务请求直接通过 HTTP 发送，不点击页面、不依赖先前浏览器 JavaScript 客户端。登录时打开 CLI 自己的专用 Chrome 会话，由用户完成文档规定的 OIDC；随后使用该会话的 APIRequestContext 发请求，不读取或导出 Cookie。默认服务固定为 `https://replica-studio.upupup.today`。
+业务接口按用户提供的 `replica-studio-workbench.openapi.yaml` 封装；设备授权另参考 [Replica 独立CLI v0.10.6 的公开契约](https://github.com/yongchangwang-gt/replica-studio-cli/blob/1b681360c803a8c055798e3b9d2164857d111e81/replica_cli.py)。默认使用设备授权令牌，经requests直接发送HTTP，不依赖浏览器常驻或本地登录桥。服务固定为 `https://replica-studio.upupup.today`；旧Cookie/专用Chrome通道保留为显式兼容方式。
 
 基础 CLI 负责 Replica 自动分析、指定人物参考图上传、智能Logo、可选翻译及已有结果下载。另有记录绑定的飞书批处理入口，用于此前173条视频及复刻附件回填；本次翻译封装不自动接入该批次或触发器。
 
@@ -8,8 +8,10 @@
 
 | 命令 | HTTP 接口 | 行为 |
 |---|---|---|
-| `login` | `GET /api/auth/oidc/login`，`GET /api/auth/session` | 打开专用登录窗口，等待用户完成SSO，实际会话检查成功才返回已认证 |
-| `session` | `GET /api/auth/session` | 验证会话并在内存保存 CSRF；输出不包含 Cookie、CSRF 或令牌 |
+| `login` | `POST /api/cli/login/start`、`POST /api/cli/login/poll`、`GET /api/cli/whoami` | 浏览器核对短码、批准本机；身份核验成功后保存设备令牌 |
+| `session` / `whoami` | `GET /api/cli/whoami` | 返回账号和公开权限信息，不输出原始令牌 |
+| `logout` | 无业务HTTP | 仅删除本机令牌；不冒称服务端已撤销 |
+| `login --legacy-browser` | 原OIDC/会话接口 | 显式使用旧专用Chrome登录方式 |
 | `upload FILE...` | `POST /api/jobs` | 单线程连续提交全部文件；每文件独立请求ID、1个人物组，`character` 为空，`auto_analyze=true` |
 | `upload-status REQUEST_ID` | `GET /api/source-uploads/{request_id}` | 只读核对原上传结果 |
 | `status ID...` | `GET /api/jobs/{identifier}` | 多任务查询；支持等待分析、Logo或指定语言/内容的翻译完成 |
@@ -42,28 +44,35 @@
 
 ## 鉴权的实际范围
 
-文档声明的是 **Cookie 会话鉴权**：`replica_session`。写请求还需要与服务地址一致的 `Origin` 和 `GET /api/auth/session` 返回的 `X-Replica-CSRF`。CLI 按此发送请求，没有发明 API Key、Bearer Token 或账号密码登录接口。
+默认设备授权流程为：
 
-文档中的登录入口是 OIDC 浏览器跳转。CLI 使用自己的专用浏览器会话，由用户正常完成登录，state/nonce/PKCE与回调由站点处理。`login` 只有在会话接口返回真实用户及CSRF后才输出 `cli_authenticated=true`。它不复用或读取用户原 Chrome 配置，不输出授权码、授权地址参数、Cookie或CSRF。
-
-专用浏览器由 `replica_auth_bridge.py` 管理；业务调用仅使用其 APIRequestContext 的HTTP接口，没有DOM脚本、页面fetch或业务按钮点击。CLI与登录进程通过当前用户专用的0600 Unix socket通信；代理固定Replica站点和必要接口白名单，禁止Cookie/Authorization头注入、不跟随API重定向、不自动重试付费请求。日志只记录方法、路径和HTTP状态。媒体按8MiB Range分段读取。
-
-正常使用无需手动会话文件：
+1. `login`启动本机授权，显示批准地址和短码，并默认打开浏览器。
+2. 用户在已登录Replica的浏览器中核对短码、选择所需权限并批准；CLI轮询原设备请求，不读取浏览器Cookie或自动批准。
+3. 收到令牌后先GET`/api/cli/whoami`核实账号，再以0600权限原子保存。JSON输出、业务断点和日志均不包含令牌或私密device_code。
+4. 后续API和媒体下载使用`Authorization: Bearer ...`直接访问固定Replica站点，不需要Chrome或Unix socket常驻。请求不跟随重定向，不读取.netrc/环境代理，不混用Cookie；付费POST不因网络错误自动重发。
 
 ```sh
-./scripts/replica-studio login --timeout 600
+./scripts/replica-studio login --label "素材工作流"
+./scripts/replica-studio whoami
 ./scripts/replica-studio session
 ```
 
-保留CLI专用登录窗口／进程即可复用会话；会话过期或关闭进程后，再运行login。`login --probe` 保留只读入口诊断能力，不打开窗口，也不会将入口303当作已经登录。
+可加`login --no-browser`仅显示批准链接；`--timeout`限制等待时间。默认令牌路径与参考CLI兼容，为`~/.config/replica-studio/cli.json`，遵循`XDG_CONFIG_HOME`；也可用全局`--token-file /absolute/private/cli.json`或项目`.env`的`REPLICA_CLI_TOKEN_FILE`指定。文件必须是本人所有、仅本人可读写的普通文件，不接受符号链接或其他服务器的凭据。新登录保存账号绑定；参考CLI已有的同服务器令牌文件也可读取，实际身份仍由whoami核实。
 
-已有合法程序会话时，仍可显式使用私密会话文件，路径按下列顺序选取；没有文件时使用上述CLI自己的登录上下文：
+设备令牌缺失、失效、撤销或权限不足时明确报错，**不会自动回退浏览器账号**。`logout`仅删除本机文件；服务端撤销需在Replica工作台`/cli`页面操作。不要把令牌文件加入版本库或贴到命令行参数中。
 
-1. 全局参数 `--session-file /absolute/private/session.json`。
-2. 项目 `.env` 中的 `REPLICA_SESSION_FILE` 文件路径。
-3. 项目 `data/replica-cli/session.json`，如果该文件存在。
+独立`logo`和`translate`付费命令在设备模式下要求`--yes`，并按服务端契约发送`X-Replica-Confirm: paid`。`translate --check-only`不要求确认；图片参考上传、状态读取和已有结果下载不携带生成确认。已明确授权的飞书`run/resume`批处理在固定scope内由SDK显式确认原智能Logo动作，不扩大接口白名单、不重放未知动作。
 
-可选会话配置格式为 `{"replica_session": "由已授权流程提供的有效会话值"}`。文件必须是仅当前用户可读写的普通文件，权限0600。CLI不从浏览器提取此值。没有有效程序会话或登录上下文时明确返回 `authentication_required`，不会上传或生成；不要在聊天或命令行参数中粘贴会话值。`data/replica-cli/`（包括专用登录配置、断点和媒体）已加入Git忽略规则。
+旧方式仅在显式选择时启用：
+
+```sh
+./scripts/replica-studio login --legacy-browser
+./scripts/replica-studio --auth-mode browser session
+```
+
+也可显式提供全局`--session-file /absolute/private/session.json`，或在选择browser模式后沿用`.env`的`REPLICA_SESSION_FILE`。批处理SDK可通过项目`.env`的`REPLICA_AUTH_MODE=browser`兼容旧通道；默认仍为device。Cookie写请求继续使用Origin、CSRF和账号绑定，不读取用户原Chrome资料。`login --probe`仅保留旧OIDC入口的只读诊断，不把入口303当作已登录。
+
+旧桥仍使用APIRequestContext和0600 Unix socket，只允许必要接口；媒体按8MiB Range读取。新设备令牌直连采用原始流式GET，保留任务归属、精确大小/SHA256和解码校验；本次不改变服务端模型、并发或生成逻辑。
 
 2026-10-30 已通过用户在专用窗口完成SSO，CLI的login和session均实际返回已认证。随后实际完成单视频上传自动分析、智能Logo、下载闭环，任务 `d424384da84865bc8a832edd68b43e97`；9秒结果922427字节，SHA256与FFmpeg完整解码通过，抽查1秒帧顶部可见Afizzy。业务审计只有上传、智能Logo与下载计划各一次POST，没有人物图、换人或完整Pipeline。服务端对6.37秒附近转场有人工复查标记，按原响应留证，不冒称人工内容审核全通过。证据在 `data/replica-cli-live-test-20261030/verification.json`；这不是173条批量验收，也未写飞书。
 
@@ -76,7 +85,7 @@
 ./scripts/replica-studio session
 ./scripts/replica-studio upload "/absolute/video-a.mp4" "/absolute/video-b.mp4"
 ./scripts/replica-studio status JOB_A JOB_B --wait-for analysis
-./scripts/replica-studio logo JOB_A JOB_B
+./scripts/replica-studio logo JOB_A JOB_B --yes
 ./scripts/replica-studio status JOB_A JOB_B --wait-for logo
 ./scripts/replica-studio download JOB_A JOB_B --output-dir "/absolute/results"
 ```
@@ -117,15 +126,17 @@
 
 37项测试执行实际SDK／CLI和登录HTTP桥模块，覆盖接口白名单、会话与CSRF、5xx不重放、跨账号断点拒绝、多文件／多任务映射、未知上传核对（含503保留未知状态）、媒体来源与长度校验、真实本地视频完整解码、下载复用、Range拼接、Cookie不导出、失败／待复查步骤不记成功及额外生成接口拒绝。另验证会话预检失败不产生上传意图或误判视频失败、已明确未发送的意图沿原ID进行首次实际提交；未知意图仍只读查询，404不当作从未提交的证据。离线HTTP适配器测试与上面的单视频实站验收分别留证。
 
+设备授权接入后共243项离线回归通过，其中新增35项覆盖批准/拒绝/过期、授权提示、工作区准备的有界等待、whoami核验后保存、0600/账号/站点绑定、撤销不降级、媒体Bearer直连、权限不足停止和付费动作确认；测试禁止真实网络连接。此前任务状态与业务断点保持，线上授权需用户正常批准，不把离线通过称为已登录。
+
 ## 可选翻译
 
-本节按用户提供的OpenAPI及此前保存的前端检查规则封装，尚未实站执行翻译。新代码的离线验证与此前Logo实站验收分别记载。已有旧版CLI专用登录窗口时，先关闭该专用窗口，再运行`login`加载新HTTP桥；旧桥缺少翻译能力时会在翻译意图保存之前明确报`bridge_upgrade_required`，不误记未知付费请求。
+本节按用户提供的OpenAPI及此前保存的前端检查规则封装，尚未实站执行翻译。新代码的离线验证与此前Logo实站验收分别记载。设备模式直接请求翻译接口；仅旧browser模式需要更新HTTP桥，关闭旧专用窗口后使用`login --legacy-browser`。旧桥缺少翻译能力时在付费意图前报`bridge_upgrade_required`，不误记未知请求。
 
 建议翻译使用独立断点，下面JOB_A/JOB_B替换为真实任务ID：
 
 ```sh
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json translate JOB_A JOB_B --languages ja de --parts text voice --check-only
-./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json translate JOB_A JOB_B --languages ja de --parts text voice
+./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json translate JOB_A JOB_B --languages ja de --parts text voice --yes
 ./scripts/replica-studio status JOB_A JOB_B --wait-for translation --languages ja de --parts text voice --timeout 7200
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json download JOB_A JOB_B --step translation --languages ja de --output-dir /absolute/translated-results
 ```
@@ -167,7 +178,7 @@
 
 上传前将任务、角色、原图片路径/大小/SHA256/尺寸和原revision写入`portraits`断点。超时、5xx、响应身份不符或回执落盘失败均保留未知；再次执行只查询原任务，并读取该角色当前图片核对原上传字节及更高revision，不重新POST。服务端若转换过图片导致字节不能匹配，会继续保留未知，`--replace`也不能绕过未知写入。核对的是当前参考图，不把它宣称为已恢复原HTTP回执。
 
-专用登录桥新增`portrait_upload_v1`能力。若CLI报`bridge_upgrade_required`，先关闭旧CLI专用登录窗口，再运行`replica-studio login`加载新桥；不读取用户Chrome资料或导出Cookie。普通会话文件沿原方式使用。
+设备授权直连原生支持人物参考图上传。仅旧browser模式需要登录桥具备`portrait_upload_v1`；旧桥缺能力时，关闭旧专用窗口后用`login --legacy-browser`重新启动。不会因此读取用户Chrome资料或导出Cookie。
 
 这一步不会替换视频中的人物，也不修改文字、口播、Logo、字幕擦除规则或现有批处理范围。后续视频换人命令尚未开放；上传参考图成功不代表换人视频已生成。返回`video_generation_submitted=false`，回执未知退出码为2。
 

@@ -92,7 +92,7 @@ class AsyncPipeline:
     def _check_submission(result):
         for item in result.get('results', []):
             code = item.get('reason') or item.get('code')
-            if code in {'authentication_required', 'account_changed', 'read_failed'}:
+            if code in {'authentication_required', 'account_changed', 'permission_denied', 'read_failed'}:
                 raise ReplicaError(code, 'Pipeline submission waiting; original identities retained')
 
     def _upload_once(self):

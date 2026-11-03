@@ -158,7 +158,7 @@ def translate_many(api, ids, checkpoint, languages, parts=('voice',), source_lan
                     checkpoint.put('translations', job_id, saved)
                 except OSError:
                     stopped = True
-            if code in {'result_unknown', 'authentication_required', 'account_changed', 'read_failed', 'bridge_upgrade_required'} or isinstance(error, OSError):
+            if code in {'result_unknown', 'authentication_required', 'account_changed', 'permission_denied', 'read_failed', 'bridge_upgrade_required'} or isinstance(error, OSError):
                 stopped = True
             results.append({'id': job_id, **error_result(error)})
     return {'operation': 'translation_preflight' if check_only else 'translate', 'results': results, 'stopped': stopped}
@@ -184,7 +184,7 @@ def translation_status_many(api, ids, languages, parts=('voice',), source_langua
                     pending.remove(job_id)
             except ReplicaError as error:
                 results[job_id] = {'id': job_id, **error_result(error)}
-                if error.code in {'authentication_required', 'account_changed'}:
+                if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                     return {'operation': 'status', 'results': list(results.values()), 'pending': sorted(pending), 'state': 'authentication_required'}
         if not pending or time.monotonic() - started >= timeout:
             break

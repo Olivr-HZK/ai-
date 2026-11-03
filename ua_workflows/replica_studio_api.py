@@ -1,6 +1,7 @@
 """Direct HTTP client for Replica analysis, smart Logo and optional translation.
 
-Authentication is the documented replica_session cookie, not an invented API key.
+Authentication prefers Replica's device-authorized CLI bearer credential;
+the documented replica_session cookie transport remains compatible.
 No business-page automation, external browser-profile access, cookie export or paid retries.
 """
 from __future__ import annotations
@@ -68,7 +69,7 @@ def allowed(method, path):
     if method == 'GET':
         if path.startswith('/api/tasks?filter='):
             return path[len('/api/tasks?filter='):] in {'all', 'active', 'running', 'queued', 'review', 'completed', 'failed'}
-        return path in {'/api/auth/session', '/api/settings', '/api/jobs', '/api/tasks',
+        return path in {'/api/auth/session', '/api/cli/whoami', '/api/settings', '/api/jobs', '/api/tasks',
                         '/api/deleted-projects', '/api/deleted-characters'} or bool(
             re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}', path) or
             re.fullmatch(r'/api/source-uploads/[a-f0-9]{32}', path))
@@ -150,17 +151,33 @@ def media_url(value, job_id):
 
 
 class ReplicaAPI:
-    def __init__(self, session=None, *, expected_account=None, wait=time.sleep):
+    def __init__(self, session=None, *, expected_account=None, wait=time.sleep, confirm_paid=False):
         self.session = session or requests.Session()
+        self.device_auth = vars(self.session).get('replica_device_auth') is True
+        self.confirm_paid = confirm_paid
         self.expected_account = expected_account
         self.account = None
         self.csrf = None
         self.wait = wait
 
     @classmethod
-    def configured(cls, *, session_file=None, expected_account=None):
+    def configured(cls, *, token_file=None, session_file=None, auth_mode=None, expected_account=None, confirm_paid=False):
         from ua_workflows.shared.config import project_env_values
+        from ua_workflows.replica_device_auth import DeviceTokenSession, load_token, token_path
         values = project_env_values()
+        if token_file is not None and session_file is not None:
+            raise ReplicaError('invalid_input', 'Choose a CLI token file or legacy session file')
+        mode = 'browser' if session_file is not None else auth_mode or values.get('REPLICA_AUTH_MODE') or 'device'
+        if mode not in {'device', 'browser'} or (mode == 'browser' and token_file is not None):
+            raise ReplicaError('invalid_input', 'Choose device authorization or the explicit legacy browser transport')
+        if mode == 'device':
+            configured_token = token_file or values.get('REPLICA_CLI_TOKEN_FILE')
+            credential = load_token(configured_token or token_path(), required=True)
+            pinned = credential.get('account_id')
+            if expected_account and pinned and expected_account != pinned:
+                raise ReplicaError('account_changed', 'CLI credential belongs to a different account')
+            return cls(DeviceTokenSession(credential['token']), expected_account=expected_account or pinned,
+                       confirm_paid=confirm_paid)
         session_file = session_file or values.get('REPLICA_SESSION_FILE')
         if not session_file:
             from ua_workflows.shared.config import PROJECT_ROOT
@@ -172,7 +189,7 @@ class ReplicaAPI:
             if status and status.get('authenticated'):
                 transport = BridgeSession()
                 transport.replica_capabilities = status.get('capabilities', [])
-                return cls(transport, expected_account=expected_account)
+                return cls(transport, expected_account=expected_account, confirm_paid=confirm_paid)
             if status is None and SOCKET.exists():
                 raise ReplicaError('read_failed', 'Replica authenticated transport is temporarily unavailable')
             raise ReplicaError('authentication_required', 'Run replica-studio login or configure an authorized HTTP session')
@@ -194,7 +211,7 @@ class ReplicaAPI:
             raise ReplicaError('invalid_credentials_file', 'Replica credential file has no valid session credential')
         session = requests.Session()
         session.cookies.set('replica_session', cookie, domain='replica-studio.upupup.today', path='/', secure=True)
-        return cls(session, expected_account=expected_account)
+        return cls(session, expected_account=expected_account, confirm_paid=confirm_paid)
 
     def login_start(self):
         """Inspect the documented OIDC browser entry without exposing transaction values."""
@@ -220,9 +237,16 @@ class ReplicaAPI:
         write = method != 'GET'
         request_headers = {'Accept': 'application/json', 'Origin': BASE_URL, **(headers or {})}
         if write:
-            if not self.account or not self.csrf:
+            if not self.account or (not self.device_auth and not self.csrf):
                 raise ReplicaError('authentication_required', 'Authenticate the HTTP session before submitting work')
-            request_headers.update({'X-Replica-CSRF': self.csrf, 'X-Replica-Account': self.account})
+            request_headers['X-Replica-Account'] = self.account
+            if self.device_auth:
+                if re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate)', path):
+                    if not self.confirm_paid:
+                        raise ReplicaError('confirmation_required', 'Device-authorized paid actions require --yes')
+                    request_headers['X-Replica-Confirm'] = 'paid'
+            else:
+                request_headers['X-Replica-CSRF'] = self.csrf
         retry = method == 'GET' or safe_retry
         for attempt in range(3 if retry else 1):
             try:
@@ -239,6 +263,8 @@ class ReplicaAPI:
                 raise ReplicaError('result_unknown' if write else 'read_failed', 'Replica request could not be confirmed') from None
             if response.status_code in {401, 403}:
                 self.csrf = None
+                if self.device_auth and response.status_code == 403:
+                    raise ReplicaError('permission_denied', 'CLI token lacks permission for this operation', 403)
                 raise ReplicaError('authentication_required', 'Replica session is missing, expired or not authorized', response.status_code)
             if response.status_code >= 500 and retry and attempt < 2:
                 self.wait(2 * (attempt + 1))
@@ -259,6 +285,14 @@ class ReplicaAPI:
             return data
 
     def authenticate(self):
+        if self.device_auth:
+            from ua_workflows.replica_device_auth import public_identity
+            identity = public_identity(self.request('GET', '/api/cli/whoami'))
+            if ((self.expected_account and identity['account_id'] != self.expected_account)
+                    or (self.account and identity['account_id'] != self.account)):
+                raise ReplicaError('account_changed', 'CLI account does not match the pinned batch account')
+            self.account = identity['account_id']
+            return identity
         result = self.request('GET', '/api/auth/session')
         user = result.get('user') or {}
         if (not isinstance(user, dict) or not isinstance(user.get('id'), str) or not user['id'] or

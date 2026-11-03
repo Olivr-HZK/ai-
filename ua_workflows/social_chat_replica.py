@@ -387,7 +387,7 @@ def reconcile_logos(state, api=None, *, checkpoint=None, clock=time.time, respec
         try:
             job = api.job(job_id)
         except ReplicaError as error:
-            if error.code in {'authentication_required', 'account_changed'}:
+            if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                 raise
             value.update(logo_check_after=clock() + interval, reconcile_error=error.code)
             state.put(value['record_id'], value)
@@ -494,7 +494,9 @@ class Runner:
         self.state = state
         self.health = RunHealth(state.root, timeouts, clock)
         self.wait = wait
-        self.factory = api_factory or ReplicaAPI.configured
+        # run/resume executes the user's explicitly authorized, fixed-scope
+        # workflow. This confirmation does not open any additional actions.
+        self.factory = api_factory or (lambda: ReplicaAPI.configured(confirm_paid=True))
         self.api = self.factory()
         auth = self.api.authenticate()
         self.checkpoint = Checkpoint(state.root / 'cli-state.json', auth['account_id'])
@@ -553,7 +555,7 @@ class Runner:
             try:
                 result = self.api.upload_status(prior['request_id'])
             except ReplicaError as error:
-                if error.code in {'authentication_required', 'account_changed'}:
+                if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                     raise
                 value.update(stage='upload_unknown', error=error.code, request_id=prior['request_id'])
                 if error.code == 'result_unknown':
@@ -565,7 +567,7 @@ class Runner:
                         save_private(self.state.root / 'upload-reconciliation' / (value['record_id'] + '.json'),
                                      {'checked_at': self.now(), 'original_request_id': prior['request_id'], **proof})
                     except ReplicaError as lookup_error:
-                        if lookup_error.code in {'authentication_required', 'account_changed'}:
+                        if lookup_error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                             raise
                         value['reconcile_error'] = lookup_error.code
                 interval = self.health.policy['reconcile_interval'] if hasattr(self, 'health') else 60
@@ -715,7 +717,7 @@ class Runner:
                 if hasattr(self, 'health'):
                     self.observe(self.health.data.get('phase', 'wait_all_analyses'))
             except ReplicaError as error:
-                if error.code in {'authentication_required', 'account_changed'}:
+                if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                     self.submit_paused = True
                 value['poll_error'] = error.code
                 self.state.put(value['record_id'], value)
@@ -769,7 +771,7 @@ class Runner:
                 value.update(stage='upload_unknown' if uncertain else 'failed',
                              error=item.get('code'))
             self.state.put(value['record_id'], value)
-            if item.get('code') in {'not_submitted', 'result_unknown', 'authentication_required', 'account_changed', 'local_io_failed'}:
+            if item.get('code') in {'not_submitted', 'result_unknown', 'authentication_required', 'account_changed', 'permission_denied', 'local_io_failed'}:
                 self.submit_paused = True
             self.observe('upload_all')
 
@@ -864,7 +866,7 @@ class Runner:
             return {**summary, 'health_error': error.code}
         self.submit_paused = False
         self.observe(self.health.data.get('phase', 'initialization'))
-        for code in ('authentication_required', 'account_changed'):
+        for code in ('authentication_required', 'account_changed', 'permission_denied'):
             self.health.clear(code)
         self.reconcile_uploads()
         self.reconcile_unknown_logos()
@@ -921,7 +923,7 @@ class Runner:
                     self.health.alert('network_wait', message='Transport interrupted; resume from durable receipts, never replay uncertain POSTs')
                     summary = {**self.observe(self.health.data.get('phase', 'service_wait')), 'health_error': 'read_failed'}
                 except ReplicaError as error:
-                    if error.code not in {'read_failed', 'authentication_required', 'account_changed'} and not (error.status and error.status >= 500):
+                    if error.code not in {'read_failed', 'authentication_required', 'account_changed', 'permission_denied'} and not (error.status and error.status >= 500):
                         raise
                     self.health.alert(error.code, message='HTTP workflow waiting; business write intents retained')
                     summary = {**self.observe(self.health.data.get('phase', 'service_wait')), 'health_error': error.code}
@@ -929,7 +931,7 @@ class Runner:
                     if summary['all_terminal'] and not any(v['stage'] in UNKNOWN for v in self.state.all()):
                         summary = self.observe('complete')
                     return summary
-                if summary.get('health_error') in {'authentication_required', 'account_changed'}:
+                if summary.get('health_error') in {'authentication_required', 'account_changed', 'permission_denied'}:
                     return summary
                 delay = 30 if summary.get('health_error') else 8
                 if summary['all_terminal'] and summary.get('reconciliation_pending'):
