@@ -169,3 +169,45 @@ def test_existing_handoff_keeps_pinned_replication_when_config_changes(tmp_path)
     modified['plugin_handoff']['image_replication_after_ingestion']['enabled'] = False
     daily.prepare('2026-10-31', tmp_path, modified)
     assert (tmp_path / 'scope.json').read_bytes() == original
+
+
+@pytest.mark.parametrize('target,previous', [('2026-11-03', '2026-11-02'), ('2027-01-01', '2026-12-31')])
+def test_new_scope_pins_previous_calendar_day_template_review(tmp_path, target, previous):
+    cfg = daily.load(daily.CONFIG)
+    daily.prepare(target, tmp_path, cfg)
+    scope = daily.load(tmp_path / 'scope.json')
+    assert scope['previous_day_template_dedupe'] == {
+        **cfg['plugin_handoff']['previous_day_template_dedupe'], 'reference_date': previous}
+    assert scope['previous_day_template_dedupe']['method'] == 'bound_visual_evidence'
+    assert scope['previous_day_template_dedupe']['duplicate'] == 'exclude_current'
+    task = (tmp_path / 'handoff-task.md').read_text()
+    assert previous in task and '不能用封面向量' in task
+    assert '缺模板证据记pending' in task and '即使当天估值更高' in task
+    receipt = daily.load(tmp_path / 'handoff.json')
+    assert receipt['review_status'] == 'not_certified_by_intake'
+    original = [(tmp_path / name).read_bytes() for name in ['scope.json', 'handoff.json', 'handoff-task.md']]
+    # Resume uses the pinned target and policy even if the current config changes.
+    changed = copy.deepcopy(cfg)
+    changed['plugin_handoff']['previous_day_template_dedupe']['history_days'] = 7
+    daily.prepare(target, tmp_path, changed)
+    assert [(tmp_path / name).read_bytes() for name in ['scope.json', 'handoff.json', 'handoff-task.md']] == original
+
+
+def test_existing_scope_does_not_gain_previous_day_template_policy(tmp_path):
+    cfg = daily.load(daily.CONFIG)
+    legacy = copy.deepcopy(cfg)
+    legacy['plugin_handoff'].pop('previous_day_template_dedupe')
+    daily.prepare('2026-11-02', tmp_path, legacy)
+    files = [tmp_path / name for name in ['scope.json', 'handoff.json', 'handoff-task.md']]
+    original = [p.read_bytes() for p in files]
+    daily.prepare('2026-11-02', tmp_path, cfg)
+    assert [p.read_bytes() for p in files] == original
+    assert 'previous_day_template_dedupe' not in daily.load(files[0])
+
+
+def test_unsupported_previous_day_template_policy_rejected_before_intake(tmp_path):
+    cfg = copy.deepcopy(daily.load(daily.CONFIG))
+    cfg['plugin_handoff']['previous_day_template_dedupe']['history_days'] = 7
+    with pytest.raises(ValueError, match='previous-day template'):
+        daily.prepare('2026-11-03', tmp_path, cfg)
+    assert not (tmp_path / 'scope.json').exists()

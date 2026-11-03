@@ -35,6 +35,8 @@
 
 ## 一套证据、一次人工检查
 
+新批额外在scope固定`previous_day_template_dedupe`：第四道联合审核还须对照目标日前一天同App/系统完整已确认模板库，确认重复剔除当天项、存疑不纳入；缺前一天证据记pending，详见[前一天模板去重](content-review.md#前一天模板去重)。前7天向量比对仍只对封面，向量包不携带完整模板审核证据，不能替代前一天六帧/原图及模板记录。pre-review输出JOINT_REVIEW_PENDING不认证此步骤。
+
 只对review_queue核验视频完整解码（源SHA匹配的既有解码回执可复用），再准备完整六帧；按产品并列查看，同一次填写`joint_review.content/template/style`及实际证据与画面理由。已有六帧先核对原媒体SHA、manifest哈希、六个采样位置与帧哈希，匹配才复用；入口输出`reuse_verified_six_frames`。没有则`extract_one_six_frame_set`，按现有frames脚本生成一套；同参数3%代理可纳入同套并补其余五帧。静态图输出`view_all_original_images`，逐原图一次审核三项。计划不认证人工查看完成，不自动填content/template/style或继承旧准入结论。
 
 去重与旧封面逻辑同用连通聚类：A像B、B像C可能连成一组，非直接命中要保留证据，不能称确定整条视频重复。跨日命中在7天内才剔除，17号不在25号的窗口内。历史App不明会列出具体ID及缺失覆盖，目标App不明直接阻止排队。

@@ -1,11 +1,18 @@
 """Local receipt for user-supplied plugin ZIPs; never start browser collection."""
-from datetime import date
+from datetime import date, timedelta
 import hashlib
 import json
 from pathlib import Path
 import zipfile
 
 MODE = 'plugin-handoff-v1'
+PREVIOUS_DAY_TEMPLATE_POLICY = {
+    'version': 'previous-day-template-review-v1', 'history_days': 1,
+    'identity_scope': 'same_app_and_os', 'method': 'bound_visual_evidence',
+    'history_input': 'all_confirmed_reviewed_templates',
+    'duplicate': 'exclude_current', 'uncertain': 'not_admitted',
+    'missing_history': 'pending_not_zero',
+}
 
 
 def sha(path):
@@ -76,6 +83,14 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
         'collection_complete_21_apps': False, 'auto_browser_collection': False,
         'auto_retry_downloads': False, 'feishu': config['feishu']}
     if not existing:
+        template_policy = config['plugin_handoff'].get('previous_day_template_dedupe')
+        if template_policy is not None:
+            if template_policy != PREVIOUS_DAY_TEMPLATE_POLICY:
+                raise ValueError('Unsupported previous-day template dedupe policy')
+            scope['previous_day_template_dedupe'] = {
+                **template_policy,
+                'reference_date': (date.fromisoformat(target) - timedelta(days=1)).isoformat(),
+            }
         replication = config['plugin_handoff'].get('image_replication_after_ingestion')
         if replication and replication.get('enabled'):
             reference = replication['brand_reference']
@@ -120,6 +135,18 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
 视频实际解码、抽六帧并查看，图片逐原图解码/查看，记录决定、理由、证据哈希；六帧不称完整审听。
 通过项同次按scope固定风格版本打标，合并按展示估值降序取scope.ranking规定的前100条（不足取实际通过数）。'''
     review_steps += '\n本批固定交付范围：' + label(scope['ranking']) + '。展示估值只决定排序和同模板代表；不隐式套用前100/前10%限制。'
+    template_policy = scope.get('previous_day_template_dedupe')
+    if template_policy:
+        expected = {**PREVIOUS_DAY_TEMPLATE_POLICY,
+                    'reference_date': (date.fromisoformat(target) - timedelta(days=1)).isoformat()}
+        if template_policy != expected:
+            raise ValueError('Unsupported pinned previous-day template dedupe policy')
+        review_steps += f'''
+本批额外固定前一天模板比对：参考日{template_policy['reference_date']}，按同App/系统完整已审核模板库比较，不只看前一天入表清单。
+日内和前7天去重仍都是封面CLIP；前一天模板比对须在联合审核中并列查看源SHA256绑定的六帧/全部原图，必要时补帧/播放，按镜头、脚本钩子、动作、交互及CTA确认，不能用封面向量或模板名称代替。
+确认与前一天同模板时剔除当天项，即使当天估值更高也不替换历史；日内合格组仍取最高估值代表。仅换角色、肤色或画法的相同广告结构也按同模板。存疑暂不纳入。
+逐项记录same_template/distinct/related_not_duplicate/uncertain，以及reference_date、reference_ids、双方证据哈希和判断理由；前一天无批次、覆盖不全或缺模板证据记pending，不能当零历史或宣称跨日模板核验完成。
+保存当天全部已确认模板及被跨日剔除项的模板关联，供次日继续比较，避免只存入表项导致同模板隔日重新入选。pre-review只准备封面去重队列，不能认证这一步已完成。'''
     replication = scope.get('image_replication_after_ingestion', {})
     if replication.get('enabled'):
         review_steps += f'''

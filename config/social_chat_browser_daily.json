@@ -15,6 +15,16 @@
     "auto_browser_collection": false,
     "auto_retry_downloads": false,
     "collection_complete_21_apps": false,
+    "previous_day_template_dedupe": {
+      "version": "previous-day-template-review-v1",
+      "history_days": 1,
+      "identity_scope": "same_app_and_os",
+      "method": "bound_visual_evidence",
+      "history_input": "all_confirmed_reviewed_templates",
+      "duplicate": "exclude_current",
+      "uncertain": "not_admitted",
+      "missing_history": "pending_not_zero"
+    },
     "image_replication_after_ingestion": {
       "enabled": true,
       "version": "afizzy-brand-only-after-ingestion-v1",
