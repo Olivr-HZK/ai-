@@ -235,17 +235,19 @@ class ReplicaAPI:
         if safe_retry and method != 'GET' and path != '/api/jobs/download/files':
             raise ReplicaError('unsupported_action', 'Generation and route changes must not be automatically retried')
         write = method != 'GET'
-        request_headers = {'Accept': 'application/json', 'Origin': BASE_URL, **(headers or {})}
+        request_headers = {'Accept': 'application/json', **(headers or {})}
+        if not self.device_auth:
+            request_headers['Origin'] = BASE_URL
         if write:
             if not self.account or (not self.device_auth and not self.csrf):
                 raise ReplicaError('authentication_required', 'Authenticate the HTTP session before submitting work')
-            request_headers['X-Replica-Account'] = self.account
             if self.device_auth:
                 if re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate)', path):
                     if not self.confirm_paid:
                         raise ReplicaError('confirmation_required', 'Device-authorized paid actions require --yes')
                     request_headers['X-Replica-Confirm'] = 'paid'
             else:
+                request_headers['X-Replica-Account'] = self.account
                 request_headers['X-Replica-CSRF'] = self.csrf
         retry = method == 'GET' or safe_retry
         for attempt in range(3 if retry else 1):
@@ -264,7 +266,18 @@ class ReplicaAPI:
             if response.status_code in {401, 403}:
                 self.csrf = None
                 if self.device_auth and response.status_code == 403:
-                    raise ReplicaError('permission_denied', 'CLI token lacks permission for this operation', 403)
+                    message = 'Device-authorized request was denied'
+                    try:
+                        detail = response.json().get('detail')
+                    except (ValueError, TypeError, AttributeError):
+                        detail = None
+                    if isinstance(detail, str) and detail:
+                        for secret in (vars(self.session).get('_bearer'), self.csrf):
+                            if secret:
+                                detail = detail.replace(secret, '[redacted]')
+                        detail = re.sub(r'(?i)\bbearer\s+\S+', 'Bearer [redacted]', detail)
+                        message += ': ' + ''.join(c if c.isprintable() else ' ' for c in detail)[:400]
+                    raise ReplicaError('permission_denied', message, 403)
                 raise ReplicaError('authentication_required', 'Replica session is missing, expired or not authorized', response.status_code)
             if response.status_code >= 500 and retry and attempt < 2:
                 self.wait(2 * (attempt + 1))

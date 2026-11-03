@@ -61,16 +61,19 @@ def load_token(path=None, *, required=False):
     return value
 
 
-def save_token(path, token, account_id):
-    if not valid_token(token) or not isinstance(account_id, str) or not account_id:
-        raise ReplicaError('invalid_credentials_file', 'Refusing to save an unverified CLI credential')
+def save_token(path, token, account_id=None):
+    if not valid_token(token) or (account_id is not None and (not isinstance(account_id, str) or not account_id)):
+        raise ReplicaError('invalid_credentials_file', 'Refusing to save an invalid CLI credential')
     path = Path(path).expanduser()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.' + secrets.token_hex(8) + '.tmp')
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
-            json.dump({'server': BASE_URL, 'token': token, 'account_id': account_id}, handle)
+            credential = {'server': BASE_URL, 'token': token}
+            if account_id is not None:
+                credential['account_id'] = account_id
+            json.dump(credential, handle)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
@@ -101,8 +104,9 @@ class DeviceTokenSession(requests.Session):
                 parsed.username or parsed.password or parsed.fragment or not parsed.path.startswith('/api/')):
             raise ReplicaError('unsupported_endpoint', 'CLI credential is restricted to the fixed Replica API origin')
         headers = dict(kwargs.pop('headers', {}) or {})
-        if (any(key.lower() in {'authorization', 'cookie', 'host'} for key in headers)
-                or any(key.lower() in {'authorization', 'cookie', 'host'} for key in self.headers)
+        forbidden = {'authorization', 'cookie', 'host', 'origin', 'x-replica-account', 'x-replica-csrf'}
+        if (any(key.lower() in forbidden for key in headers)
+                or any(key.lower() in forbidden for key in self.headers)
                 or kwargs.get('cookies') or kwargs.get('auth') or self.auth is not None):
             raise ReplicaError('unsupported_action', 'Cannot inject credentials into the CLI token transport')
         headers['Authorization'] = 'Bearer ' + self._bearer
@@ -213,6 +217,12 @@ def start_device_login(*, path=None, label=None, timeout=600, no_browser=False, 
             token = result.get('token')
             if not valid_token(token):
                 raise ReplicaError('read_failed', 'Approval did not return a valid CLI credential')
+            # Match the reference client's ordering: persist the server-approved
+            # credential before whoami, so a denied/interrupted identity GET
+            # does not discard the user's approval. Business still authenticates
+            # through whoami and binds its checkpoint before any submission.
+            destination = Path(path).expanduser() if path is not None else token_path()
+            save_token(destination, token)
             from ua_workflows.replica_studio_api import ReplicaAPI
             api = ReplicaAPI(DeviceTokenSession(token), wait=wait)
             identity_deadline = min(deadline, clock() + 60)
@@ -224,7 +234,6 @@ def start_device_login(*, path=None, label=None, timeout=600, no_browser=False, 
                     if error.status != 503 or clock() >= identity_deadline:
                         raise
                     wait(min(5, identity_deadline - clock()))  # GET identity is safe to re-read.
-            destination = Path(path).expanduser() if path is not None else token_path()
             save_token(destination, token, identity['account_id'])
             return {'operation': 'login', 'cli_authenticated': True, 'authenticated': True,
                     **identity, 'token_file': str(destination)}

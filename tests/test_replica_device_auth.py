@@ -150,12 +150,19 @@ class DeviceLoginTests(unittest.TestCase):
         self.assertEqual(http.call_args.args[:2],('GET',BASE_URL+'/api/cli/whoami'))
         self.assertFalse(self.session.trust_env)
 
-    def test_approval_without_valid_identity_does_not_replace_existing_credential(self):
+    def test_approved_credential_survives_identity_failure_without_false_account_pin(self):
         device.save_token(self.path,'prior-token','account-prior')
         self.session.post.side_effect=[response(started()),response({'state':'approved','token':TOKEN})]
         with patch.object(requests.Session,'request',return_value=response({'user':None})):
             with self.assertRaises(ReplicaError): self.login()
-        self.assertEqual(device.load_token(self.path)['token'],'prior-token')
+        saved=device.load_token(self.path)
+        self.assertEqual(saved['token'],TOKEN)
+        self.assertNotIn('account_id',saved)
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode),0o600)
+        with patch.object(requests.Session,'request',return_value=response(whoami())):
+            result=ReplicaAPI.configured(token_file=self.path).authenticate()
+        self.assertEqual(result['account_id'],'account-a')
+        self.assertEqual(self.session.post.call_count,2)  # No second device approval.
 
     def test_denied_and_expired_are_not_saved_or_restarted(self):
         for state in ('denied','expired'):
@@ -209,7 +216,7 @@ class DeviceLoginTests(unittest.TestCase):
         with self.assertRaises(ReplicaError):self.login(timeout=5)
         self.assertEqual(sum(self.clock.waits),5);self.assertFalse(self.path.exists())
 
-    def test_approved_token_waits_for_readonly_identity_before_saving(self):
+    def test_approved_token_waits_for_readonly_identity_without_reapproval(self):
         self.session.post.side_effect=[response(started()),response({'state':'approved','token':TOKEN})]
         with patch.object(requests.Session,'request',side_effect=[response({},503)]*3+[response(whoami())]) as http:
             result=self.login(no_browser=True)
@@ -228,6 +235,8 @@ class DeviceTransportTests(unittest.TestCase):
             result=api.authenticate()
         self.assertNotIn(TOKEN,json.dumps(result));self.assertEqual(result['account_id'],'account-a')
         self.assertEqual(http.call_args.kwargs['headers']['Authorization'],'Bearer '+TOKEN)
+        self.assertNotIn('Origin',http.call_args.kwargs['headers'])
+        self.assertNotIn('X-Replica-Account',http.call_args.kwargs['headers'])
         self.assertFalse(http.call_args.kwargs['allow_redirects'])
         self.assertFalse(api.session.trust_env);self.assertIsNone(api.csrf)
 
@@ -239,7 +248,9 @@ class DeviceTransportTests(unittest.TestCase):
             api.confirm_paid=True
             api.smart_logo({'id':'job-a','revision':8},{'logo_mode':'smart'})
         headers=http.call_args.kwargs['headers']
-        self.assertEqual(headers['X-Replica-Confirm'],'paid');self.assertEqual(headers['X-Replica-Account'],'account-a')
+        self.assertEqual(headers['X-Replica-Confirm'],'paid')
+        self.assertNotIn('X-Replica-Account',headers)
+        self.assertNotIn('Origin',headers)
         self.assertNotIn('X-Replica-CSRF',headers)
 
     def test_upload_reference_and_download_plan_do_not_send_paid_generation_confirmation(self):
@@ -256,7 +267,8 @@ class DeviceTransportTests(unittest.TestCase):
             self.assertEqual(list(transport.cookies),[]);self.assertFalse(http.call_args.kwargs['allow_redirects'])
             for address in ('https://evil.example/api/jobs','http://replica-studio.upupup.today/api/jobs',BASE_URL+'/outside'):
                 with self.assertRaises(ReplicaError):transport.get(address)
-            for headers in ({'Cookie':'injected'},{'Authorization':'Bearer other'},{'Host':'evil.example'}):
+            for headers in ({'Cookie':'injected'},{'Authorization':'Bearer other'},{'Host':'evil.example'},
+                            {'Origin':BASE_URL},{'X-Replica-Account':'other'},{'X-Replica-CSRF':'old'}):
                 with self.assertRaises(ReplicaError):transport.get(BASE_URL+'/api/jobs',headers=headers)
         self.assertEqual(http.call_count,1)
 
@@ -268,6 +280,22 @@ class DeviceTransportTests(unittest.TestCase):
         with patch.object(requests.Session,'request',return_value=response({},403)):
             with self.assertRaises(ReplicaError) as error:api.authenticate()
         self.assertEqual(error.exception.code,'permission_denied')
+
+    def test_denial_detail_is_visible_without_echoing_bearer_credential(self):
+        api=self.client()
+        with patch.object(requests.Session,'request',return_value=response({'detail':'Origin rejected; Authorization: Bearer '+TOKEN},403)):
+            with self.assertRaises(ReplicaError) as error:api.authenticate()
+        self.assertIn('Origin rejected',str(error.exception))
+        self.assertNotIn(TOKEN,str(error.exception))
+
+    def test_saved_approval_with_wrong_account_cannot_open_an_existing_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'cli.json';device.save_token(path,TOKEN)
+            cp=Path(directory)/'state.json';Checkpoint(cp,'account-a').put('uploads','existing',{'stage':'uploaded'})
+            api=ReplicaAPI.configured(token_file=path)
+            with patch.object(requests.Session,'request',return_value=response(whoami('account-b'))):
+                auth=api.authenticate()
+            with self.assertRaises(ReplicaError):Checkpoint(cp,auth['account_id'])
 
     def test_changed_token_account_cannot_use_existing_checkpoint(self):
         api=self.client();api.expected_account='account-a'
