@@ -1,0 +1,4 @@
+#!/bin/sh
+GDD_DIRECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 1
+cd "$GDD_DIRECT_ROOT" || exit 1
+exec "$GDD_DIRECT_ROOT/.venv/bin/python" -m ua_workflows.guangdada_direct "$@"
