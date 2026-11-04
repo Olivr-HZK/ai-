@@ -6,29 +6,36 @@
     "mode": "manual_zip",
     "processing_policy_version": "dedupe-first-joint-review-v2",
     "content_review_policy": {
-      "version": "male-display-female-oriented-no-talking-head-v1",
+      "version": "male-display-female-oriented-no-real-person-v2",
       "male_display": "required",
       "female_oriented_appeal": "required",
-      "real_person_talking_head": "exclude",
+      "real_person": "exclude",
+      "female_primary": "exclude",
+      "gender_evidence": "context_not_costume",
+      "hands_only": "retain_existing_scope",
       "uncertain": "not_admitted"
     },
     "auto_browser_collection": false,
     "auto_retry_downloads": false,
     "collection_complete_21_apps": false,
     "previous_day_template_dedupe": {
-      "version": "previous-day-template-review-v1",
+      "version": "previous-day-template-baseline-v2",
       "history_days": 1,
-      "identity_scope": "same_app_and_os",
+      "identity_scope": "same_product_and_os",
       "method": "bound_visual_evidence",
       "history_input": "all_confirmed_reviewed_templates",
       "duplicate": "exclude_current",
       "uncertain": "not_admitted",
-      "missing_history": "pending_not_zero"
+      "missing_history": "pending_not_zero",
+      "verified_empty_history": "new_baseline_then_intraday_template_dedupe",
+      "history_error": "pending_not_zero",
+      "template_confirmation_independent_of_final_selection": true
     },
+    "template_identity_mapping": "config/social_chat_template_identities.json",
     "image_replication_after_ingestion": {
-      "enabled": true,
+      "enabled": false,
       "version": "afizzy-brand-only-after-ingestion-v1",
-      "trigger": "after_independent_verified_ingestion",
+      "trigger": "manual_request_after_verified_ingestion",
       "media_type": "图片",
       "brand": "afizzy",
       "generator": "built-in-image_gen",
@@ -71,7 +78,18 @@
   },
   "style_tagging": {
     "version": "character-style-v2",
-    "tags": ["日式漫画", "韩式漫画", "欧美写实", "东亚写实", "中式漫画", "欧美卡通", "数字插画", "3D角色", "混合风格", "待确认"],
+    "tags": [
+      "日式漫画",
+      "韩式漫画",
+      "欧美写实",
+      "东亚写实",
+      "中式漫画",
+      "欧美卡通",
+      "数字插画",
+      "3D角色",
+      "混合风格",
+      "待确认"
+    ],
     "required_for_keep": true
   },
   "feishu": {
@@ -86,8 +104,8 @@
   "app_id_registry": "config/social_chat_browser_app_ids.json",
   "schedule": {
     "timezone": "Asia/Shanghai",
-    "time": "07:00",
-    "automation_id": "automation",
+    "time": "05:00",
+    "automation_id": "automation-3",
     "kind": "thread_heartbeat"
   },
   "crawl_start_notice": {
@@ -131,5 +149,100 @@
     "6761748236": {
       "iOS": "游戏"
     }
-  }
+  },
+  "daily_workflow": {
+    "enabled": true,
+    "version": "afizzy-headless-screen-ingest-v2",
+    "execution": "scheduled_agent",
+    "runbook": "skills/social-chat-browser-daily/references/headless-daily.md",
+    "first_execution_date": "2026-11-04",
+    "date_rule": "previous_calendar_day_asia_shanghai",
+    "collector": "ua_workflows.guangdada_direct",
+    "presets": [
+      "game",
+      "tool",
+      "tool2"
+    ],
+    "sample_per_preset": null,
+    "max_pages": null,
+    "state_dir": "data/afizzy_daily/collector-state",
+    "raw_output": "data/afizzy_daily/raw",
+    "daily_run_dir": "data/afizzy_daily/YYYY-MM-DD",
+    "stages": [
+      "collect",
+      "screen",
+      "ingest_originals",
+      "broadcast"
+    ],
+    "video_replication": {
+      "command": "ua_workflows.social_chat_replica",
+      "scheduling": "pipeline",
+      "operation": "logo_only",
+      "translate": false,
+      "replace_characters": false,
+      "enabled": false
+    },
+    "image_replication": "plugin_handoff.image_replication_after_ingestion",
+    "playable_replication": false,
+    "start_notice": false,
+    "history": "new_daily_batches_only",
+    "automatic_replication": false,
+    "replication_trigger": "explicit_user_request_only",
+    "orientation_filter": "orientation_filter",
+    "screening_first_step": "exclude_landscape",
+    "completion_broadcast": {
+      "enabled": true,
+      "version": "afizzy-product-funnel-v1",
+      "layout": "minimal-v4",
+      "destination": "crawl_completion_report",
+      "product_groups": "config/afizzy_report_products.json",
+      "merge_ios_android_for_display_only": true,
+      "event": "after_independently_verified_original_ingestion",
+      "command": "ua_workflows.afizzy_daily_report",
+      "mention_all": false,
+      "once_per_target_date": true,
+      "receipt": "report-receipt.json",
+      "first_target_date": "2026-11-03",
+      "unknown_send": "stop_without_replay",
+      "wecom": {
+        "enabled": true,
+        "webhook_env": "AFIZZY_WECOM_WEBHOOK",
+        "first_target_date": "2026-11-03",
+        "format": "minimal_markdown_v1",
+        "receipt": "wecom-report-receipt.json",
+        "once_per_target_date": true,
+        "unknown_send": "stop_without_replay",
+        "mention_all": false
+      }
+    },
+    "preset_activation": {
+      "tool2": {
+        "category": "工具",
+        "preset": "afizzy竞品2",
+        "effective_execution_date": "2026-11-05",
+        "first_daily_target_date": "2026-11-04",
+        "explicit_test_target_date": "2026-11-03"
+      }
+    },
+    "collector_reader": "validated_morning_card_binding_user_approved"
+  },
+  "orientation_filter": {
+    "rule": "exclude_landscape_display_width_gt_height_v1",
+    "enabled": true,
+    "stage": "first_screening_before_relaunch_and_clip",
+    "applies_to": [
+      "视频",
+      "图片"
+    ],
+    "dimensions": "actual_original_media_display_dimensions",
+    "landscape": "exclude_when_display_width_gt_height",
+    "square": "keep",
+    "portrait": "keep",
+    "unknown_dimensions": "pending_not_zero",
+    "video_rotation_and_sample_aspect_ratio": "honor_probe_metadata",
+    "mixed_images": "exclude_landscape_images_keep_other_originals",
+    "evidence": "source_sha256_size_probe_or_decoded_dimensions",
+    "history": "new_screening_scopes_only"
+  },
+  "replication_trigger": "manual"
 }

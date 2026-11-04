@@ -1,0 +1,95 @@
+{
+  "version": "afizzy-report-products-v1",
+  "purpose": "Display grouping only: merge iOS and Android in the daily broadcast. Never change collection, dedupe, template identity or table advertiser fields.",
+  "unknown_name": "show_observed_name_without_fuzzy_merge",
+  "products": [
+    {
+      "name": "zeta",
+      "aliases": [
+        "zeta: AI Chat, Story, Play"
+      ]
+    },
+    {
+      "name": "Emochi",
+      "aliases": [
+        "Emochi: Chat With Character",
+        "EMOCHI World: AI Story Chat"
+      ]
+    },
+    {
+      "name": "Tipsy",
+      "aliases": [
+        "Tipsy: Live Your Story",
+        "Tipsy Chat: Live Your Story",
+        "Tipsy Chat"
+      ]
+    },
+    {
+      "name": "Tizz",
+      "aliases": [
+        "Tizz: Craft Your World",
+        "TizzChat: Craft Your World",
+        "aiapp.tizzchat.chatbot"
+      ]
+    },
+    {
+      "name": "Heyyyy",
+      "aliases": [
+        "Heyyyy: Stories that text back"
+      ]
+    },
+    {
+      "name": "PolyBuzz",
+      "aliases": [
+        "PolyBuzz: Chat with AI Friends",
+        "PolyBuzz: Chat with Characters"
+      ]
+    },
+    {
+      "name": "LoveyDovey",
+      "aliases": [
+        "LoveyDovey - Dream Chats",
+        "LoveyDovey - Dream AI Chats"
+      ]
+    },
+    {
+      "name": "Whispy",
+      "aliases": [
+        "Whispy AI: Cozy Chat",
+        "Whispy AI: Create Your Story"
+      ]
+    },
+    {
+      "name": "SeaHaze",
+      "aliases": [
+        "SeaHaze - AI Chat & Friends"
+      ]
+    },
+    {
+      "name": "Sea Soul",
+      "aliases": [
+        "Sea Soul: AI Chat"
+      ]
+    },
+    {
+      "name": "Talkie",
+      "aliases": [
+        "Talkie Lab - AI Playground",
+        "Talkie: Creative AI Community"
+      ]
+    },
+    {
+      "name": "dotdotdot",
+      "aliases": [
+        "dotdotdot Fantasy AI Boyfriend",
+        "dotdotdot: AI Romance, Stories"
+      ]
+    },
+    {
+      "name": "Dulci",
+      "aliases": [
+        "Dulci: AI Interactive Story"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,10 @@
 # 定时任务（macOS crontab）
 
+**2026-11-04当前规则**：本机automation-3每天北京时间05:00采集昨天的Afizzy竞品，筛选、原素材入表独立核验后发送飞书/企业微信唯一结束日报；从11月5日起范围为游戏afizzy竞品游戏、工具afizzy竞品及工具afizzy竞品2。后续不自动进入复刻，视频/图片复刻和回填需用户另行明确要求。此条优先于下文历史09:00/自动复刻说明，既有独立授权批次不被接管或重算。详见[无头日流程](../skills/social-chat-browser-daily/references/headless-daily.md)。
+
+2026-11-03用户已授权本机automation-3每天北京时间09:00无头全采昨天Afizzy游戏/工具竞品，接续筛选、原素材入表、品牌复刻和结果回填；首次2026-11-04。使用Codex本聊天heartbeat，不写系统crontab、不调用旧VE入口。见[本机部署说明](social-daily-deployment.md)；本页下方广大大暂停记录保留为历史。
+
+
 ## 目标
 
 - **每天**跑两条「昨日最新」类生产流：**Video Enhancer（VE）**、**Arrow2 latest_yesterday**，均含 **分析 + 飞书同步**。

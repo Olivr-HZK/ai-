@@ -29,7 +29,9 @@ def test_default_prepare_waits_for_package_without_browser_or_daily_fsm(tmp_path
     assert result['status'] == 'WAITING_PACKAGE' and result['browser_started'] is False
     scope = daily.load(tmp_path / 'scope.json')
     assert scope['ranking'] == {'mode': 'all'}
-    assert scope['content_review_policy']['version'] == 'male-display-female-oriented-no-talking-head-v1'
+    assert 'image_replication_after_ingestion' not in scope
+    assert '无需用户另行提醒' not in (tmp_path / 'handoff-task.md').read_text()
+    assert scope['content_review_policy']['version'] == cfg['plugin_handoff']['content_review_policy']['version']
     from ua_workflows.social_chat_plugin_review_plan import POLICY
     assert scope['processing_policy']==POLICY
     assert not (tmp_path / 'daily-machine').exists() and not (tmp_path / 'tasks').exists()
@@ -123,19 +125,21 @@ def test_cli_pre_review_requires_new_policy_and_received_zip(tmp_path):
     assert not (tmp_path/'pre-review/plan.json').exists()
 
 
-def test_new_handoff_pins_replication_only_after_verified_ingestion(tmp_path):
+def test_enabled_replication_scope_still_requires_manual_trigger(tmp_path):
     cfg = daily.load(daily.CONFIG)
+    cfg['plugin_handoff']['image_replication_after_ingestion']['enabled'] = True
     daily.prepare('2026-10-31', tmp_path, cfg)
     scope = daily.load(tmp_path / 'scope.json')
     policy = scope['image_replication_after_ingestion']
     assert policy == cfg['plugin_handoff']['image_replication_after_ingestion']
-    assert policy['trigger'] == 'after_independent_verified_ingestion'
+    assert policy['trigger'] == 'manual_request_after_verified_ingestion'
     assert policy['attachment_field_id'] == 'fld6ygGkqD'
     reference = daily.ROOT / policy['brand_reference']['path']
     assert hashlib.sha256(reference.read_bytes()).hexdigest() == policy['brand_reference']['sha256']
     task = (tmp_path / 'handoff-task.md').read_text()
-    assert '入库后的下一步' in task and 'image-replication.md' in task
-    assert '原尺寸' in task and '无需用户另行提醒' in task
+    assert '用户手动触发' in task and 'image-replication.md' in task
+    assert '历史scope的自动启用标记不构成新启动授权' in task
+    assert '无需用户另行提醒' not in task
     # Intake still has no side effect and does not certify generation or sync.
     assert not daily.load(tmp_path / 'handoff.json')['feishu_written_by_intake']
     assert not (tmp_path / 'replicas').exists()
@@ -155,6 +159,7 @@ def test_replication_policy_is_not_added_to_existing_legacy_scope(tmp_path):
 
 def test_replication_reference_mismatch_fails_before_creating_scope(tmp_path):
     cfg = copy.deepcopy(daily.load(daily.CONFIG))
+    cfg['plugin_handoff']['image_replication_after_ingestion']['enabled'] = True
     cfg['plugin_handoff']['image_replication_after_ingestion']['brand_reference']['sha256'] = '0' * 64
     with pytest.raises(ValueError, match='brand reference changed'):
         daily.prepare('2026-10-31', tmp_path, cfg)
@@ -163,6 +168,7 @@ def test_replication_reference_mismatch_fails_before_creating_scope(tmp_path):
 
 def test_existing_handoff_keeps_pinned_replication_when_config_changes(tmp_path):
     cfg = daily.load(daily.CONFIG)
+    cfg['plugin_handoff']['image_replication_after_ingestion']['enabled'] = True
     daily.prepare('2026-10-31', tmp_path, cfg)
     original = (tmp_path / 'scope.json').read_bytes()
     modified = copy.deepcopy(cfg)
@@ -182,7 +188,7 @@ def test_new_scope_pins_previous_calendar_day_template_review(tmp_path, target, 
     assert scope['previous_day_template_dedupe']['duplicate'] == 'exclude_current'
     task = (tmp_path / 'handoff-task.md').read_text()
     assert previous in task and '不能用封面向量' in task
-    assert '缺模板证据记pending' in task and '即使当天估值更高' in task
+    assert '建立当天新基线' in task and '身份冲突才pending' in task and '即使当天估值更高' in task
     receipt = daily.load(tmp_path / 'handoff.json')
     assert receipt['review_status'] == 'not_certified_by_intake'
     original = [(tmp_path / name).read_bytes() for name in ['scope.json', 'handoff.json', 'handoff-task.md']]

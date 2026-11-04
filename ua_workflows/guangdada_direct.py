@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlparse
 import zipfile
 import requests
-from .guangdada_headless_ui import PRESETS,PresetUI,PreparationError,unique_visible
+from .guangdada_headless_ui import PRESETS,AVAILABLE_PRESETS,selected_presets,preset_scope_suffix,PresetUI,PreparationError,unique_visible
 
 ROOT=Path(__file__).resolve().parents[1]
 SITE='https://www.guangdada.net/modules/creative/display-ads'
@@ -351,7 +351,9 @@ def main(argv=None):
  p.add_argument('--state-dir',type=Path,default=Path.home()/'.local/share/gdd-direct')
  p.add_argument('--output',type=Path,default=Path.home()/'Downloads/广大大独立采集')
  p.add_argument('--credentials-env',type=Path,default=ROOT/'.env')
- p.add_argument('--only',choices=['game','tool'])
+ range_args=p.add_mutually_exclusive_group()
+ range_args.add_argument('--only',choices=[p['key'] for p in AVAILABLE_PRESETS])
+ range_args.add_argument('--presets',nargs='+',choices=[p['key'] for p in AVAILABLE_PRESETS])
  p.add_argument('--sample-per-preset',type=int,help='显式小样测试数量，不冒充整日完成')
  p.add_argument('--max-pages',type=int)
  p.add_argument('--selectors',type=Path)
@@ -361,8 +363,8 @@ def main(argv=None):
  if a.max_pages is not None and a.max_pages<1:p.error('页数必须为正数')
  from playwright.sync_api import sync_playwright
  ffprobe_binary()
- scope=[q for q in PRESETS if not a.only or q['key']==a.only]
- suffix=(a.only or 'both')+(f'_sample{a.sample_per_preset}' if a.sample_per_preset else '')
+ scope=selected_presets([a.only] if a.only else a.presets)
+ suffix=preset_scope_suffix(scope)+(f'_sample{a.sample_per_preset}' if a.sample_per_preset else '')
  private=a.state_dir.expanduser().resolve();work=private/'runs'/f'{a.date}_{suffix}';output=a.output.expanduser().resolve()/f'{a.date}_{suffix}'
  states=[];attention=[]
  with profile_lock(private):

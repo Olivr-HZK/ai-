@@ -1,0 +1,20 @@
+{
+  "version": "template-product-identities-v1",
+  "purpose": "Explicit Tizz product aliases for template comparison; OS remains separate.",
+  "source": "existing verified app registry and user-confirmed Tizz product grouping 2026-11-04",
+  "products": [
+    {
+      "name": "Tizz",
+      "apps": {
+        "Android": {
+          "app_ids": ["aiapp.tizzchat.chatbot"],
+          "names": ["TizzChat: Craft Your World", "Tizz: Craft Your World", "aiapp.tizzchat.chatbot"]
+        },
+        "iOS": {
+          "app_ids": ["6768571224"],
+          "names": ["TizzChat: Craft Your World", "Tizz: Craft Your World"]
+        }
+      }
+    }
+  ]
+}
