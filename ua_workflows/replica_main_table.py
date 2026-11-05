@@ -112,13 +112,19 @@ class MainRunner(MainTranslationMixin, RequestRunner):
                 params['page_token'] = cursor
             try:
                 value = self.feishu.call('POST', self.route + '/records/search', params=params, json={
-                    'filter': {'conjunction': 'or', 'conditions': [
-                        {'field_name': TYPE, 'operator': 'is', 'value': [action]} for action in ACTIONS]}})
+                    'filter': {'conjunction': 'and', 'conditions': [
+                        {'field_name': TYPE, 'operator': 'isNotEmpty', 'value': []}]}})
             except ValueError as error:
                 if 'code=1254607' in str(error):
                     raise ReplicaError('read_failed', 'Main-table request query temporarily not ready') from None
                 raise
-            rows.extend(daily.normalize_record_texts(r) for r in value.get('items') or [])
+            # Options can be removed from the live select field. Referring to
+            # a removed option makes Feishu reject the entire filter. Query
+            # nonempty requests, then retain the exact supported actions here.
+            for item in value.get('items') or []:
+                row = daily.normalize_record_texts(item)
+                if row['fields'].get(TYPE) in ACTIONS:
+                    rows.append(row)
             if not value.get('has_more'):
                 return rows
             next_cursor = value.get('page_token')
@@ -197,8 +203,11 @@ class MainRunner(MainTranslationMixin, RequestRunner):
                  'write_intent': '下载回填中', 'verified': '已完成', 'failed': '失败',
                  'source_failed': '失败', 'needs_review': '需人工处理'}
         self.refresh_feishu()
+        rows = {r['record_id']: r for r in self.requested_rows()}
         for v in self.state.all():
-            rid = v['record_id']; row = record(self.feishu, self.route, rid)
+            rid = v['record_id']; row = rows.get(rid)
+            if row is None:
+                continue
             if (input_fingerprint(row) != self.state.items[rid]['input_fingerprint']
                     or row['fields'].get(EXECUTION) != self.state.items[rid]['execution_id']):
                 continue
@@ -209,7 +218,8 @@ class MainRunner(MainTranslationMixin, RequestRunner):
             if v['stage'] == 'verified':
                 fields[STATUS] = '结果返回'
                 fields[MESSAGE] = v.get('visual_review_message') or '成品已下载核验并写回本行复刻附件'
-            self._write_fields(rid, fields)
+            if any(row['fields'].get(k) != value for k, value in fields.items()):
+                self._write_fields(rid, fields)
 
 
 def main(argv=None):

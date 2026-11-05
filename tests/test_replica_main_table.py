@@ -42,9 +42,9 @@ class Feishu:
         self.calls.append((method,route,copy.deepcopy(kwargs)))
         with self.lock:
             if route.endswith('/records/search') and method == 'POST':
-                assert kwargs['json']['filter'] == {'conjunction':'or','conditions':[
-                    {'field_name':main.TYPE,'operator':'is','value':[action]} for action in main.ACTIONS]}
-                return {'items':copy.deepcopy([r for r in self.rows.values() if r['fields'].get(main.TYPE) in main.ACTIONS])}
+                assert kwargs['json']['filter'] == {'conjunction':'and','conditions':[
+                    {'field_name':main.TYPE,'operator':'isNotEmpty','value':[]}]}
+                return {'items':copy.deepcopy([r for r in self.rows.values() if r['fields'].get(main.TYPE)])}
             rid=route.rsplit('/',1)[-1]
             if method == 'GET': return {'record':copy.deepcopy(self.rows[rid])}
             if method == 'PUT':
@@ -142,6 +142,26 @@ class MainFixture(unittest.IsolatedAsyncioTestCase):
 
 
 class MainTests(MainFixture):
+    async def test_unchanged_progress_uses_one_snapshot_without_per_record_reads(self):
+        self.runner._admit()
+        self.runner._sync_progress()
+        self.client.calls.clear()
+        self.runner._sync_progress()
+        self.assertEqual(len(self.client.calls),1)
+        self.assertTrue(self.client.calls[0][1].endswith('/records/search'))
+        self.assertEqual(self.backend.uploads,[])
+
+    async def test_only_logo_option_can_be_queried_without_referencing_removed_language_option(self):
+        self.client.rows={'recMain':row(None,'替换logo')}
+        self.assertEqual([r['record_id'] for r in self.runner.requested_rows()],['recMain'])
+        self.assertEqual(self.backend.uploads,[])
+
+    async def test_nonempty_unsupported_options_are_filtered_locally(self):
+        self.client.rows={'recMain':row(None,'替换人物')}
+        self.assertEqual(self.runner.requested_rows(),[])
+        self.runner._control_once();self.runner._upload_once()
+        self.assertEqual(self.backend.uploads,[])
+
     async def test_no_request_never_starts_regardless_of_hidden_status(self):
         with patch('ua_workflows.replica_request_entry.SourceEntry') as creator:
             for status in [None,'新建','修改中','已完成','已验收','结果返回']:
