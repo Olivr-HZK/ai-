@@ -129,11 +129,17 @@ class TranslationTests(MainFixture):
 
     async def test_unknown_logo_is_never_mistaken_for_translation_or_reposted(self):
         self.translation();self.backend.unknown_logo.add('job-source')
-        self.start();await self.until(lambda:self.state.get('recMain')['stage']=='logo_unknown' if self.state.items else False)
+        # Inspect the persisted unknown receipt before the next control tick can
+        # reconcile it. Polling a transient stage races the background worker.
+        self.runner._control_once()
+        self.runner._upload_once()
+        self.runner._control_once()
+        self.assertEqual(self.state.get('recMain')['stage'],'logo_unknown')
+        self.assertEqual(self.backend.logos,['job-source'])
         self.assertEqual(self.backend.translations,[])
         self.backend.completed.add('job-source')
         value=self.state.get('recMain');value['logo_check_after']=0;self.state.put('recMain',value)
-        self.runner.reconcile_unknown_logos();self.runner._events['control'].set()
+        self.runner.reconcile_unknown_logos();self.start()
         await self.until(lambda:self.state.get('recMain')['stage']=='verified')
         self.assertEqual(len(self.backend.logos),1)
         self.assertEqual(len(self.backend.translations),1)
