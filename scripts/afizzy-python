@@ -9,5 +9,6 @@ if [ -n "${UA_STATE_ROOT:-}" ] && [ "$UA_STATE_ROOT" != "$AFIZZY_STATE_ROOT" ]; 
 fi
 cd "$AFIZZY_CODE_ROOT"
 export UA_STATE_ROOT="$AFIZZY_STATE_ROOT"
+export PYTHONPATH="$AFIZZY_CODE_ROOT"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
 exec "$AFIZZY_CODE_ROOT/.venv/bin/python" "$@"
