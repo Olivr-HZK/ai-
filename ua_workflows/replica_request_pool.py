@@ -265,6 +265,8 @@ class RequestRunner(PipelineRunner):
     def _upload_once(self):
         self.refresh_feishu()
         for value in self.state.all():
+            if self.state.items[value['record_id']].get('engine') == 'videolab':
+                continue
             if value['stage'] in {'queued', 'source_ready'} and self.now() >= value.get('upload_check_after', 0):
                 rid = value['record_id']
                 with self._claim(rid, {'queued', 'source_ready'}) as claimed:
@@ -279,6 +281,9 @@ class RequestRunner(PipelineRunner):
 
     def _control_once(self):
         self._admit()
+        return self._advance_requests()
+
+    def _advance_requests(self):
         self.api.authenticate()
         self.reconcile_uploads()
         self.reconcile_unknown_logos()

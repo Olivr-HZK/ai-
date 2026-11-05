@@ -14,8 +14,8 @@ from ua_workflows.replica_studio_api import ReplicaError, save_private
 
 DEFAULT_TIMEOUTS = {'stall_timeout': 900, 'stage_timeout': 7200, 'unknown_timeout': 900,
                     'reconcile_interval': 60}
-UNKNOWN = {'upload_unknown', 'logo_unknown', 'write_unknown', 'attachment_unknown'}
-WATCHED = UNKNOWN | {'uploaded', 'logo_accepted', 'logo_submitting', 'write_intent', 'feishu_upload_intent'}
+UNKNOWN = {'upload_unknown', 'logo_unknown', 'write_unknown', 'attachment_unknown', 'image_unknown'}
+WATCHED = UNKNOWN | {'uploaded', 'logo_accepted', 'logo_submitting', 'write_intent', 'feishu_upload_intent', 'image_processing'}
 
 
 def retry_delay(attempt, hint=None):

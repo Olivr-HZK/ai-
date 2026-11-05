@@ -145,11 +145,12 @@ class TranslationTests(MainFixture):
         self.assertEqual(len(self.backend.translations),1)
 
     async def test_translation_unknown_only_reads_same_job_without_new_paid_post(self):
-        self.translation(('日语',));original=self.runner.api.__class__.translate
+        from test_replica_main_table import API
+        self.translation(('日语',));original=API.translate
         def lost(api,job,options):
             original(api,job,options)
             raise ReplicaError('result_unknown','Lost translation receipt')
-        with patch.object(self.runner.api.__class__,'translate',lost):
+        with patch.object(API,'translate',lost):
             self.start();await self.until(lambda:self.state.get('recMain')['stage']=='logo_unknown' if self.state.items else False)
         value=self.state.get('recMain');value['translation_check_after']=0;self.state.put('recMain',value)
         self.runner.reconcile_unknown_logos()

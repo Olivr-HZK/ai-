@@ -1,4 +1,4 @@
-"""Main-table Logo requests and multilingual translation after mandatory Logo."""
+"""Main-table image/video Logo requests and video translation after mandatory Logo."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +14,7 @@ import uuid
 from ua_workflows import social_chat_browser_daily as daily
 from ua_workflows.replica_request_pool import RequestRunner, PoolState, DemandBlocked, plan_request, fingerprint, record, LANGUAGES
 from ua_workflows.replica_main_translation import MainTranslationMixin
+from ua_workflows.replica_main_images import MainImagesMixin, plan_images
 from ua_workflows.replica_studio_api import ReplicaError, save_private
 from ua_workflows.social_chat_media_orientation import POLICY
 from ua_workflows.social_chat_replica import APP, TABLE, State, ReplicaFeishu, source_identity, TERMINAL
@@ -62,7 +63,10 @@ def plan(row):
                 or any(lang not in LANGUAGES for lang in languages)):
             raise DemandBlocked('请先在复刻目标语言选择至少一个支持的语言，补齐后会自动继续')
         fields = {**fields, '目标语言': languages[:1]}
-    value = plan_request({'record_id': rid, 'fields': fields}, row)
+    if f.get('素材类型') == '图片':
+        value = plan_images(row, SOURCE)
+    else:
+        value = plan_request({'record_id': rid, 'fields': fields}, row)
     if f.get(TYPE) == '替换语言':
         value['languages'] = list(dict.fromkeys(LANGUAGES[x] for x in languages))
         value['pipeline'] = ['logo', 'translation']
@@ -86,7 +90,7 @@ class MainState(PoolState):
             raise ValueError('Main-table runtime belongs to another workflow')
 
 
-class MainRunner(MainTranslationMixin, RequestRunner):
+class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
     def observe(self, phase, **extra):
         if not any(v['stage'] not in TERMINAL or v['stage'] in UNKNOWN for v in self.state.all()):
             return self.state.summary(scheduling='main_table', batch_phase='waiting_request', **extra)
@@ -155,6 +159,8 @@ class MainRunner(MainTranslationMixin, RequestRunner):
                 if path.exists():
                     saved = daily.load(path)
                     if (saved['input_fingerprint'] != input_fingerprint(row) or saved['source'] != item['source']
+                            or saved.get('sources') != item.get('sources')
+                            or saved.get('brand_reference') != item.get('brand_reference')
                             or f.get(EXECUTION) not in (None, '', saved['execution_id'])):
                         raise DemandBlocked('原需求参数已变化，保留原执行记录，需先核对')
                     item = saved
@@ -164,7 +170,8 @@ class MainRunner(MainTranslationMixin, RequestRunner):
                     item.update(execution_id=str(uuid.uuid4()), requested_at=self.now(), trigger_mode='request_type')
                     save_private(path, item)
                 current = self._write_fields(rid, {EXECUTION: item['execution_id'],
-                    PROGRESS: '上传中', MESSAGE: '已检测到' + item['action'] + '需求，等待上传及自动分析'})
+                    PROGRESS: '上传中', MESSAGE: ('已检测到图片替换logo需求，等待Video Lab GPT Image 2'
+                        if item.get('engine') == 'videolab' else '已检测到' + item['action'] + '需求，等待上传及自动分析')})
                 cf = current['fields']
                 if (cf.get(TYPE) != item['action'] or cf.get(EXECUTION) != item['execution_id']
                         or input_fingerprint(current) != item['input_fingerprint'] or cf.get(RESULT)):
@@ -179,13 +186,19 @@ class MainRunner(MainTranslationMixin, RequestRunner):
         item = self.state.items[rid]
         row = record(self.feishu, self.route, rid)
         f = row['fields']; files = f.get(SOURCE) or []
+        try:
+            sources = [source_identity(x) for x in files]
+        except (KeyError,TypeError):
+            sources = None
         valid = (item['action'] in ACTIONS and f.get(TYPE) == item['action']
                  and f.get(EXECUTION) == item['execution_id']
-                 and input_fingerprint(row) == item['input_fingerprint'] and len(files) == 1
-                 and source_identity(files[0]) == item['source'])
+                 and input_fingerprint(row) == item['input_fingerprint']
+                 and f.get('素材类型') == item.get('media_type','视频')
+                 and f.get('目标日期') == item['target_date']
+                 and sources == item.get('sources',[item['source']]))
         value = self.state.get(rid)
         if f.get(RESULT):
-            if value.get('delivery_kind') == 'translation_multi':
+            if value.get('delivery_kind') in {'translation_multi','image_multi'}:
                 receipts = value.get('attachment_receipts') or []
                 valid = valid and len(f[RESULT]) == len(receipts) and bool(receipts) and {
                     (x.get('file_token'), x.get('name'), x.get('size')) for x in f[RESULT]} == {
@@ -199,6 +212,7 @@ class MainRunner(MainTranslationMixin, RequestRunner):
 
     def _sync_progress(self):
         names = {'queued': '上传中', 'source_ready': '上传中', 'uploaded': '分析中',
+                 'image_processing': '复刻中', 'image_unknown': '需人工处理',
                  'analysis_ready': '复刻中', 'logo_submitting': '复刻中', 'logo_accepted': '复刻中',
                  'logo_ready': '下载回填中', 'downloaded': '下载回填中', 'feishu_uploaded': '下载回填中',
                  'write_intent': '下载回填中', 'verified': '已完成', 'failed': '失败',
