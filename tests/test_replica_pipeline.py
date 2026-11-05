@@ -121,14 +121,14 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     def start(self):
         self.task=asyncio.create_task(self.runner.run_async());return self.task
 
-    async def until(self, predicate):
+    async def until(self, predicate, *, timeout=8):
         async def wait():
             while not predicate():
                 if self.task is not None and self.task.done():
                     await self.task
                     self.fail('Pipeline ended before expected state')
                 await asyncio.sleep(.005)
-        await asyncio.wait_for(wait(),8)
+        await asyncio.wait_for(wait(),timeout)
 
     async def finish_slow(self):
         self.backend.analysis.add('job-slow');self.backend.completed.add('job-slow')
@@ -283,7 +283,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             rid=row['record_id'];path=self.root/(rid+'.mp4');path.write_bytes(b'src')
             state.put(rid,{'record_id':rid,'stage':'source_ready','source_path':str(path),'source_sha256':digest(path)})
         self.state=state;self.runner=flow.PipelineRunner(state,api_factory=self.backend.factory,feishu=fixtures.Feishu(rows),poll_interval=.01)
-        self.start();await self.until(lambda:len(self.backend.uploads)==100)
+        # This asserts admission beyond the old cap, not an 8-second disk benchmark.
+        # Hosted CI fsyncs 100 checkpoints on shared storage; keep a bounded wait.
+        self.start();await self.until(lambda:len(self.backend.uploads)==100, timeout=45)
         save_private(self.root/'pause-requested',{'requested':True});self.runner._events['control'].set()
         await asyncio.wait_for(self.task,8)
         self.assertEqual(len(set(self.backend.uploads)),100)

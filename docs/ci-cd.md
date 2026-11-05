@@ -51,4 +51,4 @@ CI 不使用生产秘密、SSH 或自托管 runner。需要管理员在 GitHub �
 
 本次没有注册 runner、改 LaunchAgents/cron/调度、配置远程 CD 或执行真实部署。稳定后可单独接人工 `workflow_dispatch` 发布，届时仍需固定已检查 SHA、受保护环境和明确审批；PR 代码不能获得 Mini 执行权。
 
-已知测试局限：既有 `test_unknown_logo_is_never_mistaken_for_translation_or_reposted` 曾偶发等待中间态超时；门禁保留该测试，失败即阻止发布，不自动重试或忽略。GitHub Linux 托管环境需在提交后实际验证，本次没有触发远端 CI。
+已知测试局限：既有 `test_unknown_logo_is_never_mistaken_for_translation_or_reposted` 曾偶发等待中间态超时；门禁保留该测试，失败即阻止发布，不自动重试或忽略。GitHub Ubuntu 托管环境已接入真实 push 检查，结果以对应 commit 的 Actions 回执为准。100 项任务准入测试允许最多 45 秒等待共享磁盘完成断点写入，仍要求全部 100 项且单路上传；普通状态等待保持 8 秒，不将磁盘速度当作业务准入上限。
