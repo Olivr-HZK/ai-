@@ -9,6 +9,9 @@ from dotenv import dotenv_values, load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "config"
+PERSISTENT_DATA_ALIASES = ('afizzy_daily', 'social_chat_browser_daily_latest', 'social_chat_clip_vectors',
+                           'social_chat_plugin_handoff', 'social_chat_plugin_reprocess_v2', 'runtime',
+                           'replica-cli', 'replica-main-table-worker', 'deployment')
 def persistent_root(environ=None):
     """Opt in explicitly; a typo must never create an empty history store."""
     value = (os.environ if environ is None else environ).get('UA_STATE_ROOT')
@@ -26,10 +29,16 @@ def persistent_root(environ=None):
 def validate_persistent_layout(code_root, state_root):
     """Keep hardcoded legacy paths on the same store as the explicit API."""
     code, state = Path(code_root), Path(state_root)
-    for name in ('data', 'reports', '.env', '.venv'):
+    for name in ('.env', '.venv'):
         old, actual = code / name, state / name
         if not old.is_symlink() or not actual.exists() or actual.is_symlink() or old.resolve() != actual.resolve():
             raise ValueError(f'Persistent compatibility link missing or incorrect: {name}')
+    # data/reports contain a handful of versioned reference files. Link only
+    # mutable prefixes so publishing remains a clean Git checkout.
+    for name in PERSISTENT_DATA_ALIASES:
+        old, actual = code / 'data' / name, state / 'data' / name
+        if not old.is_symlink() or not actual.is_dir() or actual.is_symlink() or old.resolve() != actual.resolve():
+            raise ValueError(f'Persistent data compatibility link missing or incorrect: {name}')
     if (state / '.env').stat().st_mode & 0o077:
         raise ValueError('Persistent application environment must be private')
 

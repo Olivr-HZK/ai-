@@ -50,13 +50,18 @@ def test_shadow_preserves_source_and_has_independent_bytes(tmp_path):
 def test_explicit_layout_cannot_split_legacy_and_new_writes(tmp_path):
     code, state = tmp_path / 'code', tmp_path / 'state'; code.mkdir(); state.mkdir()
     for name in ('data', 'reports', '.venv'): (state / name).mkdir()
+    (code / 'data').mkdir(); (code / 'reports').mkdir()
     (state / '.env').write_bytes(b'fixture'); (state / '.env').chmod(0o600)
     with pytest.raises(ValueError, match='link'): paths.validate_persistent_layout(code, state)
-    for name in ('data', 'reports', '.env', '.venv'):
+    for name in ('.env', '.venv'):
         (code / name).symlink_to(state / name)
+    for name in paths.PERSISTENT_DATA_ALIASES:
+        (state / 'data' / name).mkdir()
+        (code / 'data' / name).symlink_to(state / 'data' / name)
+    (code / 'data/versioned-fixture.txt').write_text('tracked reference')
     paths.validate_persistent_layout(code, state)
-    (code / 'data').unlink(); (code / 'data').mkdir()
-    with pytest.raises(ValueError, match='data'): paths.validate_persistent_layout(code, state)
+    (code / 'data/afizzy_daily').unlink(); (code / 'data/afizzy_daily').mkdir()
+    with pytest.raises(ValueError, match='afizzy_daily'): paths.validate_persistent_layout(code, state)
 
 
 def test_added_file_corruption_and_changed_config_block_cutover(tmp_path):
@@ -107,6 +112,15 @@ def test_link_failure_rolls_back_without_rewriting_history(tmp_path):
         with pytest.raises(OSError): storage.activate(cfg, receipt, journal, quiesced=True)
     assert not source.is_symlink() and (source / 'media.mp4').read_bytes() == b'original bytes'
     assert json.loads(journal.read_text())['status'] == 'rolled_back'
+
+
+def test_versioned_reference_can_be_seeded_without_replacing_git_directory(tmp_path):
+    source, cfg, receipt = setup(tmp_path)
+    cfg['entries'][0]['activate'] = False
+    storage.stage(cfg, receipt)
+    result = storage.activate(cfg, receipt, tmp_path / 'cutover.json', quiesced=True)
+    assert result['status'] == 'activated' and result['entries'] == []
+    assert source.is_dir() and not source.is_symlink()
 
 
 def test_live_profile_is_excluded_and_cannot_be_silently_omitted(tmp_path):

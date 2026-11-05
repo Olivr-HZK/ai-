@@ -154,7 +154,10 @@ def activate(config, receipt, journal, *, quiesced=False):
     if not quiesced:
         raise ValueError('Activation requires the final quiesced migration window')
     _, entries = layout(config)
+    active_sources = {Path(e['source']).expanduser() for e in config['entries'] if e.get('activate', True)}
     for source, target, excluded in entries:
+        if source not in active_sources:
+            continue
         for name in excluded:
             # Dedicated profiles/environments are renamed only after owners exit,
             # outside the live shadow copy. The old path must already be an alias.
@@ -172,6 +175,8 @@ def activate(config, receipt, journal, *, quiesced=False):
         verify(config, receipt)
         rows = []
         for source, target, _ in entries:
+            if source not in active_sources:
+                continue
             backup = source.with_name(source.name + '.before-persistent')
             if backup.exists() or backup.is_symlink():
                 raise ValueError('Backup path already exists')

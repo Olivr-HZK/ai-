@@ -12,7 +12,7 @@
 
 新部署进程显式设置 `UA_STATE_ROOT`。不设置时保留原路径语义；设置为空、相对路径、目录缺失或缺少 data/reports 时拒绝启动，避免误建空历史。shared.config 的 DATA_DIR/REPORTS_DIR、Replica 状态和专用认证桥、独立采集 CLI 默认路径随之指向持久目录。代码资源、skill 和业务配置仍来自代码 checkout。
 
-仍存在使用 `ROOT/data` 的兼容代码，以及历史 JSON 内冻结的绝对证据路径。因此正式切换必须同时配置：部署 checkout 的 data/reports/.env/.venv 为持久目录兼容链接；旧项目选中的 Afizzy 子目录也保留指向对应持久数据的链接。不能删历史路径、批量重写 JSON 或重算审核/上传身份来掩盖路径变化。旧项目其他数据和认证桥隔离保留。
+仍存在使用 `ROOT/data` 的兼容代码，以及历史 JSON 内冻结的绝对证据路径。因此正式切换必须同时配置：部署 checkout 的 .env/.venv 及 data 下各可变业务前缀为持久目录兼容链接；data/reports 根保留为普通目录，保留 Git 跟踪的参考文件，历史报告子目录单独链接；旧项目选中的 Afizzy 子目录也保留指向对应持久数据的链接。不能删历史路径、批量重写 JSON 或重算审核/上传身份来掩盖路径变化。旧项目其他数据和认证桥隔离保留。
 
 ## 在线准备
 
@@ -35,7 +35,7 @@ python -m ua_workflows.persistent_storage verify --config CONFIG.json --receipt 
 
 **所有重构、CI、影子准备完成前，不停止旧抓取或 Mini 监听。** 完成后才进入最短窗口：正常暂停相关生产者，确认无在途/未知任务并持有原 watcher/collector 锁；停止对应守护器防止自动重启，不操作无关服务。再次同步增量并 verify。
 
-专用 profile 与嵌套 clip-env 只在所有权已确认、使用者退出后于同一台 Mini 原子重命名到目标，再把旧路径设为兼容链接；不导出 Cookie、不创建新认证/复制日常浏览器资料。excluded_top_level 只有已经完成上述迁移、且源链接精确指向真实目标目录时才允许 activate。
+专用 profile 与嵌套 clip-env 只在所有权已确认、使用者退出后于同一台 Mini 原子重命名到目标，再把旧路径设为兼容链接；不导出 Cookie、不创建新认证/复制日常浏览器资料。excluded_top_level 只有已经完成上述迁移、且源链接精确指向真实目标目录时才允许 activate。版本化参考目录配置 activate=false，只复制到状态目录作输入，不将旧代码目录改成链接。
 
 ```sh
 python -m ua_workflows.persistent_storage activate --config CONFIG.json --receipt RECEIPT.json --journal CUTOVER.json --quiesced
