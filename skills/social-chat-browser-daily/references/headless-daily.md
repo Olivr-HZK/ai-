@@ -2,7 +2,7 @@
 
 ## 2026-11-05 Mac mini 05:00任务执行绑定
 
-保留原`automation-3`、北京时间05:00、ACTIVE及原关联聊天。完整日流程的代码目录统一为`/Users/ggbond/oliver/replica-listener`，持久目录为`/Users/ggbond/oliver/afizzy-state`。聊天仍关联旧项目不代表要执行旧代码；每次shell调用显式使用新代码目录为workdir，并设置：
+保留原`automation-3`、北京时间05:00、ACTIVE及原关联聊天。完整日流程的代码目录统一为`/Users/ggbond/oliver/replica-listener`，持久目录为`/Users/ggbond/oliver/afizzy-state`。聊天仍关联旧项目不代表要执行旧代码；每次shell调用显式使用新代码目录为workdir；所有Python命令统一通过`/Users/ggbond/oliver/replica-listener/scripts/afizzy-python`启动。启动器固定代码cwd、推导独立环境、校验已有UA_STATE_ROOT并设置Homebrew路径，不依赖聊天默认cwd。等效环境为：
 
 ```sh
 cd /Users/ggbond/oliver/replica-listener
@@ -32,7 +32,7 @@ export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 先读 docs/guangdada-direct.md。从2026-11-05执行起固定游戏→afizzy竞品游戏、工具→afizzy竞品、工具→afizzy竞品2三组全部卡片；预设后重新设置网站起止日期D、最新创意，保存真实筛选、连续页码/广告身份与日期截止证据。不传小样、--only或页数上限。正常登录最多一次，安全验证或账号冲突立即截图、保留断点、释放防睡眠，通知需要人工；不绕过验证或反复抢登录。使用独立Playwright和原验证读取器：可读当前可见卡片绑定React字段；不读全局隐藏状态，不使用扩展/IAB、旧VE、私有API或其他浏览器Cookie。
 
 ```sh
-caffeinate -i -s .venv/bin/python -m ua_workflows.guangdada_direct run --date D --presets game tool tool2 --state-dir data/afizzy_daily/collector-state --output data/afizzy_daily/raw --credentials-env /Users/ggbond/oliver/afizzy-state/.env
+caffeinate -i -s scripts/afizzy-python -m ua_workflows.guangdada_direct run --date D --presets game tool tool2 --state-dir data/afizzy_daily/collector-state --output data/afizzy_daily/raw --credentials-env /Users/ggbond/oliver/afizzy-state/.env
 ```
 
 D须替换为实际YYYY-MM-DD。新三组断点为 collector-state/runs/D_game_tool_tool2，输出 raw/D_game_tool_tool2；旧D_both保留原范围。先检查本scope的game/tool/tool2状态及summary：已采到真实末页/日期截止则复用，不因下载有缺失重采网页。暂停项使用同参数resume，不新建目录绕过断点；已有ZIP按SHA256复用。未知翻页先核对原意图，不盲目再点。下载按现有三路预算，只获取保存的原地址；不能无限重试不可解析外链或404。可复用严格同广告ID/系统/日期/原址且大小/哈希一致的真实原文件缓存，另存恢复证据和新交付版本，保留初次失败。
@@ -70,8 +70,8 @@ D须替换为实际YYYY-MM-DD。新三组断点为 collector-state/runs/D_game_t
 沿同一05:00日任务执行，不新增定时器。原素材入表独立核验后，使用`daily_workflow.completion_broadcast`指向的既有`crawl_completion_report`霍振堃测试群，由广告之神应用发一条正式结束日报，再结束。本节优先于旧的“入表后立即结束/不发群”说明；复刻仍不启动。当前授权包含今天已完成的2026-11-03批次首报；其他已交付历史批次不补发、不重算。无启动通知、无@全体、无额外测试消息。播报只读统计和发送消息，不重新采集、下载、审核、上传附件、写业务表或启动复刻。
 
 ```sh
-.venv/bin/python -m ua_workflows.afizzy_daily_report prepare --run-dir data/afizzy_daily/D
-.venv/bin/python -m ua_workflows.afizzy_daily_report send --run-dir data/afizzy_daily/D
+scripts/afizzy-python -m ua_workflows.afizzy_daily_report prepare --run-dir data/afizzy_daily/D
+scripts/afizzy-python -m ua_workflows.afizzy_daily_report send --run-dir data/afizzy_daily/D
 ```
 
 D替换为固定目标日。prepare从source-ledger、真实横屏/重投/CLIP/内容/模板逐项证据和selection派生互斥处理状态，核对原scope/selection哈希及独立入表回执，不把报告手填总数当证据。生成`report/payload.json`和逐创意状态。顶部列上新总数、实际取得/未取得、横屏/重投、封面日内/前7自然日、主体筛除、前日/同日模板去重、存疑及前日模板待核、Playable、实际入表数；下方逐竞品列相同明细，明细求和必须与总数一致。

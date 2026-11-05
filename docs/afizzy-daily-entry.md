@@ -4,7 +4,7 @@
 
 | 阶段 | 代码与持久依赖 | 完成依据 |
 |---|---|---|
-| 调度及准备 | 代码`/Users/ggbond/oliver/replica-listener`；显式`UA_STATE_ROOT=/Users/ggbond/oliver/afizzy-state`；该代码目录`.venv/bin/python`、持久目录`.env` | 实际PROJECT_ROOT/STATE_ROOT/解释器和任务元数据读回匹配 |
+| 调度及准备 | 代码`/Users/ggbond/oliver/replica-listener`；显式`UA_STATE_ROOT=/Users/ggbond/oliver/afizzy-state`；该代码目录`scripts/afizzy-python`、持久目录`.env` | 实际PROJECT_ROOT/STATE_ROOT/解释器和任务元数据读回匹配 |
 | 全量采集与下载 | `ua_workflows.guangdada_direct`；game/tool/tool2；`data/afizzy_daily/collector-state`、`raw` | 原目标日、真实页/日期截止、原地址、成功/失败和媒体哈希，不用部分下载冒充完整 |
 | 原素材首筛 | 当前config/skill的原尺寸和明确重投规则 | 原文件显示尺寸/源SHA绑定的排除与待核证据 |
 | 封面去重 | 日内和前7自然日CLIP0.9；`data/social_chat_clip_vectors`及`social_chat_plugin_reprocess_v2/embedding-cache` | 同模型指纹、图像SHA、产品/系统身份和历史覆盖 |
@@ -22,3 +22,5 @@
 只读验收包括新环境CLI help、路径解析、旧/新日期目录同一位置、向量包身份、前日模板和审核资料可读、原日scope/入表/两端日报回执哈希不变，以及调度ID/时间/状态/关联聊天不变。真实网页登录、全日下载、视觉审核与入表/发消息只能在已授权日执行中实际验收；入口检查不冒称新一日执行成功。
 
 迁移日任务不重启独立复刻监听，不将其他开发分支的未发布改动带入生产。
+
+所有日任务Python命令通过代码目录下的`scripts/afizzy-python`执行：它固定cwd，使用该checkout的独立.venv，推导并导出UA_STATE_ROOT，拒绝与现有UA_STATE_ROOT不一致的调用。迁移不依赖关联聊天仍保留的旧工作目录。

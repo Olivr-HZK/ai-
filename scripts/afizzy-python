@@ -1,0 +1,13 @@
+#!/bin/sh
+# Bind every daily command to this checkout and its independent environment.
+set -eu
+AFIZZY_CODE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+AFIZZY_STATE_ROOT=$(CDPATH= cd -P -- "$AFIZZY_CODE_ROOT/.venv/.." && pwd -P)
+if [ -n "${UA_STATE_ROOT:-}" ] && [ "$UA_STATE_ROOT" != "$AFIZZY_STATE_ROOT" ]; then
+  echo 'Afizzy state root does not match the deployment environment' >&2
+  exit 2
+fi
+cd "$AFIZZY_CODE_ROOT"
+export UA_STATE_ROOT="$AFIZZY_STATE_ROOT"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
+exec "$AFIZZY_CODE_ROOT/.venv/bin/python" "$@"
