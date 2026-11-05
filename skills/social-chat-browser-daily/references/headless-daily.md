@@ -1,5 +1,20 @@
 # Afizzy 05:00 无头采集、筛选与原素材入表
 
+## 2026-11-05 Mac mini 05:00任务执行绑定
+
+保留原`automation-3`、北京时间05:00、ACTIVE及原关联聊天。完整日流程的代码目录统一为`/Users/ggbond/oliver/replica-listener`，持久目录为`/Users/ggbond/oliver/afizzy-state`。聊天仍关联旧项目不代表要执行旧代码；每次shell调用显式使用新代码目录为workdir，并设置：
+
+```sh
+cd /Users/ggbond/oliver/replica-listener
+export UA_STATE_ROOT=/Users/ggbond/oliver/afizzy-state
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+```
+
+`.venv`及`.env`均通过本部署目录链接到持久目录的独立环境和配置；禁止回退旧`ai-`的解释器或凭据。`data/afizzy_daily`、原采集断点、封面缓存/向量、模板/语言审核、入表及两端日报回执均复用持久数据，不新建空历史。旧绝对证据路径只经兼容链接读取，不重写历史JSON、scope或发送回执。新批显式三个预设与`D_game_tool_tool2`，旧`D_both`仅按原规则恢复。
+
+全部业务规则以本代码目录当前config/skill及既有scope为准；本次只迁执行绑定。日流程结束于原素材入表核验和唯一飞书/企业微信日报，不接管独立复刻监听。参见[日任务依赖与验收](../../../docs/afizzy-daily-entry.md)。
+
+
 **2026-11-04新增预设（从11月5日执行起）**：每日固定游戏afizzy竞品游戏、工具afizzy竞品、工具afizzy竞品2三组。按config.daily_workflow.presets显式传`--presets game tool tool2`；新采集断点/输出范围为`D_game_tool_tool2`，summary.scope须精确等于三组才算范围完成。旧两组`D_both`及其已交付结果不迁移/重采；本次用户明确单独测试新预设的11月3日素材，固定`D_tool2`，只采新预设，后处理作为原日补充批次去重、入表和独立验收，不冒称重跑完整旧批。
 
 2026-11-04用户明确选择“沿用原脚本，只加预设”：本次及后续每日任务沿早上已实站跑通的v0.2.1采集器，允许原脚本读取当前可见卡片绑定的React字段获取该卡广告ID、类型和原址；这项明确授权覆盖此前仅DOM/禁止该卡片绑定字段的限制，不扩展到私有接口、全局隐藏状态、共享Cookie、绕过验证或未显示数据。日期和App/平台/估值/重投继续取原脚本的可见证据，按原断点批量保存地址，关闭浏览器后三路静态下载。未验收DOM改造已隔离，不在正式批次反复试验；新增预设只做范围/名称配置，不擅自混入底层重构。
@@ -17,7 +32,7 @@
 先读 docs/guangdada-direct.md。从2026-11-05执行起固定游戏→afizzy竞品游戏、工具→afizzy竞品、工具→afizzy竞品2三组全部卡片；预设后重新设置网站起止日期D、最新创意，保存真实筛选、连续页码/广告身份与日期截止证据。不传小样、--only或页数上限。正常登录最多一次，安全验证或账号冲突立即截图、保留断点、释放防睡眠，通知需要人工；不绕过验证或反复抢登录。使用独立Playwright和原验证读取器：可读当前可见卡片绑定React字段；不读全局隐藏状态，不使用扩展/IAB、旧VE、私有API或其他浏览器Cookie。
 
 ```sh
-caffeinate -i -s .venv/bin/python -m ua_workflows.guangdada_direct run --date D --presets game tool tool2 --state-dir data/afizzy_daily/collector-state --output data/afizzy_daily/raw --credentials-env /Users/ggbond/oliver/ai-/.env
+caffeinate -i -s .venv/bin/python -m ua_workflows.guangdada_direct run --date D --presets game tool tool2 --state-dir data/afizzy_daily/collector-state --output data/afizzy_daily/raw --credentials-env /Users/ggbond/oliver/afizzy-state/.env
 ```
 
 D须替换为实际YYYY-MM-DD。新三组断点为 collector-state/runs/D_game_tool_tool2，输出 raw/D_game_tool_tool2；旧D_both保留原范围。先检查本scope的game/tool/tool2状态及summary：已采到真实末页/日期截止则复用，不因下载有缺失重采网页。暂停项使用同参数resume，不新建目录绕过断点；已有ZIP按SHA256复用。未知翻页先核对原意图，不盲目再点。下载按现有三路预算，只获取保存的原地址；不能无限重试不可解析外链或404。可复用严格同广告ID/系统/日期/原址且大小/哈希一致的真实原文件缓存，另存恢复证据和新交付版本，保留初次失败。
