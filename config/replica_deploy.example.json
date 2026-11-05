@@ -1,0 +1,7 @@
+{
+  "expected_host": "SET_TO_MAC_MINI_HOSTNAME",
+  "repo": "/Users/ggbond/oliver/replica-listener",
+  "runtime": "/Users/ggbond/oliver/replica-listener/data/replica-main-table-worker",
+  "python": "/Users/ggbond/oliver/replica-listener/.venv/bin/python",
+  "receipts": "/Users/ggbond/oliver/replica-listener/data/deployment/releases"
+}
