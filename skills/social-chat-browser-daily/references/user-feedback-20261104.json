@@ -1,0 +1,124 @@
+{
+  "version": "user-feedback-20261104",
+  "target_date": "2026-11-03",
+  "export_sha256": "649d8b6824c8ac3a9b736433133b55a8b91eaa1d1d78715bbef1839b5d8cb217",
+  "rules": [
+    "明确真人角色排除，不以是否口播为条件；视频、照片和静态图均适用。",
+    "女性主体不能靠附带男性镜头通过。",
+    "不能以女仆等服装判断角色为女性，结合设定、对白、角色外观和上下文。",
+    "单独操作手机的手部沿原范围，本轮不新增手部排除。",
+    "未附详细理由的人工通过项保存为同源已确认案例，不自动泛化为所有同题材均通过。"
+  ],
+  "cases": [
+    {
+      "id": "R0195",
+      "ad_id": "001aebeafcbc2b085bd8f95c83f86ab8",
+      "app": "Tipsy: Live Your Story",
+      "os": "Android",
+      "source_sha256": "1176cf99841b3b5fe9f283832897f4da692fb4d2f607bb43d22b6a3b1e81f666",
+      "decision": "reject",
+      "note": "真人",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0198",
+      "ad_id": "5fd3139a23cdad9a1dba2c0d1c74eb8d",
+      "app": "Tipsy: Live Your Story",
+      "os": "Android",
+      "source_sha256": "34847df0a40d5b2c44bc90e2a93114ad66b194ffc1ff86df5098f66d8bf9efe7",
+      "decision": "reject",
+      "note": "真人",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0204",
+      "ad_id": "bb6b1e9c763af912496cd60c06acd2c6",
+      "app": "aiapp.tizzchat.chatbot",
+      "os": "Android",
+      "source_sha256": "2f2ee1fd7aefb19d3829762b9f5d8cd299401e11f13eac2622cbe71fa17d5f5c",
+      "decision": "reject",
+      "note": "真人",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0206",
+      "ad_id": "4faf2794bc984a56871dc568e7f4a081",
+      "app": "aiapp.tizzchat.chatbot",
+      "os": "Android",
+      "source_sha256": "f2cd4430aa7cfc4ae2de542f58eb9bfac91041b8e8625502bdc3796f96f3d31c",
+      "decision": "pass",
+      "note": "",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0488",
+      "ad_id": "32ee9d74f5a32ac6525b51669f468ae2",
+      "app": "Emochi: Chat With Character",
+      "os": "Android",
+      "source_sha256": "ed28dbbf2512abfff6a42e2d5803350bef292fa7b55cf8277cf4443fb80daca3",
+      "decision": "reject",
+      "note": "女性主体",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0300",
+      "ad_id": "57fdec930c98f8c2fedd524baaa270c9",
+      "app": "Tipsy: Live Your Story",
+      "os": "Android",
+      "source_sha256": "7325165f9e7b5618182e5ced565549a4d3ac5e80d9cfe2926e6c3b29552ed960",
+      "decision": "reject",
+      "note": "真人",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0112",
+      "ad_id": "aa3c9da9e16b104eaf9f72b9cb57f970",
+      "app": "zeta: AI Chat, Story, Play",
+      "os": "Android",
+      "source_sha256": "73cc737f8f405c8fcf0d53ad985c8f8eec7d2ab3e1d368fe5d47762d06b7d3ff",
+      "decision": "pass",
+      "note": "",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0263",
+      "ad_id": "cbd1cf991a63b8b54d3a98e96b857299",
+      "app": "zeta: AI Chat, Story, Play",
+      "os": "Android",
+      "source_sha256": "f2181f295860b93c4b5b8a49e3ced1434e3e9f6658cffcfbf1a50b4e12cebde8",
+      "decision": "reject",
+      "note": "真人",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0498",
+      "ad_id": "046c7e4f635802ed703a3b8b6ec834d5",
+      "app": "zeta: AI Chat, Story, Play",
+      "os": "Android",
+      "source_sha256": "ad0182a013a7fc6013b9be1b696e1f1730ee6772134af23690deb59168eb3885",
+      "decision": "pass",
+      "note": "这就是男性，不能光看服饰",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0555",
+      "ad_id": "657af69c2ee1f6dfd7a442a2f177dc4d",
+      "app": "zeta: AI Chat, Story, Play",
+      "os": "Android",
+      "source_sha256": "dabfb2c0e35c95f6b9697de552f188ec4483cc26fcdc1b6a1db09414cd8272e0",
+      "decision": "pass",
+      "note": "通过",
+      "confirmation_source": "user_export"
+    },
+    {
+      "id": "R0561",
+      "ad_id": "b61ffdcaec9551ee0d45dc39dfee7b13",
+      "app": "Emochi: Chat With Character",
+      "os": "Android",
+      "source_sha256": "19eddab90e18bbd8b0692496e1f6962fb4576d386960e1a95e80c1df52f75f3e",
+      "decision": "reject",
+      "note": "真人不通过",
+      "confirmation_source": "user_followup"
+    }
+  ]
+}

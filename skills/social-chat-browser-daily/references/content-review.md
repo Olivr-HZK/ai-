@@ -1,5 +1,27 @@
 # 内容审核与风格打标
 
+## 2026-11-04 空历史模板修正规则：优先于旧v1
+
+新批固定`previous-day-template-baseline-v2`。前日来源/覆盖和产品身份经核验，但该产品没有可用已确认模板（含已核实首次没有前批）时，把当天作为新模板基线，继续同产品、同系统的日内模板去重，每组留展示估值最高代表；不把全组永久pending，也不是所有素材直接入表。缺文件、坏哈希、真实未审核或身份冲突不能装作空历史。
+
+历史参考取全部已实际确认的模板结构，不以最终入表/入选为条件；即使一条素材自身的更早一天去重仍pending，其当前模板结构若已确认，也可供次日对照。使用`social_chat_template_history.load_confirmed_history`，有`template-history-latest.json`时核对SHA后读取授权修订历史，防止继续继承旧待核链条。
+
+按scope固定的`template_identity_mapping`显式匹配产品，系统仍分开。当前仅补齐既有注册ID和用户确认的Tizz别名（TizzChat / Tizz / aiapp.tizzchat.chatbot），不把日报的所有展示别名自动套到模板身份，也不做模糊名称合并。视觉与对白实际证据仍是模板依据，不能仅凭共用UI或模板key去重；同一核心对白顺序换人物、画幅、通话/字幕包装仍可作为变体。
+
+用户这轮授权已应用于2026-11-03的31条模板待核，结果另存`template-revision/`：补回11月2日Tizz两条确认结构；Heyyyy iOS前日只有4试玩、无可用视频/图片模板，建立新基线；实际复看31套六帧并本地转写完整音轨，产品内去掉7变体、保留24代表。原scope、旧交付与61条入表不覆盖；本次只完成模板筛选修订，内容/语言/媒体/实际入表仍遵守各自验收，不冒称新增入表。
+
+## 2026-11-04 用户复核反馈：后续新批优先
+
+新批固定`male-display-female-oriented-no-real-person-v2`，替代下文v1允许非口播真人剧情的部分。明确真人角色出现即排除，不再要求能证明主持推广或口播；真人照片和静态图同样适用。单独操作手机的手部仍沿原范围，本轮反馈不扩展为“见手就排除”。写实AI、动漫、CG及兽人角色不能只因写实或人形外观就当真人。
+
+女性主体不能靠附带男性镜头通过。男性角色的判断结合角色设定、对白、外观和上下文；女仆服、围裙、服装风格等不能单独作为“女性”的依据。不要因为穿女仆服就把已可确认的男性角色反复送审。
+
+记录`checks.real_person_presence`（present/absent/uncertain）、`primary_subject`（male/female/mixed/none/uncertain）以及`male_character_display`、`female_oriented_appeal`（yes/no/uncertain），使用`social_chat_content_policy.validate_review`校验。明确真人或女性主体排除；无真人、男性主体、男性有意义展示和女频诉求两项yes才通过；证据不确定仍review。无口播不等于无真人，画面性别不凭服装猜测。
+
+具体反馈见[user-feedback-20261104.json](user-feedback-20261104.json)。本批R0498/R0555男性女仆角色、R0112兽人互动、R0206悬疑角色互动由用户明确确认内容通过；后两项未附详细理由，保存为同源确认案例，不擅自推出“所有悬疑/兽人/男性画面都自动通过”的规则。相似新素材参考角色与用户互动、对白及主要展示综合判断，不额外要求一定出现直白甜蜜恋爱台词。同模板变体仍须按原去重规则处理，内容通过不等于每个变体都入表。
+
+本批仅用独立人工复核修订记录应用用户确认的11项，R0561按钮与备注冲突已由用户明确按备注“不通过”。31项模板待核按用户要求保留；不把历史缺失改成零，也不代替用户授权处理Tizz模板问题。旧scope、既有61条入表和原回执不重写；新规则固定后续新scope，不自动对历史批次全量重审或重发日报。
+
 ## 当前默认：插件交接批次（2026-10-26）
 
 版本male-display-female-oriented-no-talking-head-v1：男性角色有意义展示，并有可见女频恋爱/伴侣陪伴诉求；排除真人主持式产品推广口播。女性配角、真人手部及非主持真人恋爱剧情可保留。只出现男性头像、通用冒险或女性AI对象不足以通过；真人/AI、口播性质或女频关联不确定均存疑不纳入。记录checks.male_character_display、female_oriented_appeal为yes/no/uncertain，checks.real_person_talking_head为absent/present/uncertain；三项为yes/yes/absent才可keep，保留理由和原图/六帧实际证据。风格按下文固定版本执行，不能代替内容准入。

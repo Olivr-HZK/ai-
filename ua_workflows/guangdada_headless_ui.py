@@ -6,6 +6,21 @@ PRESETS = (
     {'key': 'game', 'category': '游戏', 'group': r'^(?:预设)?快捷操作\s*[⌃⌄↑↓^]*$', 'preset': 'afizzy竞品游戏'},
     {'key': 'tool', 'category': '工具', 'group': r'^(?:afizzy\s*)?快捷操作\s*[⌃⌄↑↓^]*$', 'preset': 'afizzy竞品'},
 )
+AVAILABLE_PRESETS = (*PRESETS,
+    {'key':'tool2','category':'工具','group':r'^(?:afizzy\s*)?快捷操作\s*[⌃⌄↑↓^]*$','preset':'afizzy竞品2'},
+)
+
+
+def selected_presets(keys=None):
+    keys=list(keys or [p['key'] for p in PRESETS])
+    if not keys or len(keys)!=len(set(keys)) or not set(keys)<={p['key'] for p in AVAILABLE_PRESETS}:
+        raise ValueError('Unknown or duplicate preset range')
+    return [dict(p) for p in AVAILABLE_PRESETS if p['key'] in keys]
+
+
+def preset_scope_suffix(scope):
+    keys=[p['key'] for p in scope]
+    return 'both' if keys==['game','tool'] else '_'.join(keys)
 
 class PreparationError(RuntimeError):
     pass
