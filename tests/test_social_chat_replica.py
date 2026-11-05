@@ -322,6 +322,27 @@ class ReplicaBackfillTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 'read_failed')
         self.assertEqual(call.call_count, 3)
 
+    @patch.object(replica.time, 'sleep')
+    @patch.object(replica.daily.Feishu, 'call')
+    def test_feishu_data_not_ready_read_can_retry(self, call, wait):
+        call.side_effect = [ValueError('HTTP 400, code=1254607, Data not ready'), {'record': {'record_id': 'rec1'}}]
+        client = replica.ReplicaFeishu.__new__(replica.ReplicaFeishu)
+        self.assertEqual(client.call('GET', 'table/records/rec1')['record']['record_id'], 'rec1')
+        self.assertEqual(call.call_count, 2)
+
+    @patch.object(replica.time, 'sleep')
+    @patch.object(replica.daily.Feishu, 'call', side_effect=ValueError('code=1254607, Data not ready'))
+    def test_persistent_data_not_ready_defers_but_never_replays_writes(self, call, wait):
+        client = replica.ReplicaFeishu.__new__(replica.ReplicaFeishu)
+        with self.assertRaises(replica.ReplicaError) as caught:
+            client.call('GET', 'table/records/rec1')
+        self.assertEqual(caught.exception.code, 'read_failed')
+        self.assertEqual(call.call_count, 3)
+        call.reset_mock()
+        with self.assertRaises(ValueError):
+            client.call('PUT', 'table/records/rec1', json={'fields': {}})
+        call.assert_called_once()
+
     @patch.object(replica.daily.Feishu, '__init__', return_value=None)
     @patch.object(replica.daily.Feishu, 'call')
     def test_expired_token_during_readback_refreshes_then_only_repeats_get(self, call, refresh):

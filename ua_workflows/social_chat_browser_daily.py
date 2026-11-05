@@ -440,6 +440,11 @@ def normalize_record_texts(row):
     """Preserve the source URL; keep all other text fields' existing scalar contract."""
     fields = dict(row['fields'])
     for name, value in fields.items():
+        if (isinstance(value, list) and any(isinstance(v, dict)
+                and ('record_ids' in v or 'link_record_ids' in v) for v in value)):
+            # Linked-record cells are text-shaped too. Their display label is
+            # not the relation identity; preserve IDs through list pagination.
+            continue
         if name == SOURCE_LINK_FIELD:
             url = source_link_url(value)
             if url:

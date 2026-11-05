@@ -2,6 +2,7 @@
   "competitor_list": "config/social_chat_browser_competitors.json",
   "timezone": "Asia/Shanghai",
   "execution": "manual",
+  "replication_trigger": "manual",
   "plugin_handoff": {
     "mode": "manual_zip",
     "processing_policy_version": "dedupe-first-joint-review-v2",
@@ -26,9 +27,9 @@
       "missing_history": "pending_not_zero"
     },
     "image_replication_after_ingestion": {
-      "enabled": true,
+      "enabled": false,
       "version": "afizzy-brand-only-after-ingestion-v1",
-      "trigger": "after_independent_verified_ingestion",
+      "trigger": "manual_request_after_verified_ingestion",
       "media_type": "图片",
       "brand": "afizzy",
       "generator": "built-in-image_gen",

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
+  "table_id": "tblwhAqPfQoBXK3Q",
+  "trigger_mode": "request_type",
+  "trigger_field": "复刻需求类型",
+  "trigger_values": ["替换logo", "替换语言"],
+  "watcher_enabled": true,
+  "allowed_actions": ["替换logo", "替换语言"],
+  "translation_requires_logo": true,
+  "auth_mode": "browser",
+  "source_field": "竞品素材（图片/视频/Playable）去除男频",
+  "target_field": "复刻附件",
+  "fields": {
+    "竞品素材（图片/视频/Playable）去除男频": "fldRHIjFcO",
+    "复刻附件": "fld6ygGkqD",
+    "复刻需求类型": "fldiz88vZA",
+    "复刻目标语言": "fldlOrfmpM",
+    "复刻人物参考图": "fldAyk0gVN",
+    "复刻需求状态": "fldUrqRqqJ",
+    "复刻执行进度": "fldS6GMM7L",
+    "复刻执行说明": "fld9i9LTnx",
+    "复刻执行标识": "fldjc3Mhjr",
+    "复刻任务ID": "fldJs0Fxpd"
+  },
+  "expected_account": "6dbb32bb8cc64b1d8babbda71a2ae813",
+  "execution_host": "local_macbook",
+  "execution_run_dir": "/Volumes/mac os/Users/oliver/guru/ua素材/data/replica-main-table-worker",
+  "result_policy": "single_result_preserve_existing",
+  "demand_pool_bound": false,
+  "view_id": "vewlY9ngR5"
+}

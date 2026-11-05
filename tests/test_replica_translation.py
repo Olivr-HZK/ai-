@@ -11,7 +11,7 @@ from unittest.mock import Mock
 from ua_workflows.replica_cli import Checkpoint, execute, parser
 from ua_workflows.replica_studio_api import BASE_URL, ReplicaAPI, ReplicaError, digest, translation_options
 from ua_workflows.replica_translation import (
-    download_translations, language_state, translate_many, translation_input, translation_status_many,
+    download_translations, language_state, translate_many, translation_input, translation_status_many, video_duration,
 )
 
 
@@ -86,6 +86,33 @@ class TranslationHTTPTests(unittest.TestCase):
         self.assertEqual(call.kwargs['headers']['X-Replica-Account'], 'account-a')
         self.assertEqual(call.kwargs['headers']['X-Replica-CSRF'], 'test-csrf')
 
+    def test_full_original_payload_explicitly_preserves_all_content(self):
+        api, transport = self.client({'id':'job-a','status':'queued','revision':9})
+        options=translation_options(['ko'],['text','voice'],'en',input_mode='original',
+                                    trim={'remove_cta':False,'remove_gameplay':False})
+        api.translate(job(),options)
+        self.assertEqual(transport.request.call_args.kwargs['json'],{
+            'languages':['ko'],'parts':['text','voice'],'source_language':'en','input':'original',
+            'trim':{'remove_cta':False,'remove_gameplay':False},'remember_parts':False})
+        self.assertEqual(transport.request.call_count,1)
+
+    def test_invalid_input_and_trim_never_reach_transport(self):
+        api, transport=self.client({})
+        for extra in [{'input':'source_video'},{'input':'original','trim':{'remove_cta':False}},
+                      {'input':'original','trim':{'remove_cta':0,'remove_gameplay':False}},
+                      {'input':'swap','trim':{'remove_cta':False,'remove_gameplay':False}},
+                      {'input':'original','trim':{'remove_cta':False,'remove_gameplay':False,'extra':True}}]:
+            with self.assertRaises(ReplicaError):
+                api.translate(job(),{'languages':['ja'],'parts':['text','voice'],**extra})
+        transport.request.assert_not_called()
+
+    def test_old_bridge_blocks_full_original_before_paid_intent(self):
+        api, transport=self.client({});transport.replica_capabilities=['translation_v1']
+        with self.assertRaises(ReplicaError) as found:
+            translate_many(api,['job-a'],None,['ja'],input_mode='original',trim={'remove_cta':False,'remove_gameplay':False})
+        self.assertEqual(found.exception.code,'bridge_upgrade_required')
+        transport.request.assert_not_called()
+
     def test_bad_parts_language_force_and_preferences_never_reach_transport(self):
         api, transport = self.client({})
         bad = [{'languages': ['source']}, {'languages': ['hu']}, {'languages': []},
@@ -146,6 +173,27 @@ class TranslationWorkflowTests(unittest.TestCase):
 
     def tearDown(self): self.temp.cleanup()
 
+    def test_direct_translation_no_generated_clips_or_route_put(self):
+        self.api.jobs['job-a'].update(analysis={'done': True}, segments=[{'index':0}])
+        result=self.submit(direct=True)
+        self.assertEqual(result['results'][0]['code'],'accepted')
+        self.assertEqual(self.api.puts,[])
+        self.assertEqual(len(self.api.posts),1)
+        self.assertFalse(self.api.posts[0][1]['remember_parts'])
+
+    def test_direct_unknown_never_reposts_and_checks_same_job(self):
+        self.api.error=ReplicaError('result_unknown','lost response')
+        self.submit(direct=True);result=self.submit(direct=True)
+        self.assertEqual(result['results'][0]['code'],'result_unknown')
+        self.assertEqual(len(self.api.posts),1);self.assertEqual(self.api.puts,[])
+        self.assertEqual(set(self.api.reads),{'job-a'})
+
+    def test_direct_refuses_route_put_and_busy_jobs(self):
+        with self.assertRaises(ReplicaError):self.submit(direct=True,source_video=True)
+        self.api.jobs['job-a']['status']='analyzing'
+        self.assertFalse(self.submit(direct=True)['results'][0]['ok'])
+        self.assertEqual(self.api.posts,[])
+
     def submit(self, ids=('job-a',), languages=('ja',), parts=('voice',), **kwargs):
         return translate_many(self.api, ids, self.checkpoint, languages, parts, **kwargs)
 
@@ -162,10 +210,63 @@ class TranslationWorkflowTests(unittest.TestCase):
         args = parser().parse_args(['--checkpoint', str(self.root / 'unused.json'), 'translate', 'job-a',
                                    '--languages', 'ja', '--parts', 'text', 'voice', '--source-video', '--check-only'])
         result = execute(args, factory=lambda: self.api)
-        self.assertTrue(result['results'][0]['input']['would_switch_source'])
+        self.assertFalse(result['results'][0]['input']['would_switch_source'])
+        self.assertEqual(result['results'][0]['input']['route'],'original')
         self.assertEqual(self.api.posts, [])
         self.assertEqual(self.api.puts, [])
         self.assertFalse((self.root / 'unused.json').exists())
+
+    def test_cli_defaults_full_original_text_voice_no_trim_and_no_put(self):
+        args=parser().parse_args(['--checkpoint',str(self.root/'state.json'),'translate','job-a','--languages','ko'])
+        self.api.settings['enabled'].append('ko')
+        result=execute(args,factory=lambda:self.api)
+        self.assertTrue(result['results'][0]['ok'])
+        self.assertEqual(self.api.puts,[])
+        options=self.api.posts[0][1]
+        self.assertEqual(options['input'],'original');self.assertEqual(options['parts'],['text','voice'])
+        self.assertEqual(options['trim'],{'remove_cta':False,'remove_gameplay':False})
+
+    def test_full_original_ignores_short_story_range_without_route_mutation(self):
+        value=self.api.jobs['job-a'];value.update(source_file='source.mp4',analysis={'story':True},segments=[{'index':1,'start_s':0,'end_s':5}])
+        value['source_story'].update(active=True,story_end_s=5,video_file='source_story/clip.mp4')
+        result=self.submit(parts=['text','voice'],input_mode='original',trim={'remove_cta':False,'remove_gameplay':False})
+        self.assertTrue(result['results'][0]['ok']);self.assertEqual(self.api.puts,[])
+        self.assertEqual(self.api.posts[0][1]['input'],'original')
+
+    def test_old_swap_result_is_not_full_original_and_not_automatically_regenerated(self):
+        self.submit(parts=['text','voice'])
+        self.api.jobs['job-a'].update(status='uploaded')
+        self.api.jobs['job-a']['translation']['languages']['ja']={**complete(['text','voice']),'input':'swap'}
+        result=self.submit(parts=['text','voice'],input_mode='original',trim={'remove_cta':False,'remove_gameplay':False})
+        self.assertEqual(result['results'][0]['code'],'needs_review');self.assertEqual(len(self.api.posts),1)
+
+    def test_full_original_unknown_only_reconciles_same_options_no_paid_replay(self):
+        self.api.error=ReplicaError('result_unknown','Lost')
+        kwargs={'parts':['text','voice'],'input_mode':'original','trim':{'remove_cta':False,'remove_gameplay':False}}
+        self.submit(**kwargs);self.submit(**kwargs)
+        self.assertEqual(len(self.api.posts),1);self.assertEqual(self.api.puts,[])
+
+    def test_result_must_match_input_parts_and_no_removed_content(self):
+        value=job();row={**complete(['text','voice']),'input':'swap','trim_removed':[]}
+        value['translation']['languages']['ja']=row
+        self.assertEqual(language_state(value,'ja',['text','voice'],input_mode='original'),'review')
+        row['input']='original';row['trim_removed']=['cta']
+        self.assertEqual(language_state(value,'ja',['text','voice'],input_mode='original',
+                                       trim={'remove_cta':False,'remove_gameplay':False}),'review')
+
+    def test_completed_server_result_without_checkpoint_does_not_authorize_a_paid_replacement(self):
+        self.api.jobs['job-a']['translation']['languages']['ja']={**complete(['text','voice']),'input':'swap'}
+        preflight=self.submit(parts=['text','voice'],input_mode='original',trim={'remove_cta':False,'remove_gameplay':False},check_only=True)
+        self.assertEqual(preflight['results'][0]['code'],'existing_translation_mismatch')
+        self.assertFalse(preflight['results'][0]['ok'])
+        result=self.submit(parts=['text','voice'],input_mode='original',trim={'remove_cta':False,'remove_gameplay':False})
+        self.assertEqual(result['results'][0]['code'],'needs_review');self.assertEqual(self.api.posts,[])
+
+    def test_status_default_requires_original_text_and_voice_without_submitting(self):
+        self.api.jobs['job-a']['translation']['languages']['ja']={**complete(['text','voice']),'input':'swap'}
+        args=parser().parse_args(['status','job-a','--wait-for','translation','--languages','ja','--timeout','0.01'])
+        result=execute(args,factory=lambda:self.api)
+        self.assertFalse(result['results'][0]['ok']);self.assertEqual(self.api.posts,[])
 
     def test_source_route_is_changed_only_when_explicit_and_available(self):
         value = self.api.jobs['job-a']
@@ -274,6 +375,7 @@ class TranslationWorkflowTests(unittest.TestCase):
         subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=32x32:d=0.2',
                         '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(source)], check=True)
         content = source.read_bytes(); subtitle = '1\r\n00:00:00,000 --> 00:00:00,200\r\nこんにちは\r\n'
+        self.assertAlmostEqual(video_duration(source),0.2,places=2)
         self.api.plan['projects'] = [{'project_id': 'project-job-a', 'files': [
             {'name': 'ja.mp4', 'bytes': len(content), 'url': '/api/jobs/job-a/files/translations/ja/video.mp4'},
             {'name': 'ja.srt', 'text': subtitle}]}]

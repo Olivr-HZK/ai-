@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import math
 from pathlib import Path
+import subprocess
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, unquote
 
 from ua_workflows.replica_studio_api import (
     BASE_URL, BUSY, ReplicaError, TRANSLATION_LANGUAGES, digest, identifier, media_url, translation_options,
@@ -14,7 +16,23 @@ from ua_workflows.replica_studio_api import (
 from ua_workflows.replica_cli import decode_video, error_result, selected_ids
 
 
-def translation_input(job, *, source_video=False):
+def video_duration(path):
+    try:
+        result = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+            '-show_entries', 'stream=duration:format=duration', '-of', 'json', str(path)],
+            capture_output=True, text=True, timeout=30, check=True)
+        info = json.loads(result.stdout)
+        streams = info.get('streams') or []
+        raw = streams[0].get('duration') if streams else None
+        duration = float(raw if raw not in (None, 'N/A') else info['format']['duration'])
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError('Invalid duration')
+        return duration
+    except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError) as error:
+        raise ReplicaError('invalid_media', 'Video duration could not be verified') from error
+
+
+def translation_input(job, *, source_video=False, input_mode=None):
     source = job.get('source_story') or {}
     segments = job.get('segments') or []
     original = source_video or source.get('active') or (not job.get('analysis') and source.get('available') and not segments)
@@ -24,6 +42,10 @@ def translation_input(job, *, source_video=False):
         return {'ready': False, 'code': 'job_busy'}
     if job.get('status') in {'error', 'interrupted'} or (job.get('dashboard') or {}).get('has_error'):
         return {'ready': False, 'code': 'job_needs_review'}
+    if input_mode == 'original':
+        ready = bool(job.get('source_file') or source.get('available'))
+        return {'ready': ready, 'route': 'original', 'code': 'ready' if ready else 'source_unavailable',
+                'would_switch_source': False, 'full_current_video': True}
     if original:
         return {'ready': bool(source.get('available')), 'route': 'source_video',
                 'code': 'ready' if source.get('available') else 'source_story_unavailable',
@@ -44,7 +66,7 @@ def translation_input(job, *, source_video=False):
             'code': 'ready' if ready else 'segments_not_ready', 'missing_segments': missing}
 
 
-def language_state(job, language, parts, source_language=None):
+def language_state(job, language, parts, source_language=None, *, input_mode=None, trim=None):
     translation = job.get('translation') or {}
     source = source_language or translation.get('source_language')
     if source == language and parts != ['subtitles']:
@@ -52,9 +74,13 @@ def language_state(job, language, parts, source_language=None):
     row = translation.get('original') if parts == ['subtitles'] and language == source else (translation.get('languages') or {}).get(language)
     if not row:
         return 'waiting'
+    if input_mode is not None and row.get('input') != input_mode:
+        return 'review' if row.get('status') == 'completed' else 'waiting'
+    if trim is not None and not any(trim.values()) and row.get('trim_removed'):
+        return 'review'
     actual = row.get('parts') or (['subtitles'] if row.get('kind') == 'subtitles' or language == source else ['voice'])
     if set(actual) != set(parts):
-        return 'waiting'
+        return 'review' if input_mode is not None and row.get('status') == 'completed' else 'waiting'
     if row.get('status') in {'failed', 'interrupted', 'missing', 'cancelled'}:
         return 'review' if row.get('pending') else 'error'
     if row.get('status') in {'running', 'queued'}:
@@ -66,12 +92,20 @@ def language_state(job, language, parts, source_language=None):
 
 
 def states_for(job, options):
-    return {language: language_state(job, language, options['parts'], options.get('source_language'))
+    return {language: language_state(job, language, options['parts'], options.get('source_language'),
+                                    input_mode=options.get('input'), trim=options.get('trim'))
             for language in options['languages']}
 
 
-def translate_many(api, ids, checkpoint, languages, parts=('voice',), source_language=None, *, source_video=False, check_only=False):
-    requested = translation_options(languages, parts, source_language)
+def translate_many(api, ids, checkpoint, languages, parts=('voice',), source_language=None, *, source_video=False, check_only=False, direct=False,
+                   input_mode=None, trim=None):
+    if direct and source_video:
+        raise ReplicaError('invalid_translation', 'Direct translation cannot also request a route PUT')
+    if source_video and input_mode is not None:
+        raise ReplicaError('invalid_translation', 'Full original input does not use the legacy source-story route PUT')
+    requested = translation_options(languages, parts, source_language, input_mode=input_mode, trim=trim)
+    if input_mode is not None and hasattr(api, 'require_original_translation_transport'):
+        api.require_original_translation_transport()
     settings = api.translation_settings()
     results, stopped = [], False
     for job_id in selected_ids(ids):
@@ -84,7 +118,8 @@ def translate_many(api, ids, checkpoint, languages, parts=('voice',), source_lan
             options = dict(requested)
             source = source_language or (job.get('translation') or {}).get('source_language')
             if source:
-                options = translation_options(options['languages'], options['parts'], source)
+                options = translation_options(options['languages'], options['parts'], source,
+                                              input_mode=options.get('input'), trim=options.get('trim'))
             skipped = [x for x in options['languages'] if x == source and options['parts'] != ['subtitles']]
             options['languages'] = [x for x in options['languages'] if x not in skipped]
             if not options['languages']:
@@ -95,10 +130,22 @@ def translate_many(api, ids, checkpoint, languages, parts=('voice',), source_lan
             if enabled is not None and any(x not in enabled and not (x == source and options['parts'] == ['subtitles']) for x in options['languages']):
                 raise ReplicaError('language_disabled', 'A target language is not enabled in the workspace')
             current = states_for(job, options)
-            eligibility = translation_input(job, source_video=source_video)
+            eligibility = translation_input(job, source_video=source_video, input_mode=input_mode)
+            if direct:
+                # Delegate input selection to the translation action itself.
+                # Keep busy/error guards; no generated clips or route PUT are required locally.
+                blocked = (job.get('source_kind') == 'playable' or job.get('status') in BUSY
+                           or job.get('status') in {'error', 'interrupted'}
+                           or (job.get('dashboard') or {}).get('running')
+                           or (job.get('dashboard') or {}).get('has_error'))
+                eligibility = {'ready': not blocked, 'route': 'server_selected',
+                               'code': 'job_busy_or_needs_review' if blocked else 'ready'}
             if check_only:
-                results.append({'id': job_id, 'ok': eligibility['ready'] or all(x == 'ready' for x in current.values()),
-                                'code': eligibility['code'], 'input': eligibility, 'languages': current,
+                conflict = input_mode is not None and any(
+                    state != 'ready' and ((job.get('translation') or {}).get('languages') or {}).get(lang, {}).get('status') == 'completed'
+                    for lang, state in current.items())
+                results.append({'id': job_id, 'ok': not conflict and (eligibility['ready'] or all(x == 'ready' for x in current.values())),
+                                'code': 'existing_translation_mismatch' if conflict else eligibility['code'], 'input': eligibility, 'languages': current,
                                 'skipped_original_languages': skipped})
                 continue
             saved = checkpoint.get('translations', job_id) or {'attempts': []}
@@ -116,10 +163,18 @@ def translate_many(api, ids, checkpoint, languages, parts=('voice',), source_lan
                     raise ReplicaError('needs_review', 'Previous translation needs review; no automatic retry')
             if saved['attempts']:
                 checkpoint.put('translations', job_id, saved)
+            if any(set(p['options']['languages']) & set(options['languages'])
+                   and any(p['options'].get(k) != options.get(k) for k in ('input', 'trim', 'parts', 'source_language'))
+                   for p in saved['attempts']):
+                raise ReplicaError('needs_review', 'An earlier translation used different input/content options; no automatic paid rerun')
             missing = [x for x, state in current.items() if state != 'ready']
             if not missing:
                 results.append({'id': job_id, 'ok': True, 'code': 'already_done', 'languages': current})
                 continue
+            if input_mode is not None and any(
+                    ((job.get('translation') or {}).get('languages') or {}).get(lang, {}).get('status') == 'completed'
+                    for lang in missing):
+                raise ReplicaError('needs_review', 'Existing completed translation has different input/content or removed sections; no automatic paid rerun')
             matching = [p for p in saved['attempts'] if p['options']['parts'] == options['parts'] and
                         p['options'].get('source_language') == options.get('source_language') and
                         set(p['options']['languages']) & set(missing)]
@@ -164,8 +219,9 @@ def translate_many(api, ids, checkpoint, languages, parts=('voice',), source_lan
     return {'operation': 'translation_preflight' if check_only else 'translate', 'results': results, 'stopped': stopped}
 
 
-def translation_status_many(api, ids, languages, parts=('voice',), source_language=None, *, timeout=3600, interval=3.5, wait=time.sleep):
-    options = translation_options(languages, parts, source_language)
+def translation_status_many(api, ids, languages, parts=('voice',), source_language=None, *, timeout=3600, interval=3.5, wait=time.sleep,
+                            input_mode=None, trim=None):
+    options = translation_options(languages, parts, source_language, input_mode=input_mode, trim=trim)
     ids, pending, results = selected_ids(ids), set(selected_ids(ids)), {}
     started = time.monotonic()
     while pending:
@@ -199,11 +255,14 @@ def download_translations(api, ids, checkpoint, output, languages, *, plan_only=
     ids = selected_ids(ids)
     projects = {}
     revisions = {}
+    language_files = {}
     for job_id in ids:
         job = api.job(job_id)
         project_id = identifier(job.get('project_id') or job_id)
         projects.setdefault(project_id, []).append(job_id)
         revisions[job_id] = job.get('revision')
+        language_files[job_id] = {lang: ((job.get('translation') or {}).get('languages') or {}).get(lang, {}).get('video_file')
+                                  for lang in languages}
     plan = api.download_plan(ids, step='translation', languages=languages)
     if plan_only:
         return {'operation': 'download_plan', 'plan': plan}
@@ -233,6 +292,10 @@ def download_translations(api, ids, checkpoint, output, languages, *, plan_only=
                 media_url(file.get('url', ''), job_id)
                 identity = [job_id, revisions[job_id], name, file.get('url'), file.get('bytes')]
                 owner = {'id': job_id, 'project_id': project_id, 'kind': 'video'}
+                relative = unquote(address.path).split('/files/', 1)[1]
+                matches = [lang for lang, remote in language_files[job_id].items() if remote == relative]
+                if len(matches) == 1:
+                    owner['language'] = matches[0]
             key = 'translation-' + hashlib.sha256(json.dumps(identity).encode()).hexdigest()
             old = checkpoint.get('downloads', key)
             if old and Path(old['path']).is_file() and Path(old['path']).stat().st_size == old['size'] and digest(old['path']) == old['sha256']:

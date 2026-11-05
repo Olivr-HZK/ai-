@@ -81,7 +81,7 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
         'processing_policy': json.loads(json.dumps(POLICY)),
         'content_review_policy': config['plugin_handoff']['content_review_policy'],
         'collection_complete_21_apps': False, 'auto_browser_collection': False,
-        'auto_retry_downloads': False, 'feishu': config['feishu']}
+        'auto_retry_downloads': False, 'replication_trigger': 'manual', 'feishu': config['feishu']}
     if not existing:
         from ua_workflows.social_chat_media_orientation import POLICY as ORIENTATION_POLICY
         orientation = config['plugin_handoff'].get('media_orientation_policy')
@@ -157,14 +157,10 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
 确认与前一天同模板时剔除当天项，即使当天估值更高也不替换历史；日内合格组仍取最高估值代表。仅换角色、肤色或画法的相同广告结构也按同模板。存疑暂不纳入。
 逐项记录same_template/distinct/related_not_duplicate/uncertain，以及reference_date、reference_ids、双方证据哈希和判断理由；前一天无批次、覆盖不全或缺模板证据记pending，不能当零历史或宣称跨日模板核验完成。
 保存当天全部已确认模板及被跨日剔除项的模板关联，供次日继续比较，避免只存入表项导致同模板隔日重新入选。pre-review只准备封面去重队列，不能认证这一步已完成。'''
-    replication = scope.get('image_replication_after_ingestion', {})
-    if replication.get('enabled'):
-        review_steps += f'''
-入库后的下一步（本批已固定启用）：独立读回确认原素材入表成功后，无需用户另行提醒，继续为本批成功入表的全部图片做afizzy品牌复刻并回填。
-先读取skills/social-chat-browser-daily/references/image-replication.md。只处理本批已核验的图片/原图，不处理视频、试玩、未入选项；以原记录ID、广告ID、完整广告主及原附件名/源SHA256对应。
-使用内置image_gen逐张做品牌区域替换，参考{replication['brand_reference']['path']}（SHA256 {replication['brand_reference']['sha256']}），保留人物、画风、构图及全部非品牌文案。允许仅裁均匀外边和恢复原尺寸，不需为此重复请示。
-成品检查通过后写既有复刻附件字段{replication['attachment_field_id']}，不覆盖原竞品附件或其他业务字段。保留生成/上传回执，读回token、名称和精确大小；完成项不重生成/重上传，安全拦截或未知请求留账、不原样盲重试。
-原素材入库和图片复刻分别报告状态及数量；无图片明确为不适用，复刻部分失败不回滚已核验入库，不将排队状态当完成。'''
+    review_steps += '''
+复刻改为手动触发：原素材入表并独立读回后，报告本批已核验记录ID及视频/图片待复刻清单，状态记awaiting_manual_trigger，到此结束本次入库流程。
+只有用户明确指定批次、日期或记录并要求开始复刻，才进入视频CLI或skills/social-chat-browser-daily/references/image-replication.md。历史scope即使保存image_replication_after_ingestion.enabled=true，也不能作为本次新启动复刻的授权。
+用户启动后，按已确认范围自动处理、核验和回填同一记录，不为每条再次询问；复用已核验成品，未知付费请求只读核对。原素材入库与复刻分别报告状态，不将待触发或排队状态当完成。'''
     prompt = f'''# {target} 插件每日最新素材 · 手动交接
 
 当前：{receipt['status']}；已登记{len(packages)}份ZIP。prepare只登记文件，不表示已审核、入表或完成全量采集。

@@ -66,6 +66,17 @@ class FakeAPI:
 
 
 class ReplicaHTTPTests(unittest.TestCase):
+    def test_unavailable_logo_reports_server_reason_and_sends_no_action(self):
+        transport = Mock()
+        transport.request.return_value = response({'logo_replace': {
+            'available': False, 'reason': 'Tencent MPS is not configured'}})
+        with self.assertRaises(ReplicaError) as caught:
+            ReplicaAPI(transport).smart_options()
+        self.assertEqual(caught.exception.code, 'unavailable')
+        self.assertIn('Tencent MPS is not configured', str(caught.exception))
+        transport.request.assert_called_once()
+        self.assertEqual(transport.request.call_args.args[:2], ('GET', BASE_URL + '/api/settings'))
+
     def test_task_list_is_read_only_and_accepts_documented_array_response(self):
         transport = Mock()
         transport.request.return_value = response([{'id': 'job-a', 'source_name': 'source.mp4'}])

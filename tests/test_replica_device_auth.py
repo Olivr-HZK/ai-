@@ -313,6 +313,11 @@ class DeviceTransportTests(unittest.TestCase):
 
 
 class DeviceCommandTests(unittest.TestCase):
+    def setUp(self):
+        # Exercise device defaults without inheriting a real project's browser mode.
+        self.project_settings=patch('ua_workflows.shared.config.project_env_values',return_value={})
+        self.project_settings.start();self.addCleanup(self.project_settings.stop)
+
     def test_cli_displays_only_the_public_approval_link_and_short_code(self):
         def login(**kwargs):
             kwargs['on_prompt']({'user_code':'ABCD-1234','verification_uri':BASE_URL+'/cli?code=ABCD-1234'})

@@ -192,7 +192,7 @@ class Broker:
                 user = auth.get('user') or {}
                 return {'authenticated': bool(user.get('id') and user.get('enabled') and auth.get('csrf_token')),
                         'account_id': user.get('id'), 'auth_mode': auth.get('auth_mode'), 'transport': 'cli_owned_http_context',
-                        'capabilities': ['translation_v1', 'portrait_upload_v1']}
+                        'capabilities': ['translation_v1', 'translation_original_v1', 'portrait_upload_v1']}
             finally:
                 await response.dispose()
         if value.get('action') != 'request':

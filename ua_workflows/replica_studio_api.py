@@ -26,7 +26,7 @@ BUSY = {'queued', 'analyzing', 'planning', 'making_images', 'making_portraits',
 TRANSLATION_LANGUAGES = frozenset('zh en ja de fr ko ru uk pt it es id nl tr fil ms el fi hr sk pl sv hi bg ro ar cs da ta hun vi th yue'.split())
 
 
-def translation_options(languages, parts=('voice',), source_language=None):
+def translation_options(languages, parts=('voice',), source_language=None, *, input_mode=None, trim=None):
     if (not isinstance(languages, (list, tuple)) or not languages or
             any(not isinstance(x, str) or x not in TRANSLATION_LANGUAGES for x in languages)):
         raise ReplicaError('invalid_translation', 'Specify supported target languages; source is not a translation language')
@@ -39,20 +39,35 @@ def translation_options(languages, parts=('voice',), source_language=None):
     result = {'languages': list(dict.fromkeys(languages)), 'parts': sorted(set(parts)), 'remember_parts': False}
     if source_language is not None:
         result['source_language'] = source_language
+    if input_mode is not None:
+        if not isinstance(input_mode, str) or input_mode not in {'original', 'swap'}:
+            raise ReplicaError('invalid_translation', 'Translation input must be original or swap')
+        result['input'] = input_mode
+    if trim is not None:
+        if (input_mode != 'original' or not isinstance(trim, dict)
+                or set(trim) != {'remove_cta', 'remove_gameplay'}
+                or any(type(v) is not bool for v in trim.values())):
+            raise ReplicaError('invalid_translation', 'Original translation requires two explicit boolean trim choices')
+        result['trim'] = dict(trim)
     return result
 
 
 def validate_workflow_body(method, path, body):
     """Keep newly allowed writes narrow in both the SDK and owned HTTP bridge."""
+    if method == 'DELETE':
+        if (not isinstance(body, dict) or set(body) != {'revision'}
+                or type(body['revision']) is not int or body['revision'] < 0):
+            raise ReplicaError('unsupported_action', 'Recycle only the specified job with its current revision')
     if method == 'PUT':
         if (not isinstance(body, dict) or set(body) != {'revision', 'video_route'} or
                 body['video_route'] != 'source_video' or type(body['revision']) is not int or body['revision'] < 0):
             raise ReplicaError('unsupported_action', 'Only switching to source_video with the latest revision is allowed')
     if method == 'POST' and path.endswith('/actions/translate'):
-        if (not isinstance(body, dict) or set(body) - {'languages', 'parts', 'source_language', 'force_new', 'remember_parts'} or
+        if (not isinstance(body, dict) or set(body) - {'languages', 'parts', 'source_language', 'force_new', 'remember_parts', 'input', 'trim'} or
                 body.get('force_new', False) is not False or body.get('remember_parts') is not False):
             raise ReplicaError('unsupported_action', 'Translation cannot force regeneration or change workspace preferences')
-        translation_options(body.get('languages'), body.get('parts', ['voice']), body.get('source_language'))
+        translation_options(body.get('languages'), body.get('parts', ['voice']), body.get('source_language'),
+                            input_mode=body.get('input'), trim=body.get('trim'))
 
 
 class ReplicaError(RuntimeError):
@@ -85,6 +100,8 @@ def identifier(value):
 
 
 def allowed(method, path):
+    if method == 'DELETE':
+        return bool(re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}', path))
     if method == 'GET':
         if path.startswith('/api/tasks?filter='):
             return path[len('/api/tasks?filter='):] in {'all', 'active', 'running', 'queued', 'review', 'completed', 'failed'}
@@ -186,7 +203,8 @@ class ReplicaAPI:
         values = project_env_values()
         if token_file is not None and session_file is not None:
             raise ReplicaError('invalid_input', 'Choose a CLI token file or legacy session file')
-        mode = 'browser' if session_file is not None else auth_mode or values.get('REPLICA_AUTH_MODE') or 'device'
+        mode = ('browser' if session_file is not None else auth_mode or
+                ('device' if token_file is not None else values.get('REPLICA_AUTH_MODE') or 'device'))
         if mode not in {'device', 'browser'} or (mode == 'browser' and token_file is not None):
             raise ReplicaError('invalid_input', 'Choose device authorization or the explicit legacy browser transport')
         if mode == 'device':
@@ -366,7 +384,9 @@ class ReplicaAPI:
     def smart_options(self):
         logo = self.settings().get('logo_replace') or {}
         if not logo.get('available'):
-            raise ReplicaError('unavailable', 'Smart Logo processing is unavailable for this account')
+            reason = logo.get('reason')
+            detail = ': ' + ''.join(c for c in reason if c.isprintable())[:400] if isinstance(reason, str) else ''
+            raise ReplicaError('unavailable', 'Smart Logo processing is unavailable for this account' + detail)
         defaults = logo.get('defaults') or {}
         return {'use_defaults': True, 'logo_mode': 'smart', 'brand': '', **{
             k: defaults[k] for k in ('logo_id', 'replace_name', 'remove_cta', 'remove_gameplay', 'remove_watermarks', 'rename_voice') if k in defaults}}
@@ -430,6 +450,16 @@ class ReplicaAPI:
     def deleted_projects(self):
         return self.request('GET', '/api/deleted-projects')
 
+    def recycle_failed_job(self, job, *, confirmed=False):
+        if (confirmed is not True or job.get('status') not in {'error', 'interrupted'}
+                or (job.get('logo_replace_view') or {}).get('result_file')):
+            raise ReplicaError('unsupported_action', 'Explicit confirmation and a failed job without a Logo result are required')
+        jid = identifier(job['id'])
+        result = self.request('DELETE', '/api/jobs/' + jid, body={'revision': job['revision']})
+        if result.get('deleted_id') != jid or result.get('recoverable') is not True:
+            raise ReplicaError('result_unknown', 'Recycle receipt does not confirm this job; do not repeat DELETE')
+        return result
+
     def smart_logo(self, job, options):
         if options.get('logo_mode') != 'smart' or options.get('force_new'):
             raise ReplicaError('unsupported_action', 'Only smart Logo processing without forced regeneration is allowed')
@@ -478,12 +508,19 @@ class ReplicaAPI:
 
     def translate(self, job, options):
         self.require_translation_transport()
+        if 'input' in options:
+            self.require_original_translation_transport()
         options = {'remember_parts': False, **options}
         validate_workflow_body('POST', '/api/jobs/' + identifier(job['id']) + '/actions/translate', options)
         result = self.request('POST', '/api/jobs/' + job['id'] + '/actions/translate', body=options)
         if result.get('id') != job['id'] or not isinstance(result.get('status'), str):
             raise ReplicaError('result_unknown', 'Translation receipt could not be confirmed')
         return {k: result[k] for k in ('id', 'status', 'revision', 'last_action', 'generation_skipped') if k in result}
+
+    def require_original_translation_transport(self):
+        capabilities = vars(self.session).get('replica_capabilities')
+        if capabilities is not None and 'translation_original_v1' not in capabilities:
+            raise ReplicaError('bridge_upgrade_required', 'Reload the owned login bridge to select the full original translation input')
 
     def download_plan(self, ids, *, step='logo', languages=None):
         ids = list(dict.fromkeys(identifier(i) for i in ids))

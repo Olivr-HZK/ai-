@@ -50,6 +50,12 @@ class ReplicaFeishu(daily.Feishu):
             try:
                 return super().call(method, route, **kwargs)
             except ValueError as error:
+                if 'code=1254607' in str(error):
+                    attempt += 1
+                    if attempt >= 3:
+                        raise ReplicaError('read_failed', 'Feishu data is temporarily not ready; preserve original write intents') from None
+                    time.sleep(attempt)
+                    continue
                 if 'code=99991663' not in str(error) or refreshed:
                     raise
                 # A long upload batch can outlive the token. Only the original
@@ -187,7 +193,9 @@ def record(client, route, record_id):
 
 def check_record(row, item, scope):
     fields = row['fields']
-    require(row['record_id'] == item['record_id'] and fields.get('目标日期') == scope['target_date'] and fields.get('素材类型') == '视频', 'Source row/date/type changed')
+    require(row['record_id'] == item['record_id']
+            and fields.get(scope.get('date_field', '目标日期')) == item.get('target_date', scope['target_date'])
+            and fields.get(scope.get('media_type_field', '素材类型')) == '视频', 'Source row/date/type changed')
     sources = fields.get(scope['source_field']) or []
     require(len(sources) == 1 and source_identity(sources[0]) == item['source'], 'Original attachment changed')
 
@@ -515,9 +523,16 @@ class Runner:
         self.feishu = feishu or ReplicaFeishu()
         self._owns_feishu = feishu is None
         self._feishu_auth_at = time.monotonic()
-        self.route = daily.table_route(daily.load(daily.CONFIG))
-        require(fields_by_id(self.feishu.listing(self.route + '/fields')) == (state.scope['source_field'], state.scope['target_field']), 'Attachment schema changed')
+        self.route = self.destination_route()
+        self.validate_destination_fields(self.feishu.listing(self.route + '/fields'))
         self.submit_paused = False
+
+    def destination_route(self):
+        return daily.table_route(daily.load(daily.CONFIG))
+
+    def validate_destination_fields(self, schema):
+        require(fields_by_id(schema) == (self.state.scope['source_field'], self.state.scope['target_field']),
+                'Attachment schema changed')
 
     def now(self):
         return self.health.clock() if hasattr(self, 'health') else time.time()

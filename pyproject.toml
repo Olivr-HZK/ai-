@@ -12,6 +12,7 @@ dependencies = [
   "playwright>=1.40.0",
   "python-dotenv>=1.0.0",
   "requests>=2.31.0",
+  "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,7 @@ mcp = [
 guangdada = "guangdada_crawl.cli:main"
 guangdada-mcp = "guangdada_crawl.mcp_server:main"
 replica-studio = "ua_workflows.replica_cli:main"
+material-replica = "ua_workflows.material_replica:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

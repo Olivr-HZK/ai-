@@ -337,11 +337,11 @@ def parser():
     credentials = p.add_mutually_exclusive_group()
     credentials.add_argument('--token-file', type=Path, help='设备授权令牌文件（0600）；默认 ~/.config/replica-studio/cli.json')
     credentials.add_argument('--session-file', type=Path, help='兼容旧 Cookie 会话文件（0600）')
-    p.add_argument('--auth-mode', choices=['device', 'browser'], help='默认device设备授权；browser显式使用旧登录桥')
+    p.add_argument('--auth-mode', choices=['device', 'browser'], help='覆盖项目REPLICA_AUTH_MODE；browser使用专用Chrome持久化会话')
     p.add_argument('--checkpoint', type=Path, default=DEFAULT_STATE, help='上传／付费动作／下载断点')
     sub = p.add_subparsers(dest='command', required=True)
-    login = sub.add_parser('login', help='设备授权登录：浏览器批准本机后，CLI持久保存令牌并直接HTTP调用')
-    login.add_argument('--timeout', type=float, default=600, help='等待用户批准设备授权的秒数')
+    login = sub.add_parser('login', help='按项目鉴权配置登录：专用Chrome持久化会话或设备授权')
+    login.add_argument('--timeout', type=float, default=600, help='等待完成登录或设备授权的秒数')
     login.add_argument('--probe', action='store_true', help='兼容诊断：仅核对旧OIDC入口，不启动设备授权')
     login.add_argument('--label', help='本机令牌的名称')
     login.add_argument('--no-browser', action='store_true', help='显示授权地址与短码，不自动打开浏览器')
@@ -357,7 +357,9 @@ def parser():
     status.add_argument('ids', nargs='+')
     status.add_argument('--wait-for', choices=['analysis', 'logo', 'translation'])
     status.add_argument('--languages', nargs='+', help='等待翻译时指定语言，如 de ja')
-    status.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['voice'])
+    status.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['text', 'voice'])
+    status.add_argument('--input', dest='translation_input', choices=['original', 'swap'], default='original',
+                        help='等待翻译时核对实际视频输入；默认完整原视频')
     status.add_argument('--source-language', help='原语言代码；原语言字幕查询时可指定')
     status.add_argument('--timeout', type=float, default=3600)
     status.add_argument('--interval', type=float, default=3.5)
@@ -373,12 +375,14 @@ def parser():
     portrait.add_argument('--source-id', help='多角色任务必须指定；单角色自动选择唯一角色')
     portrait.add_argument('--replace', action='store_true', help='允许更换此前已确认的参考图；未知上传仍只读核对')
     portrait.add_argument('--check-only', action='store_true', help='只检查图片与角色映射，不上传或写断点')
-    translate = sub.add_parser('translate', help='多任务翻译文字／语音或仅字幕；默认只语音，不强制重做')
+    translate = sub.add_parser('translate', help='默认翻译完整当前原视频的文字和语音，不裁剪、不强制重做')
     translate.add_argument('ids', nargs='+')
     translate.add_argument('--languages', nargs='+', required=True)
-    translate.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['voice'])
+    translate.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['text', 'voice'])
     translate.add_argument('--source-language')
-    translate.add_argument('--source-video', action='store_true', help='明确改用可用的原视频剧情部分，不生成人物图或换人')
+    translate.add_argument('--input', dest='translation_input', choices=['original', 'swap'], default='original',
+                           help='original整条当前原视频（含换Logo版本）；swap已生成的换人片段')
+    translate.add_argument('--source-video', action='store_true', help='兼容别名：等同--input original，不再切换剧情路线')
     translate.add_argument('--check-only', action='store_true', help='只读预检，不切换路线或提交翻译')
     translate.add_argument('--yes', action='store_true', help='设备授权模式下确认提交付费翻译动作')
     download = sub.add_parser('download', help='多选下载Logo或翻译视频／字幕，不另行拼接或生成')
@@ -398,7 +402,9 @@ def execute(args, factory=None):
             return ReplicaAPI().login_start()
         if args.timeout <= 0:
             raise ReplicaError('invalid_input', 'Login timeout must be positive')
-        if args.legacy_browser or args.auth_mode == 'browser':
+        from ua_workflows.shared.config import project_env_values
+        mode = args.auth_mode or ('device' if args.token_file else project_env_values().get('REPLICA_AUTH_MODE') or 'device')
+        if args.legacy_browser or mode == 'browser':
             if args.token_file:
                 raise ReplicaError('invalid_input', 'Legacy browser login does not write a CLI token file')
             from ua_workflows.replica_auth_bridge import start_login
@@ -438,12 +444,16 @@ def execute(args, factory=None):
         if args.wait_for == 'translation':
             from ua_workflows.replica_translation import translation_status_many
             return translation_status_many(api, args.ids, args.languages, args.parts, args.source_language,
-                                           timeout=args.timeout, interval=args.interval)
+                                           timeout=args.timeout, interval=args.interval,input_mode=args.translation_input,
+                                           trim={'remove_cta':False,'remove_gameplay':False} if args.translation_input=='original' else None)
         return status_many(api, args.ids, stage=args.wait_for, timeout=args.timeout, interval=args.interval, include_analysis=args.analysis)
     if args.command == 'translate' and args.check_only:
         from ua_workflows.replica_translation import translate_many
+        if args.source_video and args.translation_input != 'original':
+            raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
         return translate_many(api, args.ids, None, args.languages, args.parts, args.source_language,
-                              source_video=args.source_video, check_only=True)
+                              input_mode=args.translation_input, trim={'remove_cta':False,'remove_gameplay':False}
+                              if args.translation_input == 'original' else None, check_only=True)
     with operation_lock(args.checkpoint):
         checkpoint = Checkpoint(args.checkpoint, auth['account_id'])
         if args.command == 'upload':
@@ -455,8 +465,11 @@ def execute(args, factory=None):
             return replace_portrait(api, args.id, args.image, checkpoint, source_id=args.source_id, replace=args.replace)
         if args.command == 'translate':
             from ua_workflows.replica_translation import translate_many
+            if args.source_video and args.translation_input != 'original':
+                raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
             return translate_many(api, args.ids, checkpoint, args.languages, args.parts, args.source_language,
-                                  source_video=args.source_video)
+                                  input_mode=args.translation_input, trim={'remove_cta':False,'remove_gameplay':False}
+                                  if args.translation_input == 'original' else None)
         if args.command == 'download':
             if args.step == 'translation':
                 from ua_workflows.replica_translation import download_translations

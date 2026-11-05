@@ -19,7 +19,7 @@
 | `portrait ID IMAGE` | `POST /api/jobs/{identifier}/portrait/{source_id}` | 上传你提供的图片并设为指定角色当前参考图；不调用生图或视频生成 |
 | `logo ID...` | `POST /api/jobs/{identifier}/actions/logo_replace` | 多选任务逐条提交 `logo_mode=smart`，不重复付费请求 |
 | `translate ID...` | `POST /api/jobs/{identifier}/actions/translate` | 多任务/多语言翻译，支持文字、语音或仅字幕；先只读预检，意图落盘后提交 |
-| `translate --source-video` | `PUT /api/jobs/{identifier}`，然后同上 | 仅显式指定时切换`video_route=source_video`，带最新revision，不启动额外生成 |
+| `translate --input original`（默认） | 同上，无PUT | 翻译完整当前原视频；`--source-video`为兼容别名，两个翻译前裁剪开关均false |
 | `download ID...` | `POST /api/jobs/download/files`，再 GET 结果媒体 | 默认仍是原语言Logo结果；`--step translation --languages ...`下载翻译视频和字幕 |
 
 智能换 Logo 前只读 `GET /api/settings` 取得工作区默认值；翻译前读取翻译服务/文字能力/已启用语言，不写回设置、不调整并发或模型。翻译写请求不带force_new，不改变remember_parts偏好。人物参考图上传独立开放；没有添加人物图生成、视频换人生成、独立重复分析、完整一键生成或额外拼接命令，HTTP 白名单继续拒绝这些生成动作。PUT只允许revision与source_video路线两个字段。
@@ -43,6 +43,8 @@
 `scripts/replica-studio` 使用项目已有虚拟环境，并保留调用方的工作目录，支持包含空格的文件路径。`pyproject.toml` 另登记了 `replica-studio` console entry；安装项目包后可直接使用该命令。
 
 ## 鉴权的实际范围
+
+2026-11-04本项目按用户要求恢复**专用浏览器持久化会话**：`.env`设置`REPLICA_AUTH_MODE=browser`，主表监听配置显式绑定`auth_mode=browser`。`login`和后续API调用均遵循项目模式，可用`./scripts/replica-studio login`重开原专用浏览器；`session`核验账号。原任务断点保留，失败行不自动重跑。桥与专用Chrome需要保持运行；正常会话/SSO有效期仍由平台控制，到期须正常登录。原设备令牌保留但不自动回退使用。下述设备模式仍可通过`--auth-mode device`显式选择。
 
 默认设备授权流程为：
 
@@ -70,7 +72,7 @@
 ./scripts/replica-studio --auth-mode browser session
 ```
 
-也可显式提供全局`--session-file /absolute/private/session.json`，或在选择browser模式后沿用`.env`的`REPLICA_SESSION_FILE`。批处理SDK可通过项目`.env`的`REPLICA_AUTH_MODE=browser`兼容旧通道；默认仍为device。Cookie写请求继续使用Origin、CSRF和账号绑定，不读取用户原Chrome资料。`login --probe`仅保留旧OIDC入口的只读诊断，不把入口303当作已登录。
+也可显式提供全局`--session-file /absolute/private/session.json`，或在选择browser模式后沿用`.env`的`REPLICA_SESSION_FILE`。批处理SDK可通过项目`.env`的`REPLICA_AUTH_MODE=browser`选择专用浏览器通道；未配置模式的SDK默认device。Cookie写请求继续使用Origin、CSRF和账号绑定，不读取用户原Chrome资料。`login --probe`仅保留旧OIDC入口的只读诊断，不把入口303当作已登录。
 
 旧桥仍使用APIRequestContext和0600 Unix socket，只允许必要接口；媒体按8MiB Range读取。新设备令牌直连采用原始流式GET，保留任务归属、精确大小/SHA256和解码校验；本次不改变服务端模型、并发或生成逻辑。
 
@@ -130,7 +132,7 @@
 
 ## 可选翻译
 
-本节按用户提供的OpenAPI及此前保存的前端检查规则封装，尚未实站执行翻译。新代码的离线验证与此前Logo实站验收分别记载。设备模式直接请求翻译接口；仅旧browser模式需要更新HTTP桥，关闭旧专用窗口后使用`login --legacy-browser`。旧桥缺少翻译能力时在付费意图前报`bridge_upgrade_required`，不误记未知请求。
+2026-11-04按用户截图与当前公开前端请求参数修正：完整当前原视频通过翻译POST的`input=original`指定，不能用任务`video_route=source_video`替代。旧参数实测产出5秒日语片段，完整Logo输入为28.4秒，整片验收失败；随后以新参数完成一次28.4秒日语文字＋配音实测，输入输出时长一致、完整解码及本机日语识别通过；平台仍有66条文字复查提示，技术完成不等于人工效果验收。browser桥需支持`translation_original_v1`，旧桥在意图前报`bridge_upgrade_required`，不会派发错误输入。
 
 建议翻译使用独立断点，下面JOB_A/JOB_B替换为真实任务ID：
 
@@ -142,11 +144,11 @@
 ```
 
 - `--languages`必填，使用文档语言代码，如ja/de/en；`hun`保持原兼容代码，不能写hu。目标语言需在工作区已启用；不自动开通语言或服务。
-- `--parts`默认voice，只配音；`--parts text voice`同时翻译画面文字和语音；`--parts subtitles`只生成字幕，不能混选。
+- `--parts`默认`text voice`，同时翻译画面文字和语音；显式`--parts voice`只配音，`--parts subtitles`只生成字幕，不能混选。
 - `--source-language en`可显式指定原语言，否则沿任务翻译视图/服务端分析结果识别。目标包含原语言时，普通翻译会排除原语言；仅字幕允许原语言。例如原语言字幕使用`--languages en --source-language en --parts subtitles`，不是`--languages source`。`source`仅用于下载。
 - `--check-only`只读会话、设置和任务，返回输入路线/就绪性、已有语言状态和是否需要显式切换路线；不保存付费意图、不PUT、不POST翻译。
-- 默认保留当前路线。已换Logo、分析视图为空、没有生成片段而`source_story.available=true`时，沿前端的原视频回退规则放行，不要求analysis=done或先换人。其他原视频场景可显式加`--source-video`，要求源剧情可用，然后只切路线。没有可用原视频或生成片段时明确拒绝，不代为分析、人物图、换人。
-- 翻译POST与原账号/任务/语言/parts/原语言绑定，先原子保存意图；多选逐任务入队，未知回执停止后续。重跑只读取原任务；看到匹配内容的真实产物或更高revision的明确运行态才恢复已提交状态，否则保持未知，不重发。已完成内容直接复用；失败/丢失结果不自动重做。新增语言与尚未确认的旧请求重叠时先要求核对，不谎称新增语言已提交。
+- 默认`--input original`直接翻译整条当前版本（含换Logo结果），显式提交`trim={remove_cta:false,remove_gameplay:false}`，翻译前不额外删除内容，不切换任务剧情路线。`--source-video`保留为完整原视频的兼容别名，同样不PUT；`--input swap`仅用于已生成的换人片段，不会自动生成片段。修改分析范围不是整片翻译的前置。
+- 翻译POST与原账号/任务/语言/parts/原语言及input/trim绑定，先原子保存意图；多选逐任务入队，未知回执停止后续。重跑只读取原任务；看到匹配内容的真实产物或更高revision的明确运行态才恢复已提交状态，否则保持未知，不重发。已完成内容直接复用；失败/丢失结果不自动重做。新旧输入或内容参数不同、存在完成结果时不自动覆盖或新增付费请求。新增语言与尚未确认的旧请求重叠时先要求核对。
 - 等待按每个目标语言、parts和实际video_file/srt_file判断；通用completed、其他语言完成或仅字幕完成不被当作所需翻译视频完成。仅字幕模式不会等待不存在的视频。
 - 下载仍走逐文件计划，不调用拼接/export或一次性ZIP接口。视频按精确字节、SHA256及FFmpeg完整解码核验；字幕保留原UTF-8正文及换行并核对SHA256。按真实project_id建目录，字幕标记项目及所选任务集合，不猜测归属某条飞书记录。拒绝外站/未选任务/未选项目和路径穿越，不覆盖原文件；相同结果可复用。
 

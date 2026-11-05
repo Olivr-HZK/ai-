@@ -1,0 +1,3 @@
+#!/bin/sh
+MATERIAL_REPLICA_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 1
+exec "$MATERIAL_REPLICA_ROOT/.venv/bin/python" "$MATERIAL_REPLICA_ROOT/scripts/material_replica.py" "$@"

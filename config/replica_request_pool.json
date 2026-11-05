@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "app_token": "Adz4bj9ECaCCJrsgkj7coheYn3c",
+  "source_table_id": "tblwhAqPfQoBXK3Q",
+  "source_attachment_field_id": "fldRHIjFcO",
+  "source_existing_result_field_id": "fld6ygGkqD",
+  "request_table_id": "tblKXqqPOYqk3XPd",
+  "request_view_id": "vewBQwRBO3",
+  "table_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c?table=tblKXqqPOYqk3XPd&view=vewBQwRBO3",
+  "trigger_mode": "manual_status",
+  "trigger_status": "已验收",
+  "watcher_enabled": false,
+  "trigger_confirmation_pending": false,
+  "request_statuses": [
+    "新建",
+    "修改中",
+    "已完成",
+    "已验收",
+    "结果返回"
+  ],
+  "request_types": [
+    "替换logo",
+    "替换语言",
+    "替换人物"
+  ],
+  "fields": {
+    "需求名称": "fldrLdxAaT",
+    "关联原素材": "fldeSAzu8x",
+    "需求类型": "fldzcfAtDF",
+    "需求状态": "fldLZIQKLX",
+    "需求说明": "fldTdofKtp",
+    "处理来源": "fldcKp2NFv",
+    "目标品牌": "fldAeqnFSg",
+    "目标语言": "fldhz2oRl8",
+    "人物参考图": "fldFhtV6Vg",
+    "复刻结果": "fld0ARPEvh",
+    "执行进度": "fldLzZLTV6",
+    "执行说明": "fldT8kbqc0",
+    "原素材附件": "fldqxmesQr",
+    "原广告主": "fldSBEemnU",
+    "原素材类型": "fld1EFN7rz",
+    "原文案语言": "fld2QJfemr",
+    "提交时间": "fld3YbW9Jr",
+    "完成时间": "fld8JKIRy4",
+    "创建时间": "fldJa3iAFs",
+    "最后更新时间": "fld7Xla5fS",
+    "执行标识": "fldagAySTU",
+    "Replica任务ID": "fldw5NiWhh",
+    "原素材日期": "fldArZay0o"
+  },
+  "capabilities": {
+    "替换logo": "existing_cli_new_token_post_not_live_verified",
+    "替换语言": "existing_cli_offline_tested",
+    "替换人物": "blocked_by_device_token_policy_and_video_generation_not_implemented"
+  },
+  "result_destination": "request_record_only",
+  "expected_account": "6dbb32bb8cc64b1d8babbda71a2ae813",
+  "execution_host": "local_macbook",
+  "execution_run_dir": "/Volumes/mac os/Users/oliver/guru/ua素材/data/replica-request-pool-worker",
+  "source_entry": {
+    "enabled": false,
+    "fields": {
+      "复刻需求类型": "fldiz88vZA",
+      "复刻目标语言": "fldlOrfmpM",
+      "复刻人物参考图": "fldAyk0gVN",
+      "创建复刻需求": "fld59ScLdb",
+      "复刻需求创建标识": "fldyhIkiXr",
+      "已建复刻需求": "fldJMRgvQJ",
+      "需求创建说明": "fldWgDFquf"
+    },
+    "marker_field_id": "fld2eLcjsz",
+    "view_id": "vewlY9ngR5",
+    "view_url": "https://scnmrtumk0zm.feishu.cn/base/Adz4bj9ECaCCJrsgkj7coheYn3c?table=tblwhAqPfQoBXK3Q&view=vewlY9ngR5",
+    "trigger": "manual_checkbox",
+    "created_status": "新建"
+  }
+}
