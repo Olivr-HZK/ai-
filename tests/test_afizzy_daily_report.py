@@ -62,6 +62,29 @@ def test_merge_oses_keep_unknown_and_failures_separate():
     assert stats['products'][1]['product']=='Unmapped product'
 
 
+def test_missing_original_without_media_kind_still_counts_as_unavailable(tmp_path):
+    source = [{'preset':'tool2','pageNumber':1,'cardIndex':1,'adId':'missing',
+               'state':'missing','firstDiscovered':'2026-11-04',
+               'metadata':{'fields':{'appName':{'value':'Unmapped product'},
+                                     'platform':{'value':'Android'}}}}]
+    files = {
+        'source-ledger.json':source, 'all-downloaded-media-index.json':[],
+        'excluded-landscape.json':{'items':[]}, 'relaunch-exclusions.json':[],
+        'pre-review/plan.json':{'decisions':{},'counts':{}},
+        'review_observations.json':{'items':[]},
+        'selection.json':{'items':[],'target_date':'2026-11-04','selected_count':0},
+        'previous-day-template-review.json':{'matches':{},'pending':{}},
+        'template-groups.json':[],
+    }
+    for name, value in files.items():
+        report.save(tmp_path/name,value)
+    evidence = report.evidence_rows(tmp_path)
+    assert evidence[0]['kind']=='unknown'
+    stats = report.aggregate(evidence,GROUPS)['total']
+    assert stats['new']==stats['unavailable']==1
+    assert stats['selected']==stats['dedupe_removed']==0
+
+
 def test_all_gate_counts_partition_new_and_product_totals():
     data=[{'id':str(i),'ad_id':str(i),'app':'Emochi Android' if i%2 else 'EMOCHI World iOS',
            'os':'Android' if i%2 else 'iOS','kind':'video','status':bucket}

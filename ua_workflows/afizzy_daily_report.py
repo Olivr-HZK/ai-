@@ -149,7 +149,7 @@ def evidence_rows(base):
                             state = 'selected'
         fields = row['metadata']['fields']
         rows.append({'id': id, 'ad_id': row['adId'], 'app': fields['appName']['value'],
-                     'os': fields['platform']['value'], 'kind': row['kind'], 'status': state})
+                     'os': fields['platform']['value'], 'kind': row.get('kind', 'unknown'), 'status': state})
     result = Counter(r['status'] for r in rows)
     require(result['landscape_excluded'] == len(land) and result['relaunch_excluded'] == len(relaunch), 'First gates mismatch')
     require(result['clip_intraday_removed'] == plan['counts'].get('intraday_removed', 0) and
