@@ -12,7 +12,7 @@ TESTS = (
     'test_persistent_storage',
     'test_ci_contracts', 'test_replica_deploy', 'test_guangdada_preset_range',
     'test_material_replica', 'test_replica_cli', 'test_replica_pipeline',
-    'test_replica_main_table', 'test_replica_main_translation',
+    'test_replica_main_table', 'test_replica_main_translation', 'test_replica_main_images',
     'test_replica_retry_policy', 'test_replica_recovery',
     'test_social_chat_media_orientation', 'test_social_chat_template_history',
     'test_social_chat_feedback_policy', 'test_social_chat_mixed_delivery', 'test_social_chat_media_names',

@@ -518,14 +518,16 @@ class Runner:
         # workflow. This confirmation does not open any additional actions.
         self.factory = api_factory or (lambda: ReplicaAPI.configured(confirm_paid=True))
         self.api = self.factory()
-        auth = self.api.authenticate()
-        self.checkpoint = Checkpoint(state.root / 'cli-state.json', auth['account_id'])
+        self.checkpoint = Checkpoint(state.root / 'cli-state.json', self.checkpoint_account())
         self.feishu = feishu or ReplicaFeishu()
         self._owns_feishu = feishu is None
         self._feishu_auth_at = time.monotonic()
         self.route = self.destination_route()
         self.validate_destination_fields(self.feishu.listing(self.route + '/fields'))
         self.submit_paused = False
+
+    def checkpoint_account(self):
+        return self.api.authenticate()['account_id']
 
     def destination_route(self):
         return daily.table_route(daily.load(daily.CONFIG))

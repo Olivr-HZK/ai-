@@ -1,4 +1,4 @@
-"""Main-table multilingual results, with durable attachment/write boundaries."""
+"""Main-table video translation and shared attachment-vector delivery journals."""
 from __future__ import annotations
 
 import hashlib
@@ -181,19 +181,23 @@ class MainTranslationMixin:
             else:super().deliver_records([value])
 
     def _delivery_journal(self,rid):
-        return self.state.root/'translation-delivery'/(rid+'.json')
+        folder = 'image-delivery' if self.state.items[rid].get('engine') == 'videolab' else 'translation-delivery'
+        return self.state.root/folder/(rid+'.json')
+
+    def check_delivery_record(self,row,item):
+        check_record(row,item,self.state.scope)
 
     def _read_language_write(self,value,journal):
         if not self._eligible(value['record_id']):return
         row=record(self.feishu,self.route,value['record_id'])
-        check_record(row,self.state.items[value['record_id']],self.state.scope)
+        self.check_delivery_record(row,self.state.items[value['record_id']])
         if _same_attachments(row,self.state.scope['target_field'],journal['files']):
             value.update(stage='verified',attachment_receipts=journal['files'])
             value.pop('error',None)
         elif row['fields'].get(self.state.scope['target_field']):
             value.update(stage='needs_review',error='本行已有其他附件，未覆盖')
         else:
-            value.update(stage='write_unknown',error='多语言附件写回回执待核对，不重复发送写表请求',
+            value.update(stage='write_unknown',error='成品附件写回回执待核对，不重复发送写表请求',
                          write_check_after=self.now()+self.health.policy['reconcile_interval'])
         self.state.put(value['record_id'],value)
 
@@ -204,7 +208,7 @@ class MainTranslationMixin:
         if path.exists():
             journal=json.loads(path.read_text())
             if journal['signature']!=signature or journal['job_id']!=value['job_id']:
-                raise ReplicaError('checkpoint_conflict','多语言交付断点不匹配')
+                raise ReplicaError('checkpoint_conflict','多附件交付断点不匹配')
         else:
             journal={'version':1,'record_id':rid,'job_id':value['job_id'],'signature':signature,
                      'files':[{**v,'upload_stage':'prepared'} for v in outputs],'write_stage':'prepared'}
@@ -215,26 +219,26 @@ class MainTranslationMixin:
         for f in journal['files']:
             local=Path(f['path'])
             if not (f.get('full_decode_passed') and local.is_file() and local.stat().st_size==f['size'] and digest(local)==f['sha256']):
-                raise ReplicaError('invalid_media','多语言本地成品校验失败，未上传附件')
+                raise ReplicaError('invalid_media','本地成品校验失败，未上传附件')
             require_non_landscape(local,f['sha256'])
             if f['upload_stage']=='accepted':continue
             if f['upload_stage']!='prepared':
-                value.update(stage='attachment_unknown',error='语言附件上传回执未知，不重复上传')
+                value.update(stage='attachment_unknown',error='成品附件上传回执未知，不重复上传')
                 self.state.put(rid,value);return
             f['upload_stage']='dispatching';save_private(path,journal)
-            value.update(stage='feishu_upload_intent',delivery_kind='translation_multi');self.state.put(rid,value)
+            value.update(stage='feishu_upload_intent',delivery_kind=value.get('delivery_kind','translation_multi'));self.state.put(rid,value)
             try:
                 token=upload_attachment(self.feishu,{'feishu':{'app_token':APP}},local,f['name'])
                 if not isinstance(token,str) or not token:raise ValueError('Empty attachment token')
             except Exception as error:
                 f.update(upload_stage='unknown',upload_error=type(error).__name__);save_private(path,journal)
-                value.update(stage='attachment_unknown',error='语言附件上传回执未知，保留已核验成品，不自动重传')
+                value.update(stage='attachment_unknown',error='成品附件上传回执未知，保留已核验成品，不自动重传')
                 self.state.put(rid,value);return
             f.update(upload_stage='accepted',token=token);save_private(path,journal)
         value.update(stage='feishu_uploaded',attachment_receipts=journal['files']);self.state.put(rid,value)
         if not self._eligible(rid):return
         row=record(self.feishu,self.route,rid)
-        check_record(row,self.state.items[rid],self.state.scope)
+        self.check_delivery_record(row,self.state.items[rid])
         if row['fields'].get(self.state.scope['target_field']):
             self._read_language_write(value,journal);return
         journal.update(write_stage='dispatching',dispatched_at=time.time());save_private(path,journal)
@@ -248,7 +252,7 @@ class MainTranslationMixin:
         save_private(path,journal);self._read_language_write(value,journal)
 
     def can_reconcile(self,value):
-        if value.get('delivery_kind')=='translation_multi' and value['stage'] in {'write_intent','write_unknown'}:
+        if value.get('delivery_kind') in {'translation_multi','image_multi'} and value['stage'] in {'write_intent','write_unknown'}:
             return False  # The legacy writer expects one token; use the vector journal below.
         return super().can_reconcile(value)
 
@@ -258,7 +262,7 @@ class MainTranslationMixin:
 
     def reconcile_writes(self):
         for value in self.state.all():
-            if value.get('delivery_kind')!='translation_multi' or not self.record_available(value['record_id']):continue
+            if value.get('delivery_kind') not in {'translation_multi','image_multi'} or not self.record_available(value['record_id']):continue
             path=self._delivery_journal(value['record_id'])
             if not path.exists():continue
             journal=json.loads(path.read_text())
