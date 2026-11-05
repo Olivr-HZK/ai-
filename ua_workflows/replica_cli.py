@@ -21,9 +21,9 @@ import requests
 from ua_workflows.replica_studio_api import (
     BASE_URL, ReplicaAPI, ReplicaError, digest, identifier, save_private, step_state,
 )
-from ua_workflows.shared.config import PROJECT_ROOT
+from ua_workflows.shared.config import PROJECT_ROOT, DATA_DIR
 
-DEFAULT_STATE = PROJECT_ROOT / 'data/replica-cli/state.json'
+DEFAULT_STATE = DATA_DIR / 'replica-cli/state.json'
 
 
 class Checkpoint:
@@ -389,7 +389,7 @@ def parser():
     download.add_argument('ids', nargs='+')
     download.add_argument('--step', choices=['logo', 'translation'], default='logo')
     download.add_argument('--languages', nargs='+', help='翻译结果的语言；logo步骤仅source')
-    download.add_argument('--output-dir', type=Path, default=PROJECT_ROOT / 'data/replica-cli/results')
+    download.add_argument('--output-dir', type=Path, default=DATA_DIR / 'replica-cli/results')
     download.add_argument('--plan-only', action='store_true', help='只返回多ID保存计划')
     return p
 

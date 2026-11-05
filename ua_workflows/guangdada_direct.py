@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 import zipfile
 import requests
 from .guangdada_headless_ui import PRESETS,AVAILABLE_PRESETS,selected_presets,preset_scope_suffix,PresetUI,PreparationError,unique_visible
+from .shared.config import DATA_DIR, STATE_ROOT, PROJECT_ROOT, project_env_path
 
 ROOT=Path(__file__).resolve().parents[1]
 SITE='https://www.guangdada.net/modules/creative/display-ads'
@@ -348,9 +349,9 @@ def main(argv=None):
  p=argparse.ArgumentParser(description='独立广大大批量采集：无扩展、无扩展权限、先保存地址再3路CDN下载')
  p.add_argument('command',choices=['run','resume','download-collected','retry-failed'])
  p.add_argument('--date',required=True,type=date_arg)
- p.add_argument('--state-dir',type=Path,default=Path.home()/'.local/share/gdd-direct')
- p.add_argument('--output',type=Path,default=Path.home()/'Downloads/广大大独立采集')
- p.add_argument('--credentials-env',type=Path,default=ROOT/'.env')
+ p.add_argument('--state-dir',type=Path,default=DATA_DIR/'afizzy_daily/collector-state' if STATE_ROOT!=PROJECT_ROOT else Path.home()/'.local/share/gdd-direct')
+ p.add_argument('--output',type=Path,default=DATA_DIR/'afizzy_daily/raw' if STATE_ROOT!=PROJECT_ROOT else Path.home()/'Downloads/广大大独立采集')
+ p.add_argument('--credentials-env',type=Path,default=project_env_path())
  range_args=p.add_mutually_exclusive_group()
  range_args.add_argument('--only',choices=[p['key'] for p in AVAILABLE_PRESETS])
  range_args.add_argument('--presets',nargs='+',choices=[p['key'] for p in AVAILABLE_PRESETS])

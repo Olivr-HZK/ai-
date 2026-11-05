@@ -18,6 +18,7 @@ from ua_workflows.replica_studio_api import ReplicaError, save_private
 from ua_workflows.social_chat_media_orientation import POLICY
 from ua_workflows.social_chat_replica import APP, TABLE, State, ReplicaFeishu, source_identity, TERMINAL
 from ua_workflows.replica_recovery import UNKNOWN
+from ua_workflows.shared.config import DATA_DIR
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / 'config/replica_main_table.json'
@@ -226,7 +227,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('action', choices=['watch', 'pause', 'status', 'plan'])
     p.add_argument('--config', type=Path, default=CONFIG)
-    p.add_argument('--run-dir', type=Path, default=ROOT / 'data/replica-main-table-worker')
+    p.add_argument('--run-dir', type=Path, default=DATA_DIR / 'replica-main-table-worker')
     p.add_argument('--poll-interval', type=float, default=15)
     p.add_argument('--background', action='store_true')
     args = p.parse_args(argv); settings = config(args.config)

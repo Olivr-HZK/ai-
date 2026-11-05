@@ -24,10 +24,10 @@ from urllib.parse import urlsplit
 
 import requests
 
-from ua_workflows.shared.config import PROJECT_ROOT
+from ua_workflows.shared.config import PROJECT_ROOT, DATA_DIR
 from ua_workflows.replica_studio_api import BASE_URL, allowed, media_url, validate_workflow_body, portrait_path
 
-RUNTIME = PROJECT_ROOT / 'data/replica-cli'
+RUNTIME = DATA_DIR / 'replica-cli'
 CHUNK_SIZE = 8 * 1024 * 1024
 SOCKET = Path('/tmp') / f'replica-cli-{os.getuid()}-{hashlib.sha256(str(PROJECT_ROOT).encode()).hexdigest()[:10]}.sock'
 SAFE_HEADERS = {'accept', 'content-type', 'origin', 'range', 'x-replica-csrf', 'x-replica-account', 'x-replica-upload-id'}
@@ -161,7 +161,7 @@ def start_login(timeout=600):
         log_path = RUNTIME / 'login-bridge.log'
         with log_path.open('a') as log:
             os.chmod(log_path, 0o600)
-            keys = ('PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'HTTP_PROXY', 'HTTPS_PROXY',
+            keys = ('UA_STATE_ROOT', 'PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'HTTP_PROXY', 'HTTPS_PROXY',
                     'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy')
             environment = {key: os.environ[key] for key in keys if key in os.environ}
             subprocess.Popen([sys.executable, '-m', 'ua_workflows.replica_auth_bridge'], cwd=PROJECT_ROOT,

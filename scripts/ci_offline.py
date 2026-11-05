@@ -9,6 +9,7 @@ import re
 GUARD_INSTALLED = False
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = (
+    'test_persistent_storage',
     'test_ci_contracts', 'test_replica_deploy', 'test_guangdada_preset_range',
     'test_material_replica', 'test_replica_cli', 'test_replica_pipeline',
     'test_replica_main_table', 'test_replica_main_translation',
