@@ -10,7 +10,7 @@ GUARD_INSTALLED = False
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = (
     'test_persistent_storage',
-    'test_ci_contracts', 'test_replica_deploy', 'test_guangdada_preset_range',
+    'test_ci_contracts', 'test_replica_deploy', 'test_guangdada_preset_range', 'test_afizzy_daily',
     'test_material_replica', 'test_replica_cli', 'test_replica_pipeline',
     'test_replica_main_table', 'test_replica_main_translation', 'test_replica_main_images',
     'test_replica_retry_policy', 'test_replica_recovery',
@@ -80,9 +80,12 @@ def main():
     from ci_contracts import check
     check(ROOT)
     import pytest
+    # Only the pure collector contracts belong here. PipelineTests use a local
+    # HTTP server and Playwright, which this network-isolated gate must not run.
+    collector_contracts = str(ROOT / 'tests/test_guangdada_direct.py') + '::DirectTests'
     return pytest.main(['-q', '-p', 'no:cacheprovider',
                         '--deselect=tests/test_social_chat_plugin_review_plan.py::test_actual_handoff_cli_pins_date_and_outputs_joint_queue',
-                        '--deselect=tests/test_social_chat_plugin_review_plan.py::test_recent_history_component_behavior_matches_legacy_pure_cluster', *[str(ROOT / 'tests' / (n + '.py')) for n in TESTS]])
+                        '--deselect=tests/test_social_chat_plugin_review_plan.py::test_recent_history_component_behavior_matches_legacy_pure_cluster', *[str(ROOT / 'tests' / (n + '.py')) for n in TESTS], collector_contracts])
 
 
 if __name__ == '__main__':
