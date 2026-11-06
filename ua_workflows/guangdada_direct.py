@@ -112,6 +112,18 @@ class PageReader:
 
 def canonical(v):return json.dumps(v,ensure_ascii=False,sort_keys=True)
 
+def confirmed_relaunch(row):
+ metadata=row.get('metadata') or {}
+ field=metadata.get('fields',{}).get('relaunch') or {}
+ return (metadata.get('adId')==row.get('adId') and field.get('value') is True
+         and field.get('source') in ('visible_card','visible_detail'))
+
+def skip_relaunch(state,row):
+ if state.get('skip_confirmed_relaunch') is True and confirmed_relaunch(row):
+  row.update(state='relaunchExcluded',reason='可见明确重投标签，跳过补址及下载')
+  return True
+ return False
+
 def collect(reader,state,path,date,max_pages=None,sample_limit=None):
  rows=state.setdefault('rows',[]);completed=state.setdefault('completed_pages',[])
  try:
@@ -145,6 +157,7 @@ def collect(reader,state,path,date,max_pages=None,sample_limit=None):
       observed_later=(scan.get('cardDates') or [None]*len(scan['cardKeys']))[later-1]
       if not any(r['pageNumber']==scan['pageNumber'] and r['cardIndex']==later for r in rows):rows.append({**by_index[later],'pageNumber':scan['pageNumber'],'firstDiscovered':(observed_later or {}).get('date'),'state':'dateExcluded','reason':'前项已触发日期截止，未继续核验或下载'})
      state.update(phase='addresses-saved',stop_reason='date-cutoff');write(path,state);return
+    if skip_relaunch(state,row):write(path,state);continue
     # Missing fields never erase an already persisted original address.
     recoverable=row.get('reasonCode') not in ['UNSUPPORTED_TYPE','STREAM_MANIFEST','UNSUPPORTED_SCHEME','PLAYABLE_NOT_HTML']
     if not row.get('url') and row.get('kind') and recoverable:
@@ -155,13 +168,14 @@ def collect(reader,state,path,date,max_pages=None,sample_limit=None):
       candidate=next((i for i in fresh['items'] if i['adId']==ad_id and i['cardIndex']==index),None)
       if candidate:row.update(candidate);write(path,state);break
       reader.page.wait_for_timeout(200)
+    if skip_relaunch(state,row):write(path,state);continue
     if not row.get('url') and row.get('kind')=='video' and recoverable:
      found=reader.detail(row,checkpoint=lambda:write(path,state))
      if found.get('url'):row.update(url=found['url'],detailSource=True)
      else:row.update(state='missing',reason='列表及对应详情未提供可确认原视频地址')
     if not row.get('url'):row.update(state='missing',reason=row.get('reason','未取得原地址'))
     write(path,state)  # every URL is durable before moving to the next card
-    if sample_limit and sum(bool(r.get('url')) for r in rows)>=sample_limit:
+    if sample_limit and sum(bool(r.get('url')) and r.get('state')!='relaunchExcluded' for r in rows)>=sample_limit:
      state.update(phase='addresses-saved',stop_reason='sample-limit');write(path,state);return
    completed.append(anchor);state.pop('pending_page',None);write(path,state)
    meta=reader.call('pagination',args=['read',anchor])
@@ -263,7 +277,7 @@ def report(state):
  rows=state.get('rows',[])
  out=['# 下载报告',f"- 采集方式：独立浏览器批量采集（不加载扩展）",f"- 目标日期：{state['date']}",f"- 预设：{state['preset']['category']} / {state['preset']['preset']}",f"- 状态：{state['phase']}",f"- 结束原因：{state.get('stop_reason',state.get('pause_reason','尚未结束'))}",'','| 选择位置 | 广告 ID | 类型 | 首次发现日期 | 结果 | 文件 | 原因 | 建议 |','|---|---|---|---|---|---|---|---|']
  names={'image':'图片','video':'视频','playable':'Playable 试玩'}
- results={'complete':'成功','failed':'请求失败','missing':'缺少原地址','dateExcluded':'日期未纳入','dateUnchecked':'日期未核验','pending':'未发起','duplicate':'重复合并'}
+ results={'complete':'成功','failed':'请求失败','missing':'缺少原地址','dateExcluded':'日期未纳入','dateUnchecked':'日期未核验','pending':'未发起','duplicate':'重复合并','relaunchExcluded':'重投剔除（未下载）'}
  for r in rows:out.append('| '+' | '.join(md(x) for x in [f"第 {r['pageNumber']} 页 · 第 {r['cardIndex']} 个",r['adId'],names.get(r.get('kind'),'未知'),r.get('firstDiscovered'),results.get(r.get('state'),'未发起'),r.get('filename','—'),r.get('reason',''),'Playable外部依赖未打包' if r.get('kind')=='playable' else ''])+' |')
  out+=['','## 素材信息','| 选择位置 | 广告 ID | App 名称 | App ID | 平台 | 展示估值 | 重投标签 |','|---|---|---|---|---|---|---|']
  for r in rows:
@@ -277,7 +291,9 @@ def report(state):
 def transfer(state,path,directory,output):
  state['phase']='downloading';write(path,state);rows=state['rows'];seen={};targets=[]
  for i,r in enumerate(rows):
-  if not r.get('url') or r.get('state') in ['dateExcluded','dateUnchecked']:continue
+  if r.get('state') in ['dateExcluded','dateUnchecked']:continue
+  if skip_relaunch(state,r):continue
+  if not r.get('url'):continue
   if r['url'] in seen:r.update(state='duplicate',reason='与前项相同原地址合并');continue
   seen[r['url']]=i;targets.append((i,r))
  with ThreadPoolExecutor(max_workers=3) as pool:
@@ -376,7 +392,7 @@ def main(argv=None):
     state=json.loads(path.read_text())
     if state['date']!=a.date or state['preset']!=preset or state.get('sample_limit')!=a.sample_per_preset:raise Paused('断点日期/范围不同')
    else:
-    state={'schema':1,'date':a.date,'preset':preset,'phase':'not-started','rows':[],'sample_limit':a.sample_per_preset};write(path,state)
+    state={'schema':2,'date':a.date,'preset':preset,'phase':'not-started','rows':[],'sample_limit':a.sample_per_preset,'skip_confirmed_relaunch':True};write(path,state)
    states.append((state,path))
   if a.command not in ['download-collected','retry-failed'] and any(s['phase'] not in ['addresses-saved','complete','downloading','packing','no-media'] for s,_ in states):
    with sync_playwright() as engine:
@@ -431,9 +447,10 @@ def main(argv=None):
     transfer(state,path,work/(state['preset']['key']+'_files'),output/state['preset']['key'])
     print(json.dumps({'stage':'download-finished','preset':state['preset']['preset'],'success':sum(r.get('state')=='complete' for r in state['rows']),'failed':sum(r.get('state')=='failed' for r in state['rows']),'archive':state.get('archive')},ensure_ascii=False),flush=True)
   complete=not attention and all(s['phase'] in ['complete','no-media'] for s,_ in states)
-  all_media=all(r.get('state') in ['complete','dateExcluded'] or r.get('state')=='duplicate' and r.get('filename') for s,_ in states for r in s['rows'])
+  all_media=all(r.get('state') in ['complete','dateExcluded','relaunchExcluded'] or r.get('state')=='duplicate' and r.get('filename') for s,_ in states for r in s['rows'])
   collection_complete=complete and not a.sample_per_preset and not a.max_pages and all(s.get('stop_reason') in ['date-cutoff','last-page'] for s,_ in states)
   summary={'date':a.date,'scope':[s['preset']['key'] for s,_ in states],'sample_limit':a.sample_per_preset,'complete':complete,'collection_complete':collection_complete,'all_media_downloaded':all_media,'full_day_complete':collection_complete and all_media,'media_failed':sum(r.get('state')=='failed' for s,_ in states for r in s['rows']),'attention':attention,'output':str(output),'extension_used':False}
+  summary['media_relaunch_excluded']=sum(r.get('state')=='relaunchExcluded' for s,_ in states for r in s['rows'])
   write(output/'summary.json',summary);print(json.dumps(summary,ensure_ascii=False),flush=True)
   return 0 if summary['complete'] and all_media else 2
 

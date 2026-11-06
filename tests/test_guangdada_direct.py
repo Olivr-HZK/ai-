@@ -15,6 +15,42 @@ let n=1;function render(){document.querySelector('#cards').replaceChildren();for
 document.querySelector('#preset').onclick=()=>{document.querySelector('#tag').textContent='Applied';document.querySelector('#from').value='2020-01-01';document.querySelector('#to').value='2020-01-01';};document.querySelector('#sort').onclick=e=>e.target.className='text-blue-600';document.querySelector('.ant-pagination-next button').onclick=()=>{n++;render();};render();
 </script>'''
 class DirectTests(unittest.TestCase):
+ def relaunch_row(self,value=True,metadata_id='ad',source='visible_card'):
+  return {'adId':'ad','kind':'video','cardIndex':1,'reasonCode':'MISSING_URL','metadata':{'adId':metadata_id,'fields':{'relaunch':{'value':value,'source':source}}}}
+ def test_confirmed_relaunch_skips_address_warm_and_media_detail_but_checks_date(self):
+  for has_url in (False,True):
+   row=self.relaunch_row()
+   if has_url:row['url']='https://cdn.example/original.mp4'
+   class Reader:
+    def safe(s):pass
+    def wait_page(s,**kw):return {'pageNumber':1,'cardKeys':['ad'],'items':[],'missing':[row],'cardDates':[None]}
+    def detail(s,r,read_date=False,checkpoint=None):
+     self.assertTrue(read_date);return {'firstDiscovered':'2026-11-02','dateSource':'visible_detail'}
+    def call(s,method,**kw):
+     if method=='context':return {}
+     self.assertEqual(kw['args'][0],'read');return {'hasNext':False}
+   state={'context':{},'skip_confirmed_relaunch':True}
+   with tempfile.TemporaryDirectory() as d:
+    collect(Reader(),state,Path(d)/'state.json','2026-11-02')
+   self.assertEqual(state['rows'][0]['state'],'relaunchExcluded')
+   self.assertEqual(state['rows'][0]['firstDiscovered'],'2026-11-02')
+   self.assertEqual(len(state['completed_pages']),1)
+ def test_transfer_skips_only_bound_explicit_relaunch_and_preserves_legacy_policy(self):
+  for enabled in (True,False):
+   rows=[dict(self.relaunch_row(value,identity,source),url='https://cdn.example/'+str(i)+'.mp4',pageNumber=1,state='pending') for i,(value,identity,source) in enumerate([(True,'ad','visible_card'),(False,'ad','visible_card'),(None,'ad','visible_card'),(True,'other','visible_card'),('true','ad','visible_card'),(True,'ad','unknown')])]
+   state={'date':'2026-11-02','preset':PRESETS[0],'rows':rows}
+   if enabled:state['skip_confirmed_relaunch']=True
+   with tempfile.TemporaryDirectory() as d,patch('ua_workflows.guangdada_direct.download',side_effect=lambda r,*a:{**r,'state':'failed','reason':'test unavailable'}) as fetch:
+    transfer(state,Path(d)/'state.json',Path(d)/'media',Path(d)/'out')
+   self.assertEqual(fetch.call_count,5 if enabled else 6)
+   self.assertEqual(rows[0]['state'],'relaunchExcluded' if enabled else 'failed')
+   if enabled:self.assertIn('重投剔除（未下载）',report(state))
+ def test_all_relaunch_creatives_finish_without_network_or_empty_zip(self):
+  state={'date':'2026-11-02','preset':PRESETS[0],'rows':[dict(self.relaunch_row(),pageNumber=1,state='pending')],'skip_confirmed_relaunch':True}
+  with tempfile.TemporaryDirectory() as d,patch('ua_workflows.guangdada_direct.download',side_effect=AssertionError('must not download')):
+   transfer(state,Path(d)/'state.json',Path(d)/'media',Path(d)/'out')
+   self.assertEqual(list((Path(d)/'out').glob('*.zip')),[])
+  self.assertEqual(state['phase'],'no-media');self.assertEqual(state['rows'][0]['state'],'relaunchExcluded')
  def test_no_extension_runtime_in_browser_reader(self):
   source=READERS.read_text()
   for token in ['chrome.runtime','chrome.permissions','chrome-extension://','offscreen','load-extension']:self.assertNotIn(token,source)
