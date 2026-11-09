@@ -150,7 +150,16 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
             try:
                 item = plan(row)
                 if item['action'] == '替换语言':
-                    settings = self.api.translation_settings()
+                    if self.now() < self._video_check_after:
+                        continue
+                    try:
+                        settings = self.api.translation_settings()
+                    except ReplicaError as error:
+                        if not self._replica_can_wait(error):
+                            raise
+                        self._video_check_after = self.now() + 60
+                        self.health.alert('replica_wait', message='Replica等待恢复；暂缓领取视频翻译需求')
+                        continue
                     if not settings.get('available'):
                         raise DemandBlocked('平台翻译服务暂不可用，未上传视频或提交翻译')
                     if any(lang not in settings.get('enabled', item['languages']) for lang in item['languages']):

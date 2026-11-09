@@ -29,7 +29,9 @@
 
 配置`config/replica_main_table.json`固定主表、字段ID、原账号与需求类型触发条件，没有需求池目标。独立运行目录`data/replica-main-table-worker`。本机监听每轮空闲15秒，实际周期包括请求耗时，Mac睡眠或退出进程后不监听。
 
-2026-11-04用户要求恢复网页登录持久化会话：本项目`.env`的`REPLICA_AUTH_MODE=browser`、主表配置`auth_mode=browser`，使用CLI专用`data/replica-cli/browser-profile`，不复制日常Chrome资料或导出Cookie。`login`按项目模式启动专用Chrome；正常登录/SSO恢复后直接HTTP调用原接口。主表仍核验原账号，保留所有任务ID和付费意图，不自动切回设备令牌。会话失效需要正常重新登录；专用Chrome/桥须保持运行，关闭后可用同一login入口重开。设备令牌文件保留但不作为此模式的后备。
+本项目的`REPLICA_AUTH_MODE=browser`及主表配置`auth_mode=browser`使用CLI专用`data/replica-cli/browser-profile`。主表守护器独立启动监听，视频执行前核验原Replica账号。Replica会话不可用时，视频保留任务断点等待恢复，图片继续使用独立的Video Lab登录。
+
+登录桥守护器使用专用Chrome的现有SSO会话。已运行的桥确认Replica退出登录后会打开一次正常登录流程，等待SSO或人工完成。会话恢复后，下一次退出可再次触发。网络或桥不可达与会话退出分别记录。SSO也已过期、需要验证或账号不匹配时，可在专用Chrome完成原账号登录，或使用`./scripts/replica-studio login`打开登录入口。视频随后从原断点继续。
 
 ```sh
 .venv/bin/python -m ua_workflows.replica_main_table plan

@@ -2,7 +2,7 @@ import fcntl
 import json
 import runpy
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 
@@ -151,21 +151,19 @@ def test_live_source_change_is_recorded_without_activation(tmp_path):
     assert source.is_dir() and not source.is_symlink()
 
 
-@pytest.mark.parametrize('paused,account', [(True, 'expected'), (False, 'another')])
-def test_supervisor_never_starts_a_worker_when_paused_or_wrong_account(tmp_path, paused, account):
+def test_supervisor_never_starts_a_paused_worker(tmp_path):
     module = runpy.run_path(str(paths.PROJECT_ROOT / 'scripts/replica_supervisor.py'))
     fn = module['main']; g = fn.__globals__
     data = tmp_path / 'state/data'; dep = data / 'deployment'; dep.mkdir(parents=True)
     (dep / 'replica-main-table.json').write_text(json.dumps({'expected_account': 'expected'}))
-    if paused:
-        run = data / 'replica-main-table-worker'; run.mkdir(); (run / 'pause-requested').touch()
+    run = data / 'replica-main-table-worker'; run.mkdir(); (run / 'pause-requested').touch()
     writes = []
-    g.update(DATA_DIR=data, bridge_status=lambda: {'authenticated': True, 'account_id': account},
+    g.update(DATA_DIR=data, bridge_status=lambda: pytest.fail('Watcher must not query Replica login'),
              save_private=lambda path, value: writes.append(value))
     with patch.object(g['subprocess'], 'run', side_effect=AssertionError('No worker allowed')), \
             patch.object(g['time'], 'sleep', side_effect=SystemExit):
         with pytest.raises(SystemExit): fn('watcher')
-    assert writes[-1]['phase'] == ('paused' if paused else 'waiting_for_normal_login')
+    assert writes[-1]['phase'] == 'paused'
 
 
 def test_supervisor_uses_code_checkout_and_persistent_checkpoint_separately(tmp_path):
@@ -174,7 +172,7 @@ def test_supervisor_uses_code_checkout_and_persistent_checkpoint_separately(tmp_
     data = tmp_path / 'state/data'; dep = data / 'deployment'; dep.mkdir(parents=True)
     (dep / 'replica-main-table.json').write_text(json.dumps({'expected_account': 'expected'}))
     code = tmp_path / 'code'; code.mkdir()
-    g.update(DATA_DIR=data, PROJECT_ROOT=code, bridge_status=lambda: {'authenticated': True, 'account_id': 'expected'},
+    g.update(DATA_DIR=data, PROJECT_ROOT=code, bridge_status=lambda: pytest.fail('Watcher must not query Replica login'),
              save_private=lambda *a: None)
     with patch.object(g['subprocess'], 'run', side_effect=SystemExit) as execute:
         with pytest.raises(SystemExit): fn('watcher')
@@ -182,3 +180,31 @@ def test_supervisor_uses_code_checkout_and_persistent_checkpoint_separately(tmp_
     assert args.kwargs['cwd'] == code
     assert str(data / 'replica-main-table-worker') in args.args[0]
     assert str(dep / 'replica-main-table.json') in args.args[0]
+
+
+def test_live_bridge_reopens_sso_once_per_logout_and_reports_wrong_account(tmp_path):
+    fn = runpy.run_path(str(paths.PROJECT_ROOT / 'scripts/replica_supervisor.py'))['main']
+    g = fn.__globals__
+    dep = tmp_path / 'deployment'; dep.mkdir()
+    (dep / 'replica-main-table.json').write_text(json.dumps({'expected_account': 'expected'}))
+    valid = {'authenticated': True, 'account_id': 'expected'}
+    expired = {'authenticated': False}
+    wrong = {'authenticated': True, 'account_id': 'another'}
+    statuses = iter([valid, None, expired, expired, wrong, valid, expired])
+    phases = []
+
+    def poll(_):
+        if len(phases) == 7:
+            raise SystemExit
+
+    socket = tmp_path / 'bridge.sock'; socket.touch()
+    rpc = Mock()
+    g.update(DATA_DIR=tmp_path, SOCKET=socket, bridge_status=lambda: next(statuses), rpc=rpc,
+             start_login=lambda **_: pytest.fail('Live bridge must be reused'),
+             save_private=lambda path, value: phases.append(value['phase']))
+    with patch.object(g['time'], 'sleep', side_effect=poll), pytest.raises(SystemExit):
+        fn('bridge')
+    assert phases == ['authenticated', 'bridge_unreachable', 'waiting_for_normal_login',
+                      'waiting_for_normal_login', 'account_mismatch', 'authenticated',
+                      'waiting_for_normal_login']
+    assert rpc.call_args_list == [call({'action': 'begin_login'}, timeout=60)] * 2

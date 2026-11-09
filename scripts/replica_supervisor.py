@@ -12,7 +12,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ua_workflows.shared.config import PROJECT_ROOT, DATA_DIR
-from ua_workflows.replica_auth_bridge import SOCKET, bridge_status, start_login
+from ua_workflows.replica_auth_bridge import SOCKET, bridge_status, rpc, start_login
 from ua_workflows.replica_studio_api import save_private
 
 
@@ -26,25 +26,37 @@ def main(role):
     if not expected:
         raise ValueError('An explicit expected account is required')
     status_file = dep / (role + '-supervisor.json')
+    login_attempted = False
     while True:
         try:
-            status = bridge_status()
-            if role == 'bridge' and not SOCKET.exists():
-                save_private(status_file, {'phase': 'starting_owned_bridge', 'pid': os.getpid(), 'at': time.time()})
-                status = start_login(timeout=60)
-            authenticated = bool(status and status.get('authenticated') and status.get('account_id') == expected)
-            paused = (run / 'pause-requested').exists()
-            if role == 'watcher' and authenticated and not paused:
-                save_private(status_file, {'phase': 'watching', 'pid': os.getpid(), 'at': time.time()})
-                result = subprocess.run([sys.executable, '-u', '-m', 'ua_workflows.replica_main_table', 'watch',
-                                         '--config', str(setting), '--run-dir', str(run), '--poll-interval', '15'],
-                                        cwd=PROJECT_ROOT)
-                save_private(status_file, {'phase': 'watcher_exited', 'exit_code': result.returncode,
-                                          'pid': os.getpid(), 'at': time.time()})
-                time.sleep(60)
-                continue
-            phase = ('authenticated' if authenticated else 'waiting_for_normal_login') if role == 'bridge' else (
-                'paused' if paused else 'waiting_for_normal_login')
+            if role == 'watcher':
+                if not (run / 'pause-requested').exists():
+                    save_private(status_file, {'phase': 'watching', 'pid': os.getpid(), 'at': time.time()})
+                    result = subprocess.run([sys.executable, '-u', '-m', 'ua_workflows.replica_main_table', 'watch',
+                                             '--config', str(setting), '--run-dir', str(run), '--poll-interval', '15'],
+                                            cwd=PROJECT_ROOT)
+                    save_private(status_file, {'phase': 'watcher_exited', 'exit_code': result.returncode,
+                                              'pid': os.getpid(), 'at': time.time()})
+                    time.sleep(60)
+                    continue
+                phase = 'paused'
+            else:
+                status = bridge_status()
+                if status is None and not SOCKET.exists():
+                    save_private(status_file, {'phase': 'starting_owned_bridge', 'pid': os.getpid(), 'at': time.time()})
+                    login_attempted = True  # A newly opened bridge already begins normal login.
+                    status = start_login(timeout=60)
+                if status is None:
+                    phase = 'bridge_unreachable'
+                elif status.get('authenticated'):
+                    phase = 'authenticated' if status.get('account_id') == expected else 'account_mismatch'
+                    login_attempted = False
+                else:
+                    phase = 'waiting_for_normal_login'
+                    if not login_attempted:
+                        # Leave the login page alone while SSO or a person completes it.
+                        login_attempted = True
+                        rpc({'action': 'begin_login'}, timeout=60)
             save_private(status_file, {'phase': phase, 'pid': os.getpid(), 'at': time.time()})
         except Exception as error:
             save_private(status_file, {'phase': 'waiting_after_error', 'error': getattr(error, 'code', type(error).__name__),

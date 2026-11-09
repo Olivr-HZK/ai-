@@ -129,6 +129,16 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('private-csrf', json.dumps(result))
         self.assertNotIn('private-cookie', json.dumps(result))
 
+    async def test_status_distinguishes_unauthorized_from_service_failure(self):
+        self.context.request.get = AsyncMock(return_value=self.response)
+        self.response.status = 401
+        result = await self.broker.dispatch({'action': 'status'})
+        self.assertFalse(result['authenticated'])
+        self.response.status = 503
+        with self.assertRaisesRegex(ValueError, 'status unavailable'):
+            await self.broker.dispatch({'action': 'status'})
+        self.assertEqual(self.response.dispose.await_count, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

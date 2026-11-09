@@ -118,7 +118,7 @@ class MainImagesMixin:
 
     @staticmethod
     def _replica_can_wait(error):
-        return error.code in {'authentication_required','permission_denied','read_failed',
+        return error.code in {'authentication_required','account_changed','permission_denied','read_failed',
                               'rate_limited','temporarily_rejected','unavailable'} or (error.status or 0) >= 500
 
     def _fetch_images(self, rid, value):
@@ -271,6 +271,21 @@ class MainImagesMixin:
             self._video_upload_after = self.now()+60
             self.health.alert('replica_wait', message='Replica上传等待恢复；图片断点保持')
             return False
+
+    def download_all(self, record_ids=None):
+        # Persist a per-video wait so the delivery lane can reach other rows.
+        for rid in record_ids or list(self.state.items):
+            try:
+                super().download_all([rid])
+            except ReplicaError as error:
+                if not self._replica_can_wait(error):
+                    raise
+                value = self.state.get(rid)
+                if value['stage'] != 'logo_ready':
+                    raise
+                value['download_check_after'] = max(value.get('download_check_after', 0), self.now() + 60)
+                self.state.put(rid, value)
+                self.health.alert('replica_wait', message='Replica成品下载等待恢复；图片回填继续')
 
     def check_delivery_record(self,row,item):
         if item.get('engine') != 'videolab':

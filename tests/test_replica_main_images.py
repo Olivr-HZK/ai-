@@ -330,6 +330,31 @@ class ImageTests(MainFixture):
         self.assertEqual(self.backend.uploads,[])
         self.assertEqual(len(self.lab.creates),1)
 
+    async def test_waiting_translation_admission_does_not_block_new_images(self):
+        translation = row(None, '替换语言')
+        translation['record_id'] = 'recTranslation'
+        self.client.rows = {'recTranslation': translation, **self.client.rows}
+        with patch.object(API, 'authenticate', side_effect=ReplicaError('authentication_required', 'Replica expired')):
+            self.start()
+            await self.until(lambda: 'recMain' in self.state.items and self.state.get('recMain')['stage'] == 'verified')
+        self.assertNotIn('recTranslation', self.state.items)
+        self.assertNotIn(main.EXECUTION, translation['fields'])
+        self.assertEqual(self.backend.uploads, [])
+
+    def test_expired_replica_at_video_download_keeps_image_delivery_running(self):
+        video = row(None)
+        video['record_id'] = 'recVideo'
+        self.client.rows = {'recVideo': video, **self.client.rows}
+        self.runner._admit()
+        self.state.put('recVideo', {**self.state.get('recVideo'), 'stage': 'logo_ready', 'job_id': 'original-job'})
+        with patch.object(API, 'authenticate', side_effect=ReplicaError('authentication_required', 'Replica expired')):
+            self.tick()
+            self.tick()
+        value = self.state.get('recVideo')
+        self.assertEqual((value['stage'], value['job_id']), ('logo_ready', 'original-job'))
+        self.assertGreater(value['download_check_after'], self.runner.now())
+        self.assertEqual(self.state.get('recMain')['stage'], 'verified')
+
     async def test_videolab_login_missing_does_not_stop_video_workflow(self):
         video=row(None);video['record_id']='recVideo';self.client.rows['recVideo']=video
         self.lab.identity_error=ReplicaError('authentication_required','Video Lab login required')

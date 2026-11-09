@@ -167,6 +167,8 @@ class MainTranslationMixin:
             else:
                 failure=next((v for v in videos if not v.get('ok')),None)
                 code=failure.get('code') if failure else 'translation_outputs_mismatch'
+                if code in {'authentication_required', 'account_changed', 'permission_denied'}:
+                    raise ReplicaError(code, 'Replica translation download requires the original account')
                 count=value.get('download_attempts',0)+1
                 temporary=bool(failure and (code in {'read_failed','rate_limited'} or failure.get('retryable')
                                            or (failure.get('http_status') or 0)>=500))

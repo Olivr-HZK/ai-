@@ -188,7 +188,12 @@ class Broker:
             response = await self.context.request.get(BASE_URL + '/api/auth/session', headers={'Origin': BASE_URL},
                                                       timeout=10000, max_redirects=0, max_retries=0)
             try:
-                auth = await response.json()
+                if response.status == 401:
+                    auth = {}
+                elif response.status == 200:
+                    auth = await response.json()
+                else:
+                    raise ValueError('Replica session status unavailable')
                 user = auth.get('user') or {}
                 return {'authenticated': bool(user.get('id') and user.get('enabled') and auth.get('csrf_token')),
                         'account_id': user.get('id'), 'auth_mode': auth.get('auth_mode'), 'transport': 'cli_owned_http_context',
