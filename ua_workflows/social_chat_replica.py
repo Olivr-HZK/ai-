@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 from ua_workflows import social_chat_browser_daily as daily
-from ua_workflows.replica_studio_api import ReplicaAPI, ReplicaError, digest, save_private, step_state
+from ua_workflows.replica_studio_api import ReplicaAPI, ReplicaError, digest, logo_review_fields, save_private, step_state
 from ua_workflows.replica_cli import Checkpoint, operation_lock, upload_many, logo_many, download_many
 from ua_workflows.replica_recovery import RunHealth, UNKNOWN, find_uploaded_source, timeout_policy, retry_delay
 from ua_workflows.replica_pipeline import AsyncPipeline
@@ -424,8 +424,7 @@ def reconcile_logos(state, api=None, *, checkpoint=None, clock=time.time, respec
         save_private(state.root / 'logo-reconciliation' / (job_id + '.json'), proof)
         value.update(logo_check_after=clock() + interval, last_status=job.get('status'), last_message=job.get('message'))
         if same_action and condition == 'ready' and view.get('result_file'):
-            value.update(stage='logo_ready', visual_review_flagged=bool(view.get('flagged')),
-                         visual_review_message=view.get('warning') or job.get('message'), recovered_logo_readonly=True)
+            value.update(stage='logo_ready', recovered_logo_readonly=True, **logo_review_fields(job))
             value.pop('error', None)
         elif same_action and condition == 'running':
             value.update(stage='logo_accepted', recovered_logo_readonly=True)
@@ -687,8 +686,7 @@ class Runner:
                     value['stage'] = 'analysis_ready' if stage == 'analysis' else 'logo_ready'
                     if stage == 'logo':
                         view = job.get('logo_replace_view') or {}
-                        value['visual_review_flagged'] = bool(view.get('flagged'))
-                        value['visual_review_message'] = view.get('warning') or job.get('message')
+                        value.update(logo_review_fields(job))
                         if not view.get('result_file'):
                             value.update(stage='needs_review', error='Smart Logo returned no downloadable result; original will not be written as replica')
                 elif condition in {'error', 'review'}:
@@ -822,6 +820,9 @@ class Runner:
             value = by_id[item['id']]
             if item.get('ok'):
                 value['stage'] = 'logo_ready' if item['code'] == 'already_done' else 'logo_accepted'
+                if item['code'] == 'already_done':
+                    value.update({key: item[key] for key in ('visual_review_flagged', 'visual_review_message')
+                                  if key in item})
             elif item.get('code') == 'not_submitted':
                 value['stage'] = 'analysis_ready'
             else:

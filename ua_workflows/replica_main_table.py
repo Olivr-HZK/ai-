@@ -235,13 +235,18 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
             if (input_fingerprint(row) != self.state.items[rid]['input_fingerprint']
                     or row['fields'].get(EXECUTION) != self.state.items[rid]['execution_id']):
                 continue
-            fields = {PROGRESS: names.get(v['stage'], '需人工处理'),
-                      MESSAGE: v.get('error') or v.get('last_message') or v.get('visual_review_message') or ''}
+            review_message = v.get('visual_review_message')
+            message = v.get('last_message') or review_message or ''
+            if review_message and v.get('visual_review_flagged') and v['stage'] in {
+                'logo_ready', 'downloaded', 'feishu_uploaded', 'write_intent',
+            }:
+                message = review_message
+            fields = {PROGRESS: names.get(v['stage'], '需人工处理'), MESSAGE: v.get('error') or message}
             if v.get('job_id'):
                 fields[JOB] = v['job_id']
             if v['stage'] == 'verified':
                 fields[STATUS] = '结果返回'
-                fields[MESSAGE] = v.get('visual_review_message') or '成品已下载核验并写回本行复刻附件'
+                fields[MESSAGE] = review_message or '成品已下载核验并写回本行复刻附件'
             if any(row['fields'].get(k) != value for k, value in fields.items()):
                 self._write_fields(rid, fields)
 

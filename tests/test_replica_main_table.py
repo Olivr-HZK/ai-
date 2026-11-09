@@ -66,6 +66,10 @@ class Feishu:
 class API(PoolAPI):
     def job(self,jid):
         value=super().job(jid);value['source_file']='source.mp4'
+        view = value['logo_replace_view']
+        report = getattr(self.backend, 'logo_review_report', None)
+        if view['state'] == 'replaced' and report is not None:
+            view.update(report=copy.deepcopy(report), warning=None, flagged=False)
         for lang,row in value['translation']['languages'].items():
             row['video_file']='translations/'+lang+'/video.mp4'
             options=getattr(self.backend,'translation_options',{}).get(jid,{})
@@ -174,9 +178,18 @@ class MainTests(MainFixture):
 
     async def test_logo_full_roundtrip_same_row_no_pool_no_duplicates(self):
         self.client.rows['recMain']=row(None); original=copy.deepcopy(self.client.rows['recMain']['fields'])
+        self.backend.logo_review_report = {
+            'residual_frames': [2, 5], 'smudge_frames': [7],
+            'review': ['品牌字样边缘需复查'], 'warnings': ['建议核对片尾'],
+            'trim': {'warnings': ['6.37 秒附近转场切点调整至 6.500 秒']},
+        }
         self.start();await self.until(lambda:self.client.rows['recMain']['fields'][main.STATUS]=='结果返回')
         f=self.client.rows['recMain']['fields']
         self.assertEqual(f[main.RESULT][0]['file_token'],'result-token')
+        self.assertEqual(f[main.PROGRESS], '已完成')
+        self.assertEqual(f[main.MESSAGE], '平台建议人工查看：第 2、5 张截图仍能看到原品牌；第 7 张截图有糊块；'
+                         '品牌字样边缘需复查；建议核对片尾；6.37 秒附近转场切点调整至 6.500 秒')
+        self.assertTrue(self.state.get('recMain')['visual_review_flagged'])
         for name in [main.SOURCE,main.TYPE,main.LANGUAGE,'目标日期','素材类型','广告主']:
             self.assertEqual(f[name],original[name])
         self.assertEqual(self.state.get('recMain')['stage'],'verified')

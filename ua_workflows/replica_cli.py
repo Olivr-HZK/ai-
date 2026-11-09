@@ -19,7 +19,7 @@ from urllib.parse import urljoin, urlsplit
 import requests
 
 from ua_workflows.replica_studio_api import (
-    BASE_URL, ReplicaAPI, ReplicaError, digest, identifier, save_private, step_state,
+    BASE_URL, ReplicaAPI, ReplicaError, digest, identifier, logo_review_fields, save_private, step_state,
 )
 from ua_workflows.shared.config import PROJECT_ROOT, DATA_DIR
 
@@ -205,7 +205,7 @@ def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
                     results.append({'id': job_id, 'ok': False, 'code': 'playable_not_supported'})
                     continue
                 if (job.get('logo_replace_view') or {}).get('state') in {'replaced', 'no_logo'}:
-                    results.append({'id': job_id, 'ok': True, 'code': 'already_done'})
+                    results.append({'id': job_id, 'ok': True, 'code': 'already_done', **logo_review_fields(job)})
                     continue
                 if step_state(job, 'analysis') != 'ready':
                     results.append({'id': job_id, 'ok': False, 'code': 'analysis_not_ready'})

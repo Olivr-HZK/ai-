@@ -9,11 +9,10 @@ import time
 from ua_workflows.replica_cli import download_many
 from ua_workflows.replica_recovery import retry_delay
 from ua_workflows.replica_request_pool import record
-from ua_workflows.replica_studio_api import ReplicaError, digest, save_private
+from ua_workflows.replica_studio_api import ReplicaError, digest, logo_review_fields, save_private, step_state
 from ua_workflows.replica_translation import translate_many, language_state, download_translations, video_duration
 from ua_workflows.social_chat_media_orientation import require_non_landscape
 from ua_workflows.social_chat_replica import APP, check_record, upload_attachment
-from ua_workflows.replica_studio_api import step_state
 
 TRANSLATION_PARTS = ['text', 'voice']
 TRANSLATION_TRIM = {'remove_cta': False, 'remove_gameplay': False}
@@ -42,8 +41,7 @@ class MainTranslationMixin:
             raise ReplicaError('read_failed','Logo成品完成证据发生变化，未提交翻译')
         value.update(stage='analysis_ready',logo_prerequisite_complete=True,
                      prerequisite_logo_result_file=view['result_file'],prerequisite_logo_revision=job['revision'],
-                     visual_review_flagged=bool(view.get('flagged')),visual_review_message=view.get('warning') or job.get('message'),
-                     last_message='Logo已完成，正在核验翻译输入')
+                     last_message='Logo已完成，正在核验翻译输入', **logo_review_fields(job))
         self.state.put(rid,value)
 
     def prepare_translation(self,rid,item):

@@ -599,6 +599,36 @@ class ReplicaAPI:
         return size == expected_bytes and sha.hexdigest() == expected_sha256
 
 
+def logo_review_fields(job):
+    view = job.get('logo_replace_view') or {}
+    report = view.get('report') or {}
+    lines = []
+    for field, description in (
+        ('residual_frames', '仍能看到原品牌'),
+        ('smudge_frames', '有糊块'),
+    ):
+        frames = report.get(field)
+        if isinstance(frames, list) and frames:
+            numbers = '、'.join(str(frame) for frame in frames)
+            lines.append(f'第 {numbers} 张截图{description}')
+    for notes in (
+        report.get('review'), report.get('warnings'),
+        (report.get('trim') or {}).get('warnings'), [view.get('warning')],
+    ):
+        if isinstance(notes, list):
+            for note in notes:
+                if isinstance(note, str) and note.strip() and note.strip() not in lines:
+                    lines.append(note.strip())
+    flagged = bool(view.get('flagged') or lines)
+    if lines:
+        message = '平台建议人工查看：' + '；'.join(lines)
+    elif flagged:
+        message = '平台建议人工查看'
+    else:
+        message = job.get('message')
+    return {'visual_review_flagged': flagged, 'visual_review_message': message}
+
+
 def step_state(job, stage):
     if job.get('status') in {'error', 'interrupted'} or (job.get('dashboard') or {}).get('has_error'):
         return 'error'
