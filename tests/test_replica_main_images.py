@@ -25,6 +25,7 @@ class Lab:
         self.status = 'completed'
         self.identity_error = None
         self.bad_dimensions = False
+        self.output_sizes = {}
         self.account = {'email':'fixture@example.invalid', 'profile':'default',
                         'endpoint':ENDPOINT, 'project_id':'project-a'}
 
@@ -68,7 +69,7 @@ class Lab:
             task = next(t for t in self.tasks.values() if t['id']==Path(remote).stem)
             source = task['params']['input_data']['images'][0]['path']
             with Image.open(source) as image:
-                size = (1,1) if self.bad_dimensions else image.size
+                size = (1,1) if self.bad_dimensions else self.output_sizes.get(image.size, image.size)
             output = Path(args[args.index('--output')+1])
             output.parent.mkdir(parents=True,exist_ok=True)
             Image.new('RGB',size,'red').save(output)
@@ -170,6 +171,28 @@ class ImageTests(MainFixture):
         writes=[c for c in self.client.calls if c[1].endswith('/batch_update')]
         self.assertEqual(len(writes),1)
         self.assertEqual(len(self.client.rows),1)
+
+    def test_model_size_rounding_delivers_original_dimensions_to_main_table(self):
+        sizes = {(941, 1672): (944, 1664), (1080, 1080): (1072, 1072)}
+        self.image_row(2, sizes=list(sizes))
+        self.lab.output_sizes = sizes
+        for _ in range(3):
+            self.tick()
+        value = self.state.get('recMain')
+        self.assertEqual(value['stage'], 'verified')
+        self.assertTrue(value['visual_review_required'])
+        self.assertEqual(len(self.lab.creates), 2)
+        self.assertEqual(len(value['outputs']), 2)
+        attachments = self.client.rows['recMain']['fields'][main.RESULT]
+        run = material.State(self.root/'image-runs/recMain')
+        for source_size, output, attachment, item in zip(
+                sizes, value['outputs'], attachments, run.data['items'].values(), strict=True):
+            with self.subTest(source_size=source_size):
+                with Image.open(output['path']) as image:
+                    self.assertEqual(image.size, source_size)
+                self.assertEqual(attachment['size'], output['size'])
+                with Image.open(item['verified_download']['path']) as image:
+                    self.assertEqual(image.size, sizes[source_size])
 
     def test_existing_result_or_unsupported_image_translation_never_creates(self):
         self.client.rows['recMain']['fields'][main.RESULT]=[{'file_token':'historical'}]

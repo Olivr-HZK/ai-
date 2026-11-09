@@ -20,7 +20,7 @@ class Lab:
     def __init__(self,state):
         self.state=state;self.calls=[];self.creates=0;self.downloads=0
         self.lost=False;self.recovered=None;self.status='completed';self.task_id=str(uuid.uuid4())
-        self.bad_dimensions=False;self.wrong_task=False;self.unsafe_path=False
+        self.output_size=(720,1280);self.wrong_task=False;self.unsafe_path=False
         self.unavailable=False;self.contracts=0
         self.account={'email':'fixture@example.invalid','profile':'default','endpoint':ENDPOINT,'project_id':'project-a'}
     def identity(self):return copy.deepcopy(self.account)
@@ -54,7 +54,7 @@ class Lab:
         if args[:2]==('media','download'):
             self.downloads+=1
             path=Path(args[args.index('--output')+1]);path.parent.mkdir(parents=True,exist_ok=True)
-            Image.new('RGB',(72,128) if self.bad_dimensions else (720,1280),'red').save(path)
+            Image.new('RGB',self.output_size,'red').save(path)
             return {'bytes':path.stat().st_size,'output':str(path)}
         raise AssertionError(args)
 
@@ -188,8 +188,32 @@ class MaterialTests(unittest.TestCase):
                 self.assertEqual(self.lab.downloads,0)
 
     def test_wrong_dimensions_are_not_reported_as_replication_success(self):
-        self.add();self.tick();self.lab.bad_dimensions=True;self.tick()
+        self.add();self.tick();self.lab.output_size=(72,128);self.tick()
         self.assertEqual(self.item()['stage'],'needs_review');self.assertNotIn('output',self.item())
+
+    def test_restart_after_restoring_dimensions_reuses_verified_download(self):
+        self.add()
+        self.tick()
+        self.lab.output_size = (720, 1272)
+        save = self.state.save
+
+        def interrupted_save():
+            if self.item()['stage'] == 'downloaded':
+                raise OSError('interrupted before committing result')
+            save()
+
+        with patch.object(self.state, 'save', side_effect=interrupted_save):
+            with self.assertRaises(OSError):
+                self.tick()
+        self.state = flow.State(self.state.root)
+        self.assertEqual(self.item()['stage'], 'downloading')
+        raw = self.item()['verified_download']
+        self.assertEqual(image_identity(raw['path']), raw)
+        calls = list(self.lab.calls)
+        self.tick()
+        self.assertEqual(self.item()['stage'], 'downloaded')
+        self.assertEqual((self.item()['output']['width'], self.item()['output']['height']), (720, 1280))
+        self.assertEqual(self.lab.calls, calls)
 
     def test_existing_unverified_destination_is_not_overwritten(self):
         self.add();self.tick()

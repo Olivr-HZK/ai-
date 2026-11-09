@@ -6,6 +6,7 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
+import tempfile
 import time
 from urllib.parse import urlsplit
 import uuid
@@ -196,6 +197,47 @@ def _output_path(response, task_id):
     return paths.pop()
 
 
+def _restore_image_size(actual, source):
+    width, height = source['width'], source['height']
+    actual_width, actual_height = actual['width'], actual['height']
+    if (actual_width, actual_height) == (width, height):
+        return actual
+    # Allow model pixel rounding while guarding against a different composition.
+    aspect_delta = abs(actual_width * height - width * actual_height)
+    if (100 * abs(actual_width - width) > width
+            or 100 * abs(actual_height - height) > height
+            or 100 * aspect_delta > width * actual_height):
+        raise ReplicaError('invalid_media', 'Generated image dimensions differ from the original; review required')
+
+    raw = Path(actual['path'])
+    destination = raw.with_name(raw.stem + '_original_size.png')
+    with tempfile.NamedTemporaryFile(dir=raw.parent, suffix='.png') as temporary:
+        with Image.open(raw) as image:
+            oriented = ImageOps.exif_transpose(image)
+            mode = 'RGBA' if 'A' in oriented.getbands() or 'transparency' in oriented.info else 'RGB'
+            resized = oriented.convert(mode).resize((width, height), Image.Resampling.LANCZOS)
+            resized.save(temporary, format='PNG', icc_profile=oriented.info.get('icc_profile'))
+        temporary.flush()
+        os.fsync(temporary.fileno())
+        expected = image_identity(temporary.name)
+        if digest(raw) != actual['sha256'] or (expected['width'], expected['height']) != (width, height):
+            raise ReplicaError('invalid_media', 'Image changed during original-size processing')
+        # A previous attempt may have installed the file before saving its state.
+        try:
+            os.link(temporary.name, destination)
+        except FileExistsError:
+            pass
+        output = image_identity(destination)
+        if output['sha256'] != expected['sha256']:
+            raise ReplicaError('invalid_media', 'Existing original-size image differs from the verified result')
+        directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    return output
+
+
 def advance_image(item, client, root, output_dir, persist):
     """Advance one item once. persist must fsync before any create boundary."""
     stage = item['stage']
@@ -230,27 +272,32 @@ def advance_image(item, client, root, output_dir, persist):
             item['stage']='unknown';persist();return
         item.update(stage='accepted',task_id=recovered,recovered_from_original_uuid=True)
         persist()
-    response = client.call('task','get',item['task_id'])
-    task, tid = _task(response,item['task_id'])
-    item['last_status']=task.get('status')
-    if task.get('status') in {'failed','cancelled','canceled','interrupted'}:
-        item.update(stage='failed',error='Video Lab task '+task['status']);persist();return
-    if task.get('status') != 'completed':
-        persist();return
-    outputs = client.call('task','outputs',tid,'--summary')
-    remote = _output_path(outputs,tid)
-    suffix = PurePosixPath(remote).suffix.lower()
-    destination = Path(output_dir)/item['key']/(Path(item['source']['name']).stem+'_afizzy_replica'+suffix)
-    if destination.exists():
-        raise ReplicaError('invalid_media','Unverified destination already exists; it will not be overwritten')
-    item.update(stage='downloading',artifact=remote,download_destination=str(destination))
-    persist()
-    receipt = client.call('media','download','--type','images','--path',remote,'--output',destination,'--timeout','5m',timeout=330)
-    actual = image_identity(destination)
-    if receipt.get('bytes') != actual['size']:
-        raise ReplicaError('invalid_media','Downloaded image size differs from the CLI receipt')
-    if (actual['width'],actual['height']) != (item['source']['width'],item['source']['height']):
-        raise ReplicaError('invalid_media','Generated image dimensions differ from the original; review required')
-    item.update(stage='downloaded',output=actual,download_receipt=receipt,
+    actual = item.get('verified_download')
+    if actual is None:
+        response = client.call('task','get',item['task_id'])
+        task, tid = _task(response,item['task_id'])
+        item['last_status']=task.get('status')
+        if task.get('status') in {'failed','cancelled','canceled','interrupted'}:
+            item.update(stage='failed',error='Video Lab task '+task['status']);persist();return
+        if task.get('status') != 'completed':
+            persist();return
+        outputs = client.call('task','outputs',tid,'--summary')
+        remote = _output_path(outputs,tid)
+        suffix = PurePosixPath(remote).suffix.lower()
+        destination = Path(output_dir)/item['key']/(Path(item['source']['name']).stem+'_afizzy_replica'+suffix)
+        if destination.exists():
+            raise ReplicaError('invalid_media','Unverified destination already exists; it will not be overwritten')
+        item.update(stage='downloading',artifact=remote,download_destination=str(destination))
+        persist()
+        receipt = client.call('media','download','--type','images','--path',remote,'--output',destination,'--timeout','5m',timeout=330)
+        actual = image_identity(destination)
+        if receipt.get('bytes') != actual['size']:
+            raise ReplicaError('invalid_media','Downloaded image size differs from the CLI receipt')
+        item.update(verified_download=actual, download_receipt=receipt)
+        persist()
+    elif image_identity(item['download_destination']) != actual:
+        raise ReplicaError('invalid_media', 'Verified Video Lab download changed before delivery')
+    output = _restore_image_size(actual, item['source'])
+    item.update(stage='downloaded',output=output,
                 image_decode_passed=True,visual_review_required=True)
     item.pop('error',None);persist()
