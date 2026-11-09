@@ -43,6 +43,8 @@ D须替换为实际YYYY-MM-DD。新三组断点为 collector-state/runs/D_game_t
 
 2026-11-04模板空历史修正优先：按config.plugin_handoff.previous_day_template_dedupe固定v2策略，新scope同时深复制template_identity_mapping。用social_chat_template_history.load_confirmed_history承接全部已确认结构（优先经SHA核验的template-history-latest.json），不因前日未入选、未入表或前日自己的跨日核验pending丢掉确认结构。前日来源/身份已核验且无可用模板时建立当天新基线，再同产品/系统日内模板去重，不整组待核；真实数据/身份异常不当零。显式Tizz别名归同产品，OS仍分开；其他名称不模糊合并。用户已授权本批31条模板待核按v2修订，原交付/入表证据保留。
 
+2026-11-09前日模板备用来源：新scope启用时，本地缺证据可按[飞书原附件备用来源](content-review.md#飞书原附件备用来源)获取固定参考日同产品同系统的原附件。已有记录按原件SHA-256补回。仅有表内候选时，视觉确认同模板才剔除，未匹配仍待核。
+
 筛选第一步先执行config.orientation_filter并在新scope深复制固定。原文件/日期/身份核验后、重投和CLIP之前，用ffprobe取得实际首视频流宽高、sample_aspect_ratio和旋转元数据，按实际显示方向判定；图片解码取得显示尺寸（含EXIF方向）。宽>高为横屏直接排除，正方形/竖屏保留；不按缩略图判断。多图逐原图排除横图、剩余原图继续；整条无剩余则排除。未知尺寸/旋转信息冲突记pending，不伪造0或放行。excluded-landscape.json逐文件保存广告ID、源SHA256/大小、原probe及哈希或图像尺寸证据、实际显示宽高、规则和排除原因，汇总排除条数/文件数；横屏不进入后续向量、六帧/主体/模板/语言审核或入表。此前原报告/文件保持，不重算旧scope。
 
 沿SKILL.md及pre-review.md、content-review.md完成原筛选四道和前一天模板比对。独立采集ZIP含原下载报告和同源结构化game/tool/tool2.json：按实际页/位置/广告ID关联，App/系统/估值/重投取metadata实际观察；缺App ID留空，未知重投不造false。原报告不改写。保存原包交接清单及SHA256，标准化媒体索引；新筛选scope记录真实execution_origin=scheduled、collection_origin=guangdada-direct、源包与采集summary哈希，固定config中的processing_policy、ranking.mode=all、previous_day_template_dedupe和image_replication_after_ingestion。不得伪标为用户手动交包：现有manual-only prepare不是此入口，勿调用它来假造触发来源；按现有pre-review输入格式建立真实未审核scope与索引，再运行pre-review及后续流程，不能手填完成状态。

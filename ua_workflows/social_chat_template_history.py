@@ -6,6 +6,7 @@ import json
 
 LEGACY_VERSION = 'previous-day-template-review-v1'
 VERSION = 'previous-day-template-baseline-v2'
+FEISHU_FALLBACK = 'feishu-original-attachments-v1'
 
 
 def policy_for(version):
@@ -61,6 +62,9 @@ def load_confirmed_history(base):
 def history_state(templates, *, source_state, identity_verified=True, unreviewed_candidates=False):
     if not identity_verified:
         return {'status':'pending','reason':'identity_unverified'}
+    if source_state == 'feishu_partial' and templates:
+        return {'status':'compare_previous_partial','reference_count':len(templates),
+                'no_match_status':'pending'}
     if source_state not in ('verified','verified_no_prior_batch') or unreviewed_candidates:
         return {'status':'pending','reason':'history_unavailable_or_unreviewed'}
     if templates:

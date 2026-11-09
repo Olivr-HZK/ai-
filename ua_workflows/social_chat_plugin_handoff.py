@@ -6,7 +6,7 @@ from pathlib import Path
 import zipfile
 
 MODE = 'plugin-handoff-v1'
-from ua_workflows.social_chat_template_history import policy_for as template_policy_for, VERSION as TEMPLATE_VERSION
+from ua_workflows.social_chat_template_history import FEISHU_FALLBACK, VERSION as TEMPLATE_VERSION, policy_for as template_policy_for
 PREVIOUS_DAY_TEMPLATE_POLICY = template_policy_for(TEMPLATE_VERSION)
 
 
@@ -98,6 +98,7 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
             if template_policy['version'] == TEMPLATE_VERSION:
                 mapping_path = Path(__file__).resolve().parents[1] / config['plugin_handoff']['template_identity_mapping']
                 scope['template_identity_mapping'] = json.loads(mapping_path.read_text())
+                scope['template_history_fallback'] = FEISHU_FALLBACK
         replication = config['plugin_handoff'].get('image_replication_after_ingestion')
         if replication and replication.get('enabled'):
             reference = replication['brand_reference']
@@ -165,6 +166,9 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
             review_steps += '''
 本批固定新版空历史规则：先按scope.template_identity_mapping核实产品身份，系统仍分开。用social_chat_template_history.load_confirmed_history读取前日（有template-history-latest.json时先验证并加载修订历史）。前日模板是否可用取决于它的结构已实际确认，不取决于最终入表、入选或它自己的更早一天去重是否完成，禁止把待核链条逐日传递。
 前日来源已核验，且该产品没有可用已确认模板（含已证实首次无前批），当天作为新模板基线，继续产品内模板去重，各组保留最高估值代表；不是全部直接入表。只有缺文件/坏哈希/真实未审核/身份冲突等异常才pending，不能把异常装成零模板。参考social_chat_template_history.history_state和representatives；视觉模板关系仍须原图/六帧实际证据，不能只按字符串模板key猜重复。'''
+        if scope.get('template_history_fallback') == FEISHU_FALLBACK:
+            review_steps += '''
+本地前日审核记录优先。仅在缺原件或缺前日审核记录时，按skills/social-chat-browser-daily/references/content-review.md的飞书备用来源运行social_chat_template_fallback。本地有记录时以同广告ID和全部原件SHA-256核验补回；本地记录缺失时用表内前日同产品、同系统的原附件实际比对，确认同模板才剔除。无匹配或读取失败仍待核。'''
     review_steps += '''
 2026-11-03最新规则：原素材采集、筛选和入表核验后结束，保存待复刻清单并记awaiting_manual_trigger。视频与图片复刻改为用户手动触发；历史scope的自动启用标记不构成新启动授权。需求池手动状态触发规则以当前用户确认的配置为准，未确认前不得提交。启动后内部继续自动排队、核验和结果回填。
 用户手动启动后，按skills/social-chat-browser-daily/references/image-replication.md或视频CLI处理明确选中的记录，不重复付费或覆盖原素材。'''

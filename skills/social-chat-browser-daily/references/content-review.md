@@ -6,6 +6,18 @@
 
 历史参考取全部已实际确认的模板结构，不以最终入表/入选为条件；即使一条素材自身的更早一天去重仍pending，其当前模板结构若已确认，也可供次日对照。使用`social_chat_template_history.load_confirmed_history`，有`template-history-latest.json`时核对SHA后读取授权修订历史，防止继续继承旧待核链条。
 
+### 飞书原附件备用来源
+
+新批`scope.template_history_fallback=feishu-original-attachments-v1`时，先用本地前日审核记录及已核验的原图或六帧。只有缺原件或缺前日记录时才从scope指定的多维表格读取。命令从scope计算目标日前一天，按同产品、同系统核对每日最新广告及原附件。`APP`使用本批已核验广告主名称；有已核验App ID可加`--app-id`。
+
+```sh
+scripts/afizzy-python -m ua_workflows.social_chat_template_fallback --run-dir "RUN" --app "APP" --os iOS
+```
+
+- 本地有已确认模板记录但缺原件时，加`--ad-id AD_ID`，并为原记录的每个原件传一次`--expected-sha256 SHA`。只有全部附件的SHA-256与原记录完全一致时，才用下载文件补回该记录的视觉证据。原文件和原审核记录保持原样，后续引用补回文件及其回执。
+- 缺本地审核记录时，`compare_only`回执里的当前入选原附件是候选。逐一查看原图，视频按既有`frames.py`抽六帧再比对。实际确认同模板才剔除当天项，并记录前日广告ID、飞书记录ID、媒体SHA-256和视觉依据。无同模板匹配、日期/身份不能核实、附件缺失或读取失败都记待核。表中零条或部分覆盖不能建立空历史新基线。
+- `template-history-fallback/references-*/references.json`记录参考日、产品、系统、记录ID、原件哈希及读取问题。恢复时重新核对该回执引用的媒体哈希后复用。仅当本地审核覆盖及所有所需证据已核验时，才可按原规则确认完整前日比对。
+
 按scope固定的`template_identity_mapping`显式匹配产品，系统仍分开。当前仅补齐既有注册ID和用户确认的Tizz别名（TizzChat / Tizz / aiapp.tizzchat.chatbot），不把日报的所有展示别名自动套到模板身份，也不做模糊名称合并。视觉与对白实际证据仍是模板依据，不能仅凭共用UI或模板key去重；同一核心对白顺序换人物、画幅、通话/字幕包装仍可作为变体。
 
 用户这轮授权已应用于2026-11-03的31条模板待核，结果另存`template-revision/`：补回11月2日Tizz两条确认结构；Heyyyy iOS前日只有4试玩、无可用视频/图片模板，建立新基线；实际复看31套六帧并本地转写完整音轨，产品内去掉7变体、保留24代表。原scope、旧交付与61条入表不覆盖；本次只完成模板筛选修订，内容/语言/媒体/实际入表仍遵守各自验收，不冒称新增入表。
