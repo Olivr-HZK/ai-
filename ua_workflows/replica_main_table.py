@@ -30,6 +30,13 @@ SOURCE, RESULT = '竞品素材（图片/视频/Playable）去除男频', '复刻
 ACTIONS = ['替换logo', '替换语言']
 
 
+def request_action(value):
+    choices = [value] if isinstance(value, str) else value
+    if not isinstance(choices, list) or not choices or any(x not in ACTIONS for x in choices):
+        return None
+    return '替换语言' if '替换语言' in choices else '替换logo'
+
+
 def config(path=CONFIG):
     v = daily.load(path)
     if (v.get('app_token') != APP or v.get('table_id') != TABLE
@@ -52,22 +59,24 @@ def input_fingerprint(row):
 
 def plan(row, *, existing_logo=False):
     f, rid = row['fields'], row['record_id']
-    if f.get(TYPE) not in ACTIONS:
+    action = request_action(f.get(TYPE))
+    if action is None:
         raise DemandBlocked('当前仅开放替换logo和替换语言，未提交其他动作')
-    if f.get(RESULT) and not (existing_logo and f.get(TYPE) == '替换语言'):
+    if f.get(RESULT) and not (existing_logo and action == '替换语言'):
         raise DemandBlocked('本行已有复刻附件，保留现有结果，不自动覆盖或重复提交')
     fields = request_fields(f, rid)
+    fields['需求类型'] = action
     languages = fields['目标语言']
-    if f.get(TYPE) == '替换语言':
+    if action == '替换语言':
         if (not isinstance(languages, list) or not languages
                 or any(lang not in LANGUAGES for lang in languages)):
             raise DemandBlocked('请先在复刻目标语言选择至少一个支持的语言，补齐后会自动继续')
         fields = {**fields, '目标语言': languages[:1]}
     if f.get('素材类型') == '图片':
-        value = plan_images(row, SOURCE)
+        value = plan_images({**row, 'fields': {**f, TYPE: action}}, SOURCE)
     else:
         value = plan_request({'record_id': rid, 'fields': fields}, row)
-    if f.get(TYPE) == '替换语言':
+    if action == '替换语言':
         value['languages'] = list(dict.fromkeys(LANGUAGES[x] for x in languages))
         value['pipeline'] = ['logo', 'translation']
     value['input_fingerprint'] = input_fingerprint(row)
@@ -132,11 +141,11 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
 
     def validate_destination_fields(self, schema):
         fields = {f['field_name']: f for f in schema}
-        types = {TYPE: 3, LANGUAGE: 4, PORTRAIT: 17, STATUS: 3, PROGRESS: 3, MESSAGE: 1,
+        types = {TYPE: (3, 4), LANGUAGE: 4, PORTRAIT: 17, STATUS: 3, PROGRESS: 3, MESSAGE: 1,
                  EXECUTION: 1, JOB: 1, SOURCE: 17, RESULT: 17}
         for name, kind in types.items():
             if (fields.get(name, {}).get('field_id') != self.settings['fields'].get(name)
-                    or fields[name]['type'] != kind):
+                    or fields[name]['type'] not in (kind if isinstance(kind, tuple) else (kind,))):
                 raise ValueError('Main-table request field identity/type changed: ' + name)
 
     def requested_rows(self):
@@ -158,7 +167,7 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
             # nonempty requests, then retain the exact supported actions here.
             for item in value.get('items') or []:
                 row = daily.normalize_record_texts(item)
-                if row['fields'].get(TYPE) in ACTIONS:
+                if request_action(row['fields'].get(TYPE)) in ACTIONS:
                     rows.append(row)
             if not value.get('has_more'):
                 return rows
@@ -173,15 +182,15 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
             rid = candidate['record_id']
             if rid in self.state.items:
                 old = self.state.items[rid]
-                if (candidate['fields'].get(TYPE) != '替换语言' or self.state.get(rid)['stage'] != 'verified'
+                if (request_action(candidate['fields'].get(TYPE)) != '替换语言' or self.state.get(rid)['stage'] != 'verified'
                         or input_fingerprint(candidate) == old['input_fingerprint']):
                     continue
             row = record(self.feishu, self.route, rid)
             f = row['fields']
-            if f.get(TYPE) == '替换语言' and f.get(RESULT):
+            if request_action(f.get(TYPE)) == '替换语言' and f.get(RESULT):
                 self._admit_existing_logo(row)
                 continue
-            if f.get(TYPE) not in ACTIONS or f.get(RESULT):
+            if request_action(f.get(TYPE)) not in ACTIONS or f.get(RESULT):
                 continue
             try:
                 item = plan(row)
@@ -218,7 +227,7 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
                     PROGRESS: '上传中', MESSAGE: ('已检测到图片替换logo需求，等待Video Lab GPT Image 2'
                         if item.get('engine') == 'videolab' else '已检测到' + item['action'] + '需求，等待上传及自动分析')})
                 cf = current['fields']
-                if (cf.get(TYPE) != item['action'] or cf.get(EXECUTION) != item['execution_id']
+                if (request_action(cf.get(TYPE)) != item['action'] or cf.get(EXECUTION) != item['execution_id']
                         or input_fingerprint(current) != item['input_fingerprint'] or cf.get(RESULT)):
                     raise DemandBlocked('领取期间本行需求、参数或结果已变化，未提交')
                 with self._guard:
@@ -282,7 +291,7 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
             sources = [source_identity(x) for x in files]
         except (KeyError,TypeError):
             sources = None
-        valid = (item['action'] in ACTIONS and f.get(TYPE) == item['action']
+        valid = (item['action'] in ACTIONS and request_action(f.get(TYPE)) == item['action']
                  and f.get(EXECUTION) == item['execution_id']
                  and input_fingerprint(row) == item['input_fingerprint']
                  and f.get('素材类型') == item.get('media_type','视频')
