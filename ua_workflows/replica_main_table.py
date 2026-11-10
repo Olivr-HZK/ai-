@@ -50,11 +50,11 @@ def input_fingerprint(row):
     return fingerprint(request_fields(row['fields'], row['record_id']))
 
 
-def plan(row):
+def plan(row, *, existing_logo=False):
     f, rid = row['fields'], row['record_id']
     if f.get(TYPE) not in ACTIONS:
         raise DemandBlocked('当前仅开放替换logo和替换语言，未提交其他动作')
-    if f.get(RESULT):
+    if f.get(RESULT) and not (existing_logo and f.get(TYPE) == '替换语言'):
         raise DemandBlocked('本行已有复刻附件，保留现有结果，不自动覆盖或重复提交')
     fields = request_fields(f, rid)
     languages = fields['目标语言']
@@ -88,6 +88,36 @@ class MainState(PoolState):
                 or self.scope.get('app_token') != APP or self.scope.get('source_field') != SOURCE
                 or self.scope.get('target_field') != RESULT):
             raise ValueError('Main-table runtime belongs to another workflow')
+
+    def path(self, record_id):
+        item = self.items[record_id]
+        if item.get('existing_logo'):
+            return self.root / 'translation-followups' / item['execution_id'] / (record_id + '.json')
+        return super().path(record_id)
+
+    def get(self, record_id):
+        item = self.items[record_id]
+        if item.get('existing_logo') and not self.path(record_id).exists():
+            logo = item['existing_logo']
+            return {'record_id': record_id, 'stage': 'analysis_ready', 'job_id': logo['job_id'],
+                    'project_id': logo['job_id'], 'logo_prerequisite_complete': True,
+                    'prerequisite_logo_result_file': logo['result_file']}
+        return super().get(record_id)
+
+    def install_followup(self, item):
+        with self._mutex:
+            rid = item['record_id']
+            old = self.items.get(rid)
+            if old:
+                if self.get(rid)['stage'] != 'verified':
+                    raise DemandBlocked('原任务尚未完成')
+                archive = self.root / 'translation-followups' / 'history' / (rid + '-' + old['execution_id'] + '.json')
+                if not archive.exists():
+                    save_private(archive, {'item': old, 'state': self.get(rid)})
+            items = [v for v in self.scope['items'] if v['record_id'] != rid] + [item]
+            candidate = {**self.scope, 'items': items}
+            save_private(self.root / 'scope.json', candidate)
+            self.scope, self.items = candidate, {v['record_id']: v for v in items}
 
 
 class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
@@ -142,9 +172,15 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
         for candidate in self.requested_rows():
             rid = candidate['record_id']
             if rid in self.state.items:
-                continue
+                old = self.state.items[rid]
+                if (candidate['fields'].get(TYPE) != '替换语言' or self.state.get(rid)['stage'] != 'verified'
+                        or input_fingerprint(candidate) == old['input_fingerprint']):
+                    continue
             row = record(self.feishu, self.route, rid)
             f = row['fields']
+            if f.get(TYPE) == '替换语言' and f.get(RESULT):
+                self._admit_existing_logo(row)
+                continue
             if f.get(TYPE) not in ACTIONS or f.get(RESULT):
                 continue
             try:
@@ -190,6 +226,53 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
             except DemandBlocked as error:
                 self._write_fields(rid, {PROGRESS: '需人工处理', MESSAGE: str(error)})
 
+    def _admit_existing_logo(self, row):
+        from ua_workflows.replica_studio_api import step_state
+        rid, fields = row['record_id'], row['fields']
+        try:
+            item = plan(row, existing_logo=True)
+            attachments = [source_identity(v) for v in fields[RESULT]]
+            if len({a['file_token'] for a in attachments}) != len(attachments):
+                raise DemandBlocked('复刻附件存在重复标识')
+            job_id = daily.text_field(fields.get(JOB))
+            if not job_id or not all(c.isalnum() or c in '-_' for c in job_id):
+                raise DemandBlocked('缺少原Logo任务ID')
+            old = self.state.items.get(rid)
+            if old and (old['source'] != item['source'] or self.state.get(rid).get('job_id') != job_id):
+                raise DemandBlocked('原任务或原附件与记录不一致')
+            job = self.api.job(job_id)
+            view = job.get('logo_replace_view') or {}
+            if step_state(job, 'logo') != 'ready' or not view.get('result_file'):
+                return
+            if job.get('source_name') and job['source_name'] != item['source_name']:
+                raise DemandBlocked('原任务素材名称与当前记录不一致')
+            settings = self.api.translation_settings()
+            if not settings.get('available') or any(lang not in settings.get('enabled', []) for lang in item['languages']):
+                raise DemandBlocked('翻译服务或所选语言暂不可用')
+            path = self.state.root / 'translation-admissions' / rid / (item['input_fingerprint'] + '.json')
+            if path.exists():
+                saved = daily.load(path)
+                if (saved['source'] != item['source'] or saved['existing_attachments'] != attachments
+                        or saved['existing_logo']['job_id'] != job_id):
+                    raise DemandBlocked('原任务或已有附件已变化')
+                item = saved
+            else:
+                item.update(execution_id=str(uuid.uuid4()), requested_at=self.now(), trigger_mode='request_type',
+                            existing_attachments=attachments,
+                            existing_logo={'job_id': job_id, 'result_file': view['result_file']})
+                save_private(path, item)
+            current = self._write_fields(rid, {EXECUTION: item['execution_id'], PROGRESS: '复刻中',
+                                                MESSAGE: '已检测到Logo成品，等待核验并翻译口播'})
+            if (input_fingerprint(current) != item['input_fingerprint']
+                    or current['fields'].get(EXECUTION) != item['execution_id']
+                    or [source_identity(v) for v in current['fields'].get(RESULT, [])] != attachments):
+                raise DemandBlocked('领取时需求或附件发生变化')
+            with self._guard:
+                if self.record_available(rid):
+                    self.state.install_followup(item)
+        except DemandBlocked as error:
+            self._write_fields(rid, {PROGRESS: '需人工处理', MESSAGE: str(error)})
+
     def _eligible(self, rid):
         self.refresh_feishu()
         item = self.state.items[rid]
@@ -206,7 +289,15 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
                  and f.get('目标日期') == item['target_date']
                  and sources == item.get('sources',[item['source']]))
         value = self.state.get(rid)
-        if f.get(RESULT):
+        if item.get('existing_logo'):
+            from ua_workflows.replica_main_translation import _same_attachments, _merge_attachments
+            baseline = [{'token': x['file_token'], 'name': x['name'], 'size': x['size']}
+                        for x in item['existing_attachments']]
+            receipts = value.get('attachment_receipts') or []
+            valid = valid and daily.text_field(f.get(JOB)) == item['existing_logo']['job_id'] and (
+                _same_attachments(row, RESULT, baseline) or
+                bool(receipts) and _same_attachments(row, RESULT, _merge_attachments(baseline, receipts)))
+        elif f.get(RESULT):
             if value.get('delivery_kind') in {'translation_multi','image_multi'}:
                 receipts = value.get('attachment_receipts') or []
                 valid = valid and len(f[RESULT]) == len(receipts) and bool(receipts) and {

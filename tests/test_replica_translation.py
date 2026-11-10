@@ -1,4 +1,6 @@
 import copy
+import contextlib
+import io
 import hashlib
 import json
 from pathlib import Path
@@ -11,7 +13,7 @@ from unittest.mock import Mock
 from ua_workflows.replica_cli import Checkpoint, execute, parser
 from ua_workflows.replica_studio_api import BASE_URL, ReplicaAPI, ReplicaError, digest, translation_options
 from ua_workflows.replica_translation import (
-    download_translations, language_state, translate_many, translation_input, translation_status_many, video_duration,
+    download_translations, language_state, translate_many, translate_voice_many, translation_input, translation_status_many, video_duration,
 )
 
 
@@ -173,6 +175,51 @@ class TranslationWorkflowTests(unittest.TestCase):
 
     def tearDown(self): self.temp.cleanup()
 
+    def test_voice_interface_preserves_full_input_and_works_without_text_service(self):
+        self.api.settings['text_available'] = False
+        result = translate_voice_many(self.api, ['job-a'], self.checkpoint, ['ja', 'de'])
+        self.assertTrue(result['results'][0]['ok'])
+        self.assertEqual(self.api.posts[0][1], {
+            'languages': ['ja', 'de'], 'parts': ['voice'], 'source_language': 'en',
+            'input': 'original', 'trim': {'remove_cta': False, 'remove_gameplay': False},
+            'remember_parts': False,
+        })
+        self.assertEqual(self.api.puts, [])
+        self.assertEqual(self.checkpoint.get('translations', 'job-a')['attempts'][0]['stage'], 'accepted')
+
+    def test_voice_interface_unknown_receipt_cannot_repeat_paid_post(self):
+        self.api.error = ReplicaError('result_unknown', 'Lost response')
+        first = translate_voice_many(self.api, ['job-a'], self.checkpoint, ['ja'])
+        self.assertEqual(first['results'][0]['code'], 'result_unknown')
+        self.api.error = None
+        second = translate_voice_many(self.api, ['job-a'], self.checkpoint, ['ja'])
+        self.assertEqual(second['results'][0]['code'], 'result_unknown')
+        self.assertEqual(len(self.api.posts), 1)
+
+    def test_voice_preflight_needs_no_checkpoint_and_writes_nothing(self):
+        result = translate_voice_many(self.api, ['job-a'], None, ['ja'], check_only=True)
+        self.assertTrue(result['results'][0]['ok'])
+        self.assertEqual(self.api.posts, [])
+        self.assertEqual(self.api.puts, [])
+        self.assertFalse(self.checkpoint.path.exists())
+
+    def test_cli_rejects_text_and_subtitle_generation(self):
+        for parts in (['text', 'voice'], ['subtitles']):
+            with self.subTest(parts=parts), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parser().parse_args(['translate', 'job-a', '--languages', 'ja', '--parts', *parts])
+        self.assertEqual(self.api.posts, [])
+
+    def test_cli_status_defaults_to_voice_only(self):
+        value = complete()
+        value.update(input='original', trim_removed=[])
+        self.api.jobs['job-a']['translation']['languages']['ja'] = value
+        args = parser().parse_args(['status', 'job-a', '--wait-for', 'translation', '--languages', 'ja'])
+        result = execute(args, factory=lambda: self.api)
+        self.assertEqual(result['pending'], [])
+        self.assertEqual(args.parts, ['voice'])
+        self.assertEqual(self.api.posts, [])
+
     def test_direct_translation_no_generated_clips_or_route_put(self):
         self.api.jobs['job-a'].update(analysis={'done': True}, segments=[{'index':0}])
         result=self.submit(direct=True)
@@ -208,7 +255,7 @@ class TranslationWorkflowTests(unittest.TestCase):
         value = self.api.jobs['job-a']
         value.update(analysis={'story': 'known'}, segments=[{'index': 1}])
         args = parser().parse_args(['--checkpoint', str(self.root / 'unused.json'), 'translate', 'job-a',
-                                   '--languages', 'ja', '--parts', 'text', 'voice', '--source-video', '--check-only'])
+                                   '--languages', 'ja', '--parts', 'voice', '--source-video', '--check-only'])
         result = execute(args, factory=lambda: self.api)
         self.assertFalse(result['results'][0]['input']['would_switch_source'])
         self.assertEqual(result['results'][0]['input']['route'],'original')
@@ -216,14 +263,14 @@ class TranslationWorkflowTests(unittest.TestCase):
         self.assertEqual(self.api.puts, [])
         self.assertFalse((self.root / 'unused.json').exists())
 
-    def test_cli_defaults_full_original_text_voice_no_trim_and_no_put(self):
+    def test_cli_defaults_full_original_voice_only_no_trim_and_no_put(self):
         args=parser().parse_args(['--checkpoint',str(self.root/'state.json'),'translate','job-a','--languages','ko'])
         self.api.settings['enabled'].append('ko')
         result=execute(args,factory=lambda:self.api)
         self.assertTrue(result['results'][0]['ok'])
         self.assertEqual(self.api.puts,[])
         options=self.api.posts[0][1]
-        self.assertEqual(options['input'],'original');self.assertEqual(options['parts'],['text','voice'])
+        self.assertEqual(options['input'],'original');self.assertEqual(options['parts'],['voice'])
         self.assertEqual(options['trim'],{'remove_cta':False,'remove_gameplay':False})
 
     def test_full_original_ignores_short_story_range_without_route_mutation(self):

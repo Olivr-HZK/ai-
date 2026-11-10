@@ -357,7 +357,7 @@ def parser():
     status.add_argument('ids', nargs='+')
     status.add_argument('--wait-for', choices=['analysis', 'logo', 'translation'])
     status.add_argument('--languages', nargs='+', help='等待翻译时指定语言，如 de ja')
-    status.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['text', 'voice'])
+    status.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['voice'])
     status.add_argument('--input', dest='translation_input', choices=['original', 'swap'], default='original',
                         help='等待翻译时核对实际视频输入；默认完整原视频')
     status.add_argument('--source-language', help='原语言代码；原语言字幕查询时可指定')
@@ -375,10 +375,10 @@ def parser():
     portrait.add_argument('--source-id', help='多角色任务必须指定；单角色自动选择唯一角色')
     portrait.add_argument('--replace', action='store_true', help='允许更换此前已确认的参考图；未知上传仍只读核对')
     portrait.add_argument('--check-only', action='store_true', help='只检查图片与角色映射，不上传或写断点')
-    translate = sub.add_parser('translate', help='默认翻译完整当前原视频的文字和语音，不裁剪、不强制重做')
+    translate = sub.add_parser('translate', help='仅翻译完整当前视频的口播，保留全片内容')
     translate.add_argument('ids', nargs='+')
     translate.add_argument('--languages', nargs='+', required=True)
-    translate.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['text', 'voice'])
+    translate.add_argument('--parts', nargs='+', choices=['voice'], default=['voice'], help='兼容参数，固定为voice')
     translate.add_argument('--source-language')
     translate.add_argument('--input', dest='translation_input', choices=['original', 'swap'], default='original',
                            help='original整条当前原视频（含换Logo版本）；swap已生成的换人片段')
@@ -448,12 +448,11 @@ def execute(args, factory=None):
                                            trim={'remove_cta':False,'remove_gameplay':False} if args.translation_input=='original' else None)
         return status_many(api, args.ids, stage=args.wait_for, timeout=args.timeout, interval=args.interval, include_analysis=args.analysis)
     if args.command == 'translate' and args.check_only:
-        from ua_workflows.replica_translation import translate_many
+        from ua_workflows.replica_translation import translate_voice_many
         if args.source_video and args.translation_input != 'original':
             raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
-        return translate_many(api, args.ids, None, args.languages, args.parts, args.source_language,
-                              input_mode=args.translation_input, trim={'remove_cta':False,'remove_gameplay':False}
-                              if args.translation_input == 'original' else None, check_only=True)
+        return translate_voice_many(api, args.ids, None, args.languages, args.source_language,
+                                    input_mode=args.translation_input, check_only=True)
     with operation_lock(args.checkpoint):
         checkpoint = Checkpoint(args.checkpoint, auth['account_id'])
         if args.command == 'upload':
@@ -464,12 +463,11 @@ def execute(args, factory=None):
             from ua_workflows.replica_portraits import replace_portrait
             return replace_portrait(api, args.id, args.image, checkpoint, source_id=args.source_id, replace=args.replace)
         if args.command == 'translate':
-            from ua_workflows.replica_translation import translate_many
+            from ua_workflows.replica_translation import translate_voice_many
             if args.source_video and args.translation_input != 'original':
                 raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
-            return translate_many(api, args.ids, checkpoint, args.languages, args.parts, args.source_language,
-                                  input_mode=args.translation_input, trim={'remove_cta':False,'remove_gameplay':False}
-                                  if args.translation_input == 'original' else None)
+            return translate_voice_many(api, args.ids, checkpoint, args.languages, args.source_language,
+                                        input_mode=args.translation_input)
         if args.command == 'download':
             if args.step == 'translation':
                 from ua_workflows.replica_translation import download_translations

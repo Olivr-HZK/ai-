@@ -16,6 +16,22 @@ from ua_workflows.replica_studio_api import (
 from ua_workflows.replica_cli import decode_video, error_result, selected_ids
 
 
+VOICE_PARTS = ('voice',)
+FULL_VIDEO_TRIM = {'remove_cta': False, 'remove_gameplay': False}
+
+
+def translate_voice_many(api, ids, checkpoint, languages, source_language=None, *,
+                         check_only=False, input_mode='original'):
+    """Submit voice-only translation through the durable translation journal.
+
+    Original input preserves the full current video. Preflight is read-only.
+    Repeated calls reconcile the saved intent before considering another POST.
+    """
+    return translate_many(api, ids, checkpoint, languages, VOICE_PARTS, source_language,
+                          check_only=check_only, input_mode=input_mode,
+                          trim=FULL_VIDEO_TRIM if input_mode == 'original' else None)
+
+
 def video_duration(path):
     try:
         result = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',

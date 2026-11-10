@@ -60,12 +60,25 @@ def paused_runtime(runtime):
     ids = [item['record_id'] for item in scope['items']]
     require(len(set(ids)) == len(ids), 'Duplicate runtime identities')
     paths = set()
-    for rid in ids:
+    for scoped in scope['items']:
+        rid = scoped['record_id']
         require(isinstance(rid, str) and re.fullmatch(r'[A-Za-z0-9_-]+', rid), 'Unsafe record identity')
-        path = runtime / 'items' / (rid + '.json')
+        old_path = runtime / 'items' / (rid + '.json')
+        if scoped.get('existing_logo'):
+            execution = scoped.get('execution_id')
+            require(isinstance(execution, str) and re.fullmatch(r'[A-Za-z0-9_-]+', execution), 'Unsafe execution identity')
+            path = runtime / 'translation-followups' / execution / (rid + '.json')
+            if old_path.exists():
+                old = read(old_path)
+                archives = (runtime / 'translation-followups' / 'history').glob(rid + '-*.json')
+                require(any(read(p).get('state') == old for p in archives), 'Original checkpoint lacks a matching archive')
+                paths.add(old_path)
+        else:
+            path = old_path
         item = read(path)  # Missing checkpoint blocks; never infer terminal from progress counts.
         require(item.get('record_id') == rid and item.get('stage') in TERMINAL, f'Active/unknown task: {rid}')
-        paths.add(path)
+        if path == old_path:
+            paths.add(path)
     require(set((runtime / 'items').glob('*.json')) == paths, 'Orphan checkpoints require review')
     worker = read(runtime / 'worker.json')
     require(worker.get('finished_at') is not None, 'Watcher has not confirmed a normal exit')
