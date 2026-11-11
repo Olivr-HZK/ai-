@@ -173,7 +173,9 @@
     "presets": [
       "game",
       "tool",
-      "tool2"
+      "tool2",
+      "tool3",
+      "tool4"
     ],
     "sample_per_preset": null,
     "max_pages": null,

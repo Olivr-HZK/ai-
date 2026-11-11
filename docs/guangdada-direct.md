@@ -1,5 +1,7 @@
 # 广大大独立采集 v0.2.1
 
+每日新批显式使用 `--presets game tool tool2 tool3 tool4`，包含一组游戏和四组工具。每组应用预设后重新设置并核对起止日期。旧批次继续传入原预设范围以复用原断点。
+
 2026-11-04用户最终选择沿用早上已验证的原采集器，只新增预设，允许原脚本读取当前可见卡片绑定字段；未验收DOM改造隔离，不替换正式读取器。新增工具预设key=tool2/名称afizzy竞品2；`--only tool2`单独测试，`--presets game tool tool2`跑三组全量。CLI省略范围参数仍保留旧game+tool默认及`D_both`历史兼容；显式三组固定`D_game_tool_tool2`，不会把第三组塞进已完成旧范围。日任务从2026-11-05起明确传三组参数。
 
 这是一套独立的Playwright＋HTTP下载程序，不安装、不加载、不调用Chrome扩展，不使用chrome.runtime、扩展后台、offscreen或扩展权限。开发时采用与插件一致的卡片读取、身份核验和日期口径，规则存为独立browser-readers.js；运行目录中不需要原插件源码或manifest。

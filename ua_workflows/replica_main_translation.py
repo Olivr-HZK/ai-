@@ -5,17 +5,20 @@ import hashlib
 import json
 from pathlib import Path
 import time
+import tempfile
 
 from ua_workflows.replica_cli import download_many
 from ua_workflows.replica_recovery import retry_delay
 from ua_workflows.replica_request_pool import record
 from ua_workflows.replica_studio_api import ReplicaError, digest, logo_review_fields, save_private, step_state
-from ua_workflows.replica_translation import translate_many, language_state, download_translations, video_duration
+from ua_workflows.replica_translation import (
+    FULL_VIDEO_TRIM, VOICE_PARTS, translate_voice_many, translate_many, language_state,
+    download_translations, video_duration,
+)
 from ua_workflows.social_chat_media_orientation import require_non_landscape
 from ua_workflows.social_chat_replica import APP, check_record, upload_attachment
 
-TRANSLATION_PARTS = ['text', 'voice']
-TRANSLATION_TRIM = {'remove_cta': False, 'remove_gameplay': False}
+TRANSLATION_TRIM = FULL_VIDEO_TRIM
 
 
 def _same_attachments(row, field, files):
@@ -25,7 +28,39 @@ def _same_attachments(row, field, files):
             {(x.get('file_token'),x.get('name'),x.get('size')) for x in actual}==expected)
 
 
+def _merge_attachments(preserved, files):
+    merged = {item['token']: item for item in preserved}
+    for item in files:
+        token = item.get('token')
+        if token in merged:
+            if any(merged[token][key] != item[key] for key in ('name', 'size')):
+                raise ReplicaError('checkpoint_conflict', '复用的附件身份不一致')
+        else:
+            merged[token] = item
+    return list(merged.values())
+
+
 class MainTranslationMixin:
+    def existing_attachment_hashes(self, rid, item):
+        from ua_workflows.social_chat_template_fallback import download
+        hashes = []
+        with tempfile.TemporaryDirectory(dir=self.state.root) as folder:
+            for index, attachment in enumerate(item['existing_attachments']):
+                path = Path(folder) / (str(index) + '.mp4')
+                try:
+                    download(self.feishu, {'feishu': {'table_id': self.state.scope['table_id']}},
+                             {'field_id': self.settings['fields'][self.state.scope['target_field']]},
+                             rid, attachment, path)
+                except (OSError, ValueError) as error:
+                    raise ReplicaError('read_failed', '无法核验已有附件') from error
+                hashes.append({**attachment, 'sha256': digest(path)})
+        return hashes
+
+    def translation_parts(self, job_id):
+        # In-flight historical tasks must be polled against their submitted parts.
+        attempts = (self.checkpoint.get('translations', job_id) or {}).get('attempts') or []
+        return list(attempts[-1]['options']['parts']) if attempts else list(VOICE_PARTS)
+
     def uses_translation(self,value):
         return (self.state.items[value['record_id']]['action']=='替换语言'
                 and value.get('logo_prerequisite_complete') is True)
@@ -50,7 +85,7 @@ class MainTranslationMixin:
         if self.now()<value.get('translation_input_check_after',0):return False
         try:
             job=self.api.job(value['job_id']);view=job.get('logo_replace_view') or {}
-            if (job.get('last_action')!='logo_replace' or step_state(job,'logo')!='ready'
+            if (job.get('last_action') not in {'logo_replace', 'translate'} or step_state(job,'logo')!='ready'
                     or view.get('result_file')!=value['prerequisite_logo_result_file']):
                 raise ReplicaError('invalid_media','翻译前的Logo结果或路线已变化，未提交翻译')
             proof=value.get('translation_input_proof') or {}
@@ -65,6 +100,11 @@ class MainTranslationMixin:
                 failure=next((v for v in downloaded['results'] if not v.get('ok')), {})
                 raise ReplicaError(failure.get('code') or 'invalid_media','Logo中间成品尚未核验',failure.get('http_status'))
             logo=files[0]
+            if item.get('existing_logo'):
+                hashes = self.existing_attachment_hashes(rid, item)
+                if sum(x['sha256'] == logo['sha256'] for x in hashes) != 1:
+                    raise ReplicaError('invalid_media', '表格Logo附件与Replica任务成品不一致或不唯一')
+                value['existing_attachment_hashes'] = hashes
             # The translation action's input=original selects the full current
             # source, including Logo replacement. source_video is a different
             # story-only route and must not be selected by this workflow.
@@ -94,8 +134,10 @@ class MainTranslationMixin:
         value=next(v for v in self.state.all() if v.get('job_id')==job_id)
         prior=self.checkpoint.get('translations',job_id) or {}
         if prior.get('attempts'):
-            return translate_many(self.api,[job_id],self.checkpoint,item['languages'],parts=TRANSLATION_PARTS,
-                                  input_mode='original',trim=TRANSLATION_TRIM)
+            covered = {language for attempt in prior['attempts'] for language in attempt['options']['languages']}
+            if set(item['languages']) <= covered:
+                return translate_many(self.api,[job_id],self.checkpoint,item['languages'],parts=self.translation_parts(job_id),
+                                      input_mode='original',trim=TRANSLATION_TRIM)
         if not self.uses_translation(value) or not (value.get('translation_input_proof') or {}).get('matches_logo'):
             return {'results':[{'id':job_id,'ok':False,'code':'invalid_translation','message':'必须先核验换Logo成品，再提交翻译'}]}
         job=self.api.job(job_id)
@@ -106,8 +148,7 @@ class MainTranslationMixin:
         if source in item['languages']:
             return {'results':[{'id':job_id,'ok':False,'code':'invalid_translation',
                                 'message':'目标语言包含原视频语言，请选择不同语言；未提交翻译'}]}
-        return translate_many(self.api,[job_id],self.checkpoint,item['languages'],parts=TRANSLATION_PARTS,
-                              input_mode='original',trim=TRANSLATION_TRIM)
+        return translate_voice_many(self.api, [job_id], self.checkpoint, item['languages'])
 
     def poll(self, record_ids=None):
         for rid in record_ids or list(self.state.items):
@@ -117,7 +158,7 @@ class MainTranslationMixin:
             if value['stage'] not in {'logo_accepted','logo_submitting'}:
                 continue
             job=self.api.job(value['job_id'])
-            states={lang:language_state(job,lang,TRANSLATION_PARTS,input_mode='original',trim=TRANSLATION_TRIM)
+            states={lang:language_state(job,lang,self.translation_parts(value['job_id']),input_mode='original',trim=TRANSLATION_TRIM)
                     for lang in item['languages']}
             value.update(last_status=job.get('status'),last_message=job.get('message'),translation_states=states)
             if all(s=='ready' for s in states.values()):
@@ -182,6 +223,8 @@ class MainTranslationMixin:
 
     def _delivery_journal(self,rid):
         folder = 'image-delivery' if self.state.items[rid].get('engine') == 'videolab' else 'translation-delivery'
+        if self.state.items[rid].get('existing_logo'):
+            return self.state.root/folder/self.state.items[rid]['execution_id']/(rid+'.json')
         return self.state.root/folder/(rid+'.json')
 
     def check_delivery_record(self,row,item):
@@ -191,10 +234,11 @@ class MainTranslationMixin:
         if not self._eligible(value['record_id']):return
         row=record(self.feishu,self.route,value['record_id'])
         self.check_delivery_record(row,self.state.items[value['record_id']])
-        if _same_attachments(row,self.state.scope['target_field'],journal['files']):
+        preserved=journal.get('preserved_files', [])
+        if _same_attachments(row,self.state.scope['target_field'],_merge_attachments(preserved, journal['files'])):
             value.update(stage='verified',attachment_receipts=journal['files'])
             value.pop('error',None)
-        elif row['fields'].get(self.state.scope['target_field']):
+        elif not _same_attachments(row,self.state.scope['target_field'],preserved):
             value.update(stage='needs_review',error='本行已有其他附件，未覆盖')
         else:
             value.update(stage='write_unknown',error='成品附件写回回执待核对，不重复发送写表请求',
@@ -211,6 +255,8 @@ class MainTranslationMixin:
                 raise ReplicaError('checkpoint_conflict','多附件交付断点不匹配')
         else:
             journal={'version':1,'record_id':rid,'job_id':value['job_id'],'signature':signature,
+                     'preserved_files':[{'token':x['file_token'],'name':x['name'],'size':x['size']}
+                                        for x in self.state.items[rid].get('existing_attachments', [])],
                      'files':[{**v,'upload_stage':'prepared'} for v in outputs],'write_stage':'prepared'}
             save_private(path,journal)
         if journal['write_stage']!='prepared':
@@ -222,6 +268,13 @@ class MainTranslationMixin:
                 raise ReplicaError('invalid_media','本地成品校验失败，未上传附件')
             require_non_landscape(local,f['sha256'])
             if f['upload_stage']=='accepted':continue
+            matches = [x for x in value.get('existing_attachment_hashes', []) if x['sha256'] == f['sha256']]
+            if len(matches) > 1:
+                raise ReplicaError('checkpoint_conflict', '多个已有附件与翻译成品相同')
+            if matches:
+                f.update(upload_stage='accepted', token=matches[0]['file_token'], name=matches[0]['name'])
+                save_private(path, journal)
+                continue
             if f['upload_stage']!='prepared':
                 value.update(stage='attachment_unknown',error='成品附件上传回执未知，不重复上传')
                 self.state.put(rid,value);return
@@ -239,13 +292,17 @@ class MainTranslationMixin:
         if not self._eligible(rid):return
         row=record(self.feishu,self.route,rid)
         self.check_delivery_record(row,self.state.items[rid])
-        if row['fields'].get(self.state.scope['target_field']):
+        preserved = journal.get('preserved_files', [])
+        merged = _merge_attachments(preserved, journal['files'])
+        if _same_attachments(row,self.state.scope['target_field'],merged):
+            self._read_language_write(value,journal);return
+        if not _same_attachments(row,self.state.scope['target_field'],preserved):
             self._read_language_write(value,journal);return
         journal.update(write_stage='dispatching',dispatched_at=time.time());save_private(path,journal)
         value.update(stage='write_intent');self.state.put(rid,value)
         try:
             self.feishu.call('POST',self.route+'/records/batch_update',json={'records':[
-                {'record_id':rid,'fields':{self.state.scope['target_field']:[{'file_token':f['token']} for f in journal['files']]}}]})
+                {'record_id':rid,'fields':{self.state.scope['target_field']:[{'file_token':f['token']} for f in merged]}}]})
         except Exception as error:
             journal.update(write_stage='unknown',write_error=type(error).__name__)
         else:journal['write_stage']='accepted'

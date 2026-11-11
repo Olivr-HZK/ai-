@@ -6,8 +6,12 @@ PRESETS = (
     {'key': 'game', 'category': '游戏', 'group': r'^(?:预设)?快捷操作\s*[⌃⌄↑↓^]*$', 'preset': 'afizzy竞品游戏'},
     {'key': 'tool', 'category': '工具', 'group': r'^(?:afizzy\s*)?快捷操作\s*[⌃⌄↑↓^]*$', 'preset': 'afizzy竞品'},
 )
-AVAILABLE_PRESETS = (*PRESETS,
-    {'key':'tool2','category':'工具','group':r'^(?:afizzy\s*)?快捷操作\s*[⌃⌄↑↓^]*$','preset':'afizzy竞品2'},
+AVAILABLE_PRESETS = (
+    *PRESETS,
+    *(
+        {**PRESETS[1], 'key': f'tool{number}', 'preset': f'afizzy竞品{number}'}
+        for number in (2, 3, 4)
+    ),
 )
 
 

@@ -16,6 +16,99 @@ class TranslationTests(MainFixture):
         self.client.rows['recMain']=row(None,'替换语言')
         self.client.rows['recMain']['fields'][main.LANGUAGE]=list(languages)
 
+    async def test_existing_logo_is_verified_then_translation_is_appended(self):
+        from test_replica_main_table import API
+        from ua_workflows.replica_studio_api import digest
+
+        self.translation()
+        fields = self.client.rows['recMain']['fields']
+        fields[main.JOB] = 'job-source'
+        fields[main.RESULT] = [{'file_token': 'logo-token', 'name': 'logo.mp4', 'size': 6}]
+        self.client.tokens['logo-token'] = {'name': 'logo.mp4', 'size': 6}
+        self.backend.logos.append('job-source')
+        self.backend.completed.add('job-source')
+        self.backend.analysis.add('job-source')
+
+        def download(client, scope, field, rid, attachment, path):
+            path.write_bytes(b'result')
+
+        original_download = API.download
+        def replica_download(api, jid, file, path):
+            receipt = original_download(api, jid, file, path)
+            if '/translations/' in file['url']:
+                path.write_bytes(b'japan!' if '/ja/' in file['url'] else b'german')
+                receipt['sha256'] = digest(path)
+            return receipt
+
+        with patch('ua_workflows.social_chat_template_fallback.download', side_effect=download), \
+             patch.object(API, 'download', replica_download):
+            self.start()
+            await self.until(lambda: self.state.get('recMain')['stage'] == 'verified' if self.state.items else False)
+        self.assertEqual(self.backend.uploads, [])
+        self.assertEqual(self.backend.logos, ['job-source'])
+        self.assertEqual(self.backend.translations, [('job-source', ['ja', 'de'])])
+        self.assertEqual({x['file_token'] for x in fields[main.RESULT]},
+                         {'logo-token', 'token-source_translation_ja.mp4', 'token-source_translation_de.mp4'})
+        self.runner._control_once()
+        self.assertEqual(len(self.backend.translations), 1)
+
+    async def test_existing_logo_mismatch_stops_before_translation(self):
+        self.translation(('日语',))
+        fields = self.client.rows['recMain']['fields']
+        fields[main.JOB] = 'job-source'
+        fields[main.RESULT] = [{'file_token': 'logo-token', 'name': 'logo.mp4', 'size': 6}]
+        self.backend.logos.append('job-source')
+        self.backend.completed.add('job-source')
+        self.backend.analysis.add('job-source')
+
+        def download(client, scope, field, rid, attachment, path):
+            path.write_bytes(b'wrong!')
+
+        with patch('ua_workflows.social_chat_template_fallback.download', side_effect=download):
+            self.start()
+            await self.until(lambda: self.state.get('recMain')['stage'] == 'needs_review' if self.state.items else False)
+        self.assertEqual(self.backend.translations, [])
+        self.assertEqual(len(fields[main.RESULT]), 1)
+
+    async def test_add_language_preserves_multiple_existing_attachments(self):
+        from test_replica_main_table import API
+        from ua_workflows.replica_studio_api import digest
+
+        self.translation(('日语', '德语'))
+        fields = self.client.rows['recMain']['fields']
+        fields[main.JOB] = 'job-source'
+        fields[main.RESULT] = [
+            {'file_token': 'logo-token', 'name': 'logo.mp4', 'size': 6},
+            {'file_token': 'ja-token', 'name': 'japanese.mp4', 'size': 6},
+            {'file_token': 'ko-token', 'name': 'korean.mp4', 'size': 6},
+        ]
+        for entry in fields[main.RESULT]:
+            self.client.tokens[entry['file_token']] = {'name': entry['name'], 'size': entry['size']}
+        self.backend.logos.append('job-source')
+        self.backend.completed.add('job-source')
+        self.backend.analysis.add('job-source')
+        original_download = API.download
+        self.backend.translations.append(('job-source', ['ja', 'ko']))
+        self.backend.translation_options = {'job-source': {'parts': ['voice'], 'input': 'original'}}
+
+        def attachment_download(client, scope, field, rid, attachment, path):
+            path.write_bytes({'logo-token': b'result', 'ja-token': b'japan!', 'ko-token': b'korea!'}[attachment['file_token']])
+
+        def replica_download(api, jid, file, path):
+            receipt = original_download(api, jid, file, path)
+            if '/translations/' in file['url']:
+                path.write_bytes(b'japan!' if '/ja/' in file['url'] else b'german')
+                receipt['sha256'] = digest(path)
+            return receipt
+
+        with patch('ua_workflows.social_chat_template_fallback.download', side_effect=attachment_download), \
+             patch.object(API, 'download', replica_download):
+            self.start()
+            await self.until(lambda: self.state.get('recMain')['stage'] == 'verified' if self.state.items else False)
+        self.assertEqual(self.backend.translations, [('job-source', ['ja', 'ko']), ('job-source', ['de'])])
+        self.assertEqual({x['file_token'] for x in fields[main.RESULT]},
+                         {'logo-token', 'ja-token', 'ko-token', 'token-source_translation_de.mp4'})
+
     async def test_two_languages_logo_first_exact_input_then_one_atomic_attachment_write(self):
         self.translation();before=copy.deepcopy(self.client.rows['recMain']['fields'])
         self.start();await self.until(lambda:self.state.get('recMain')['stage']=='verified' if self.state.items else False)
@@ -25,7 +118,7 @@ class TranslationTests(MainFixture):
         self.assertEqual(self.backend.translations,[('job-source',['ja','de'])])
         self.assertEqual(self.backend.routes,set())
         self.assertEqual(self.backend.translation_options['job-source']['input'],'original')
-        self.assertEqual(self.backend.translation_options['job-source']['parts'],['text','voice'])
+        self.assertEqual(self.backend.translation_options['job-source']['parts'],['voice'])
         self.assertEqual(self.backend.translation_options['job-source']['trim'],{'remove_cta':False,'remove_gameplay':False})
         events=[e[0] for e in self.backend.events]
         self.assertLess(events.index('logo'),events.index('verify-logo-input'))
@@ -40,6 +133,23 @@ class TranslationTests(MainFixture):
         self.assertEqual(len(writes[0][2]['json']['records'][0]['fields'][main.RESULT]),2)
         self.runner._control_once();self.runner._upload_once();self.runner._deliver_once()
         self.assertEqual(len(self.backend.uploads),1);self.assertEqual(len(self.backend.translations),1)
+
+    async def test_historical_submitted_text_voice_is_polled_from_checkpoint(self):
+        from ua_workflows.replica_translation import translate_many
+
+        def historical_submit(api, ids, checkpoint, languages):
+            return translate_many(api, ids, checkpoint, languages, ['text', 'voice'],
+                                  input_mode='original',
+                                  trim={'remove_cta': False, 'remove_gameplay': False})
+
+        self.translation(('日语',))
+        with patch('ua_workflows.replica_main_translation.translate_voice_many', side_effect=historical_submit):
+            self.start()
+            await self.until(lambda: self.state.get('recMain')['stage'] == 'verified' if self.state.items else False)
+        self.assertEqual(self.runner.translation_parts('job-source'), ['text', 'voice'])
+        self.assertEqual(len(self.backend.translations), 1)
+        self.runner._control_once()
+        self.assertEqual(len(self.backend.translations), 1)
 
     async def test_missing_language_waits_without_upload_then_starts_after_language_added(self):
         self.translation(())

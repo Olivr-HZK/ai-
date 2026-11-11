@@ -146,6 +146,29 @@ class MainFixture(unittest.IsolatedAsyncioTestCase):
 
 
 class MainTests(MainFixture):
+    async def test_multiselect_translation_with_logo_uses_one_translation_workflow(self):
+        self.client.rows['recMain'] = row(None, '替换语言')
+        self.client.rows['recMain']['fields'][main.TYPE] = ['替换logo', '替换语言']
+        self.start()
+        await self.until(lambda: self.state.get('recMain')['stage'] == 'verified' if self.state.items else False)
+        self.assertEqual(self.backend.logos, ['job-source'])
+        self.assertEqual(self.backend.translations, [('job-source', ['ja'])])
+        self.assertEqual(self.backend.translation_options['job-source']['parts'], ['voice'])
+
+    async def test_multiselect_logo_only_is_admitted(self):
+        self.client.rows['recMain'] = row(None, '替换logo')
+        self.client.rows['recMain']['fields'][main.TYPE] = ['替换logo']
+        self.start()
+        await self.until(lambda: self.state.get('recMain')['stage'] == 'verified' if self.state.items else False)
+        self.assertEqual(self.backend.logos, ['job-source'])
+        self.assertEqual(self.backend.translations, [])
+
+    def test_type_schema_accepts_single_and_multi_select(self):
+        import copy
+        schema = copy.deepcopy(SCHEMA)
+        next(field for field in schema if field['field_name'] == main.TYPE)['type'] = 4
+        self.runner.validate_destination_fields(schema)
+
     async def test_unchanged_progress_uses_one_snapshot_without_per_record_reads(self):
         self.runner._admit()
         self.runner._sync_progress()

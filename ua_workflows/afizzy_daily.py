@@ -10,6 +10,8 @@ from pathlib import Path
 import shlex
 import subprocess
 
+from .guangdada_headless_ui import AVAILABLE_PRESETS, preset_scope_suffix, selected_presets
+
 ROOT = Path(__file__).resolve().parents[1]
 
 def target_date(value):
@@ -34,13 +36,37 @@ def crawler_python():
     deployed = Path.home() / 'oliver/guangdada-direct-0.2.1/.venv/bin/python'
     return deployed if deployed.is_file() else ROOT / '.venv/bin/python'
 
-def collected_archives(private, target):
+def daily_presets(args, config):
+    configured = config['daily_workflow']['presets']
+    if args.presets or args.command not in ('resume-crawl', 'download-collected', 'prepare') or args.source_zip:
+        return args.presets or configured
+    runs = args.state_dir.expanduser() / 'runs'
+    candidates = []
+    for directory in runs.glob(f'{args.date}_*'):
+        suffix = directory.name.removeprefix(f'{args.date}_')
+        if '_sample' in suffix or not directory.is_dir():
+            continue
+        keys = ['game', 'tool'] if suffix == 'both' else suffix.split('_')
+        try:
+            scope = selected_presets(keys)
+        except ValueError:
+            continue
+        if preset_scope_suffix(scope) == suffix and any((directory / f'{key}.json').is_file() for key in keys):
+            candidates.append(keys)
+    if len(candidates) > 1:
+        raise ValueError('目标日有多个采集范围，请用 --presets 指定原范围')
+    return candidates[0] if candidates else configured
+
+def collected_archives(private, target, presets=None):
     """Only use each group's latest confirmed delivery, never glob old retries."""
+    scope = selected_presets(presets)
+    directory = Path(private).expanduser() / 'runs' / f'{target}_{preset_scope_suffix(scope)}'
     result = []
-    for group in ('game', 'tool'):
-        path = Path(private).expanduser() / 'runs' / (target + '_both') / (group + '.json')
+    for preset in scope:
+        group = preset['key']
+        path = directory / (group + '.json')
         if not path.is_file():
-            raise ValueError('缺少两组采集断点，请先采集或显式传--source-zip')
+            raise ValueError(f'缺少 {group} 采集断点，请核对 --presets 或显式传 --source-zip')
         state = load(path)
         if (state.get('date') != target or state.get('preset', {}).get('key') != group
                 or state.get('sample_limit') or state.get('stop_reason') not in ('date-cutoff', 'last-page')):
@@ -52,17 +78,19 @@ def collected_archives(private, target):
         result.append(p.resolve())
     return result
 
-def task_text(target, run_dir):
+def task_text(target, run_dir, scope):
     previous = (date.fromisoformat(target) - timedelta(days=1)).isoformat()
+    preset_args = ['--presets', *(p['key'] for p in scope)]
+    preset_labels = '、'.join(f"{p['category']}「{p['preset']}」" for p in scope)
     command = shlex.join([str(ROOT / 'scripts/afizzy-daily'), 'prepare', '--date', target,
-                          '--run-dir', str(run_dir)])
+                          '--run-dir', str(run_dir), *preset_args])
     return f'''# Afizzy {target} · Mac mini执行任务
 
 在这台Mac mini执行，读取docs/mac-mini-afizzy-runbook.md、docs/afizzy-material-workflow.md及skills/social-chat-browser-daily/SKILL.md。
 按用户确认顺序：独立无头爬取→筛选→合格原素材入表并独立读回→待用户手动触发复刻。
 
-1. 先检查原断点和原包；已有指定日成果先复用，不重跑本地已完成的采集。需要采集才执行scripts/afizzy-daily crawl --date {target}。
-   游戏选afizzy竞品游戏，工具选afizzy竞品；每组应用预设后均重设网站开始/结束日期为{target}，选择最新创意。禁用扩展，先保存地址，再统一下载。
+1. 先检查原断点和原包；已有指定日成果先复用，不重跑本地已完成的采集。需要采集才执行scripts/afizzy-daily crawl --date {target} {shlex.join(preset_args)}。
+   依次选择{preset_labels}；每组应用预设后均重设网站开始/结束日期为{target}，选择最新创意。禁用扩展，先保存地址，再统一下载。
 2. {command}
    prepare只登记原包及scope，不表示媒体或内容审核通过。逐卡核对原报告、元数据与媒体对应；失败单列，重投只认明确标签。外链无法解析无需追补；CDN404与外链失败分开记录。
 3. 全部已下载非重投视频/图片先检查原文件显示尺寸及SHA256，计入图片EXIF和视频旋转/SAR；横屏排除、尺寸未知暂缓。只对通过项做同App/系统CLIP0.9日内去重、前7自然日去重；缺历史和身份留账。生成标准化media-index.json后使用pre-review入口，沿用scope固定的尺寸规则；完整视频解码、六帧及内容审核只处理后续合格队列。
@@ -81,6 +109,8 @@ def parser():
     p.add_argument('command', choices=['task', 'doctor', 'status', 'crawl', 'resume-crawl',
                                       'download-collected', 'prepare', 'pre-review'])
     p.add_argument('--date', type=target_date)
+    p.add_argument('--presets', nargs='+', choices=[p['key'] for p in AVAILABLE_PRESETS],
+                   help='默认使用每日预设；恢复旧批次时传入原范围')
     p.add_argument('--run-dir', type=Path)
     p.add_argument('--state-dir', type=Path, default=Path.home() / '.local/share/gdd-direct')
     p.add_argument('--credentials-env', type=Path, default=ROOT / '.env')
@@ -104,7 +134,8 @@ def main(argv=None):
         p.error('此命令需要显式--date，不按运行日猜目标日')
     run_dir = (a.run_dir or ROOT / 'data/social_chat_plugin_handoff' / a.date).expanduser().resolve()
     if a.command == 'task':
-        print(task_text(a.date, run_dir)); return 0
+        presets = daily_presets(a, load(ROOT / 'config/social_chat_browser_daily.json'))
+        print(task_text(a.date, run_dir, selected_presets(presets))); return 0
     if a.command == 'status':
         result = {'date': a.date, 'run_dir': str(run_dir), 'artifacts': {}}
         for name in ('scope.json', 'handoff.json', 'pre-review/plan.json', 'selection.json',
@@ -119,14 +150,18 @@ def main(argv=None):
                     ('status', 'target_date', 'review_status', 'review_certified', 'selected_count', 'verified_active') if k in v}
         print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
     if a.command in ('crawl', 'resume-crawl', 'download-collected'):
+        presets = daily_presets(a, load(ROOT / 'config/social_chat_browser_daily.json'))
+        scope = selected_presets(presets)
         mode = {'crawl': 'run', 'resume-crawl': 'resume', 'download-collected': 'download-collected'}[a.command]
         return subprocess.run([str(a.crawler_python.expanduser()), '-m', 'ua_workflows.guangdada_direct', mode,
                                '--date', a.date, '--state-dir', str(a.state_dir.expanduser()),
-                               '--credentials-env', str(a.credentials_env.expanduser())], cwd=ROOT).returncode
+                               '--credentials-env', str(a.credentials_env.expanduser()),
+                               '--presets', *(p['key'] for p in scope)], cwd=ROOT).returncode
     if a.command == 'prepare':
         from .social_chat_plugin_handoff import prepare
-        packages = a.source_zip or collected_archives(a.state_dir, a.date)
         config = load(ROOT / 'config/social_chat_browser_daily.json')
+        presets = daily_presets(a, config)
+        packages = a.source_zip or collected_archives(a.state_dir, a.date, presets)
         print(json.dumps(prepare(a.date, run_dir, config, packages), ensure_ascii=False, indent=2)); return 0
     if not a.media_index or not a.embedding_cache:
         p.error('pre-review需要--media-index和--embedding-cache，不推断审核结论')

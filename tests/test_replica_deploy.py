@@ -95,6 +95,20 @@ def test_active_and_unknown_tasks_block_release(release, stage):
     assert deploy.git(root, 'rev-parse', 'HEAD') == old
 
 
+def test_followup_release_checks_current_state_and_preserves_old_checkpoint(release):
+    cfg, root, runtime, old, new = release
+    previous = {'record_id': 'recOne', 'stage': 'verified'}
+    write(runtime / 'scope.json', {'workflow': 'main_table_replica', 'items': [
+        {'record_id': 'recOne', 'execution_id': 'execution-2', 'existing_logo': {'job_id': 'job'}}]})
+    write(runtime / 'translation-followups/history/recOne-execution-1.json', {'state': previous})
+    followup = runtime / 'translation-followups/execution-2/recOne.json'
+    write(followup, {'record_id': 'recOne', 'stage': 'verified'})
+    deploy.paused_runtime(runtime)
+    write(followup, {'record_id': 'recOne', 'stage': 'write_unknown'})
+    with pytest.raises(RuntimeError, match='Active/unknown'):
+        deploy.paused_runtime(runtime)
+
+
 def test_dirty_checkout_and_missing_pause_block(release):
     cfg, root, runtime, old, new = release
     (root / 'code.txt').write_text('local user edit')

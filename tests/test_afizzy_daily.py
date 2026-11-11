@@ -47,6 +47,16 @@ class WorkflowEntryTests(unittest.TestCase):
             self.assertEqual(workflow.main(['resume-crawl','--date','2026-11-02','--crawler-python','/test/python','--credentials-env','/test/.env']),2)
             args=run.call_args.args[0];self.assertEqual(args[:4],['/test/python','-m','ua_workflows.guangdada_direct','resume']);self.assertIn('/test/.env',args);self.assertNotIn('--apply',args)
 
+    def test_new_crawl_uses_five_presets_and_resume_keeps_legacy_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(workflow.subprocess, 'run') as run:
+            self.archives(Path(tmp))
+            run.return_value.returncode = 0
+            args = ['--date', '2026-11-02', '--state-dir', tmp, '--crawler-python', '/test/python']
+            workflow.main(['crawl', *args])
+            self.assertEqual(run.call_args.args[0][-6:], ['--presets', 'game', 'tool', 'tool2', 'tool3', 'tool4'])
+            workflow.main(['resume-crawl', *args])
+            self.assertEqual(run.call_args.args[0][-3:], ['--presets', 'game', 'tool'])
+
     def archives(self, root):
         for group in ('game','tool'):
             p=root/(group+'.zip');p.write_bytes(b'original-'+group.encode())

@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import uuid
 
+from ua_workflows.guangdada_direct import confirmed_relaunch
 from ua_workflows.social_chat_browser_daily import CONFIG, ROOT, TZ, Feishu, load, save, table_url
 
 BUCKETS = (
@@ -66,7 +67,9 @@ def aggregate(rows, groups):
         result.update(Counter(item['status'] for item in items))
         result['new'] = len(items)
         result['unavailable'] = result['download_failed'] + result['original_url_missing']
-        result['downloaded'] = len(items) - result['unavailable']
+        result['downloaded'] = len(items) - result['unavailable'] - sum(
+            item.get('collector_relaunch_excluded', False) for item in items
+        )
         result['dedupe_removed'] = sum(result[k] for k in DEDUPE)
         result['held'] = result['content_held'] + result['previous_template_pending']
         require(sum(result[k] for k in BUCKETS) == result['new'], 'Funnel does not reconcile')
@@ -102,6 +105,7 @@ def evidence_rows(base):
                 for id in group['eligible_members'] if id != group['representative']}
     target = selection['target_date']
     rows, source_keys = [], set()
+    early_relaunch = 0
     for row in source:
         ref = row['preset'], row['pageNumber'], row['cardIndex'], row['adId']
         require(ref not in source_keys, 'Duplicate source-ledger reference')
@@ -111,7 +115,11 @@ def evidence_rows(base):
             continue
         require(row['firstDiscovered'] == target, 'Unknown/other-day discovery date')
         id = None
-        if row['state'] == 'failed':
+        if row['state'] == 'relaunchExcluded':
+            require(ref not in byref and confirmed_relaunch(row), 'Invalid collector relaunch exclusion')
+            early_relaunch += 1
+            state = 'relaunch_excluded'
+        elif row['state'] == 'failed':
             state = 'download_failed'
         elif row['state'] == 'missing':
             state = 'original_url_missing'
@@ -152,8 +160,10 @@ def evidence_rows(base):
         fields = row['metadata']['fields']
         rows.append({'id': id, 'ad_id': row['adId'], 'app': fields['appName']['value'],
                      'os': fields['platform']['value'], 'kind': row.get('kind', 'unknown'), 'status': state})
+        if row['state'] == 'relaunchExcluded':
+            rows[-1]['collector_relaunch_excluded'] = True
     result = Counter(r['status'] for r in rows)
-    require(result['landscape_excluded'] == len(land) and result['relaunch_excluded'] == len(relaunch), 'First gates mismatch')
+    require(result['landscape_excluded'] == len(land) and result['relaunch_excluded'] == len(relaunch) + early_relaunch, 'First gates mismatch')
     require(result['clip_intraday_removed'] == plan['counts'].get('intraday_removed', 0) and
             result['clip_crossday_removed'] == plan['counts'].get('crossday_removed', 0), 'CLIP evidence mismatch')
     require(result['selected'] == len(selected) == selection['selected_count'], 'Selection evidence mismatch')

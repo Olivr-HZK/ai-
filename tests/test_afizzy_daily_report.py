@@ -86,6 +86,32 @@ def test_missing_original_without_media_kind_still_counts_as_unavailable(tmp_pat
     assert stats['selected']==stats['dedupe_removed']==0
 
 
+def test_collector_relaunch_is_neither_downloaded_nor_failed(tmp_path):
+    row = {'preset': 'tool', 'pageNumber': 1, 'cardIndex': 1, 'adId': 'relaunch',
+           'state': 'relaunchExcluded', 'firstDiscovered': '2026-11-04',
+           'metadata': {'adId': 'relaunch', 'fields': {'appName': {'value': 'Emochi Android'},
+                        'platform': {'value': 'Android'},
+                        'relaunch': {'value': True, 'source': 'visible_card'}}}}
+    files = {
+        'source-ledger.json': [row], 'all-downloaded-media-index.json': [],
+        'excluded-landscape.json': {'items': []}, 'relaunch-exclusions.json': [],
+        'pre-review/plan.json': {'decisions': {}, 'counts': {}},
+        'review_observations.json': {'items': []},
+        'selection.json': {'items': [], 'target_date': '2026-11-04', 'selected_count': 0},
+        'previous-day-template-review.json': {'matches': {}, 'pending': {}},
+        'template-groups.json': [],
+    }
+    for name, value in files.items():
+        report.save(tmp_path / name, value)
+    stats = report.aggregate(report.evidence_rows(tmp_path), GROUPS)['total']
+    assert stats['new'] == stats['relaunch_excluded'] == 1
+    assert stats['downloaded'] == stats['unavailable'] == 0
+    row['metadata']['fields']['relaunch']['source'] = 'unknown'
+    report.save(tmp_path / 'source-ledger.json', [row])
+    with pytest.raises(ValueError, match='Invalid collector relaunch'):
+        report.evidence_rows(tmp_path)
+
+
 def test_all_gate_counts_partition_new_and_product_totals():
     data=[{'id':str(i),'ad_id':str(i),'app':'Emochi Android' if i%2 else 'EMOCHI World iOS',
            'os':'Android' if i%2 else 'iOS','kind':'video','status':bucket}

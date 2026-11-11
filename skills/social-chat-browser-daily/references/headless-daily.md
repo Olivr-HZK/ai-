@@ -10,12 +10,12 @@ export UA_STATE_ROOT=/Users/ggbond/oliver/afizzy-state
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 ```
 
-`.venv`及`.env`均通过本部署目录链接到持久目录的独立环境和配置；禁止回退旧`ai-`的解释器或凭据。`data/afizzy_daily`、原采集断点、封面缓存/向量、模板/语言审核、入表及两端日报回执均复用持久数据，不新建空历史。旧绝对证据路径只经兼容链接读取，不重写历史JSON、scope或发送回执。新批显式三个预设与`D_game_tool_tool2`，旧`D_both`仅按原规则恢复。
+`.venv`及`.env`均通过本部署目录链接到持久目录的独立环境和配置；禁止回退旧`ai-`的解释器或凭据。`data/afizzy_daily`、原采集断点、封面缓存/向量、模板/语言审核、入表及两端日报回执均复用持久数据，不新建空历史。旧绝对证据路径只经兼容链接读取，不重写历史JSON、scope或发送回执。新批显式五个预设与`D_game_tool_tool2_tool3_tool4`。旧`D_both`和`D_game_tool_tool2`仅按各自原范围恢复。
 
 全部业务规则以本代码目录当前config/skill及既有scope为准；本次只迁执行绑定。日流程结束于原素材入表核验和唯一飞书/企业微信日报，不接管独立复刻监听。参见[日任务依赖与验收](../../../docs/afizzy-daily-entry.md)。
 
 
-**2026-11-04新增预设（从11月5日执行起）**：每日固定游戏afizzy竞品游戏、工具afizzy竞品、工具afizzy竞品2三组。按config.daily_workflow.presets显式传`--presets game tool tool2`；新采集断点/输出范围为`D_game_tool_tool2`，summary.scope须精确等于三组才算范围完成。旧两组`D_both`及其已交付结果不迁移/重采；本次用户明确单独测试新预设的11月3日素材，固定`D_tool2`，只采新预设，后处理作为原日补充批次去重、入表和独立验收，不冒称重跑完整旧批。
+**历史三预设范围（2026-11-04）**：每日固定游戏afizzy竞品游戏、工具afizzy竞品、工具afizzy竞品2三组。按config.daily_workflow.presets显式传`--presets game tool tool2`；新采集断点/输出范围为`D_game_tool_tool2`，summary.scope须精确等于三组才算范围完成。旧两组`D_both`及其已交付结果不迁移/重采；本次用户明确单独测试新预设的11月3日素材，固定`D_tool2`，只采新预设，后处理作为原日补充批次去重、入表和独立验收，不冒称重跑完整旧批。
 
 2026-11-04用户明确选择“沿用原脚本，只加预设”：本次及后续每日任务沿早上已实站跑通的v0.2.1采集器，允许原脚本读取当前可见卡片绑定的React字段获取该卡广告ID、类型和原址；这项明确授权覆盖此前仅DOM/禁止该卡片绑定字段的限制，不扩展到私有接口、全局隐藏状态、共享Cookie、绕过验证或未显示数据。日期和App/平台/估值/重投继续取原脚本的可见证据，按原断点批量保存地址，关闭浏览器后三路静态下载。未验收DOM改造已隔离，不在正式批次反复试验；新增预设只做范围/名称配置，不擅自混入底层重构。
 
@@ -29,13 +29,13 @@ export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 ## 1. 完整采集
 
-先读 docs/guangdada-direct.md。从2026-11-05执行起固定游戏→afizzy竞品游戏、工具→afizzy竞品、工具→afizzy竞品2三组全部卡片；预设后重新设置网站起止日期D、最新创意，保存真实筛选、连续页码/广告身份与日期截止证据。不传小样、--only或页数上限。正常登录最多一次，安全验证或账号冲突立即截图、保留断点、释放防睡眠，通知需要人工；不绕过验证或反复抢登录。使用独立Playwright和原验证读取器：可读当前可见卡片绑定React字段；不读全局隐藏状态，不使用扩展/IAB、旧VE、私有API或其他浏览器Cookie。
+先读 docs/guangdada-direct.md。新批固定游戏「afizzy竞品游戏」及工具「afizzy竞品」「afizzy竞品2」「afizzy竞品3」「afizzy竞品4」五组全部卡片；预设后重新设置网站起止日期D、最新创意，保存真实筛选、连续页码/广告身份与日期截止证据。不传小样、--only或页数上限。正常登录最多一次，安全验证或账号冲突立即截图、保留断点、释放防睡眠，通知需要人工；不绕过验证或反复抢登录。使用独立Playwright和原验证读取器：可读当前可见卡片绑定React字段；不读全局隐藏状态，不使用扩展/IAB、旧VE、私有API或其他浏览器Cookie。
 
 ```sh
-caffeinate -i -s scripts/afizzy-python -m ua_workflows.guangdada_direct run --date D --presets game tool tool2 --state-dir data/afizzy_daily/collector-state --output data/afizzy_daily/raw --credentials-env /Users/ggbond/oliver/afizzy-state/.env
+caffeinate -i -s scripts/afizzy-python -m ua_workflows.guangdada_direct run --date D --presets game tool tool2 tool3 tool4 --state-dir data/afizzy_daily/collector-state --output data/afizzy_daily/raw --credentials-env /Users/ggbond/oliver/afizzy-state/.env
 ```
 
-D须替换为实际YYYY-MM-DD。新三组断点为 collector-state/runs/D_game_tool_tool2，输出 raw/D_game_tool_tool2；旧D_both保留原范围。先检查本scope的game/tool/tool2状态及summary：已采到真实末页/日期截止则复用，不因下载有缺失重采网页。暂停项使用同参数resume，不新建目录绕过断点；已有ZIP按SHA256复用。未知翻页先核对原意图，不盲目再点。下载按现有三路预算，只获取保存的原地址；不能无限重试不可解析外链或404。可复用严格同广告ID/系统/日期/原址且大小/哈希一致的真实原文件缓存，另存恢复证据和新交付版本，保留初次失败。
+D须替换为实际YYYY-MM-DD。新五组断点为 collector-state/runs/D_game_tool_tool2_tool3_tool4，输出 raw/D_game_tool_tool2_tool3_tool4；历史批次按原范围恢复。先检查本scope的game/tool/tool2/tool3/tool4状态及summary：已采到真实末页/日期截止则复用，不因下载有缺失重采网页。暂停项使用同参数resume，不新建目录绕过断点；已有ZIP按SHA256复用。未知翻页先核对原意图，不盲目再点。下载按现有三路预算，只获取保存的原地址；不能无限重试不可解析外链或404。可复用严格同广告ID/系统/日期/原址且大小/哈希一致的真实原文件缓存，另存恢复证据和新交付版本，保留初次失败。
 
 独立核验原报告、元数据、目标日期、每条原文件SHA256/大小、ZIP CRC与原字节；视频完整解码、图片解码，已有同源哈希一致的解码回执复用。Playable仅静态存档，绝不执行或进入筛选/复刻。summary.complete不等于完整下载：必须分别读取collection_complete、all_media_downloaded、full_day_complete及missing/failed。仅下载缺失允许对实际取得的媒体部分继续并披露；采集未到截止、身份/估值/日期或哈希证据缺失不能伪称完整或跳过。
 
@@ -47,7 +47,7 @@ D须替换为实际YYYY-MM-DD。新三组断点为 collector-state/runs/D_game_t
 
 筛选第一步先执行config.orientation_filter并在新scope深复制固定。原文件/日期/身份核验后、重投和CLIP之前，用ffprobe取得实际首视频流宽高、sample_aspect_ratio和旋转元数据，按实际显示方向判定；图片解码取得显示尺寸（含EXIF方向）。宽>高为横屏直接排除，正方形/竖屏保留；不按缩略图判断。多图逐原图排除横图、剩余原图继续；整条无剩余则排除。未知尺寸/旋转信息冲突记pending，不伪造0或放行。excluded-landscape.json逐文件保存广告ID、源SHA256/大小、原probe及哈希或图像尺寸证据、实际显示宽高、规则和排除原因，汇总排除条数/文件数；横屏不进入后续向量、六帧/主体/模板/语言审核或入表。此前原报告/文件保持，不重算旧scope。
 
-沿SKILL.md及pre-review.md、content-review.md完成原筛选四道和前一天模板比对。独立采集ZIP含原下载报告和同源结构化game/tool/tool2.json：按实际页/位置/广告ID关联，App/系统/估值/重投取metadata实际观察；缺App ID留空，未知重投不造false。原报告不改写。保存原包交接清单及SHA256，标准化媒体索引；新筛选scope记录真实execution_origin=scheduled、collection_origin=guangdada-direct、源包与采集summary哈希，固定config中的processing_policy、ranking.mode=all、previous_day_template_dedupe和image_replication_after_ingestion。不得伪标为用户手动交包：现有manual-only prepare不是此入口，勿调用它来假造触发来源；按现有pre-review输入格式建立真实未审核scope与索引，再运行pre-review及后续流程，不能手填完成状态。
+沿SKILL.md及pre-review.md、content-review.md完成原筛选四道和前一天模板比对。独立采集ZIP含原下载报告和各预设同源结构化 JSON：按实际页/位置/广告ID关联，App/系统/估值/重投取metadata实际观察；缺App ID留空，未知重投不造false。原报告不改写。保存原包交接清单及SHA256，标准化媒体索引；新筛选scope记录真实execution_origin=scheduled、collection_origin=guangdada-direct、源包与采集summary哈希，固定config中的processing_policy、ranking.mode=all、previous_day_template_dedupe和image_replication_after_ingestion。不得伪标为用户手动交包：现有manual-only prepare不是此入口，勿调用它来假造触发来源；按现有pre-review输入格式建立真实未审核scope与索引，再运行pre-review及后续流程，不能手填完成状态。
 
 先尺寸筛选后再剔明确重投，剩余非重投已取得视频/图片先同App/系统CLIP0.9日内去重、前7自然日封面去重；历史使用同一已核实模型和指纹，缺日留账。只对剩余项实际查看六帧/全部原图，同次做男性有意义展示、女频伴侣/恋爱相关、排除真人主持式推广、风格与模板判断；存疑补证据，仍存疑不纳入。与D−1同App/系统完整已确认模板对照，确认重复剔当天项；缺历史记pending，不当零历史。保存当天全部已确认模板及剔除关联供次日使用，向量包不能代替模板证据。
 
