@@ -1,68 +1,94 @@
 {
-  "version": "afizzy-report-products-v1",
-  "purpose": "Display grouping only: merge iOS and Android in the daily broadcast. Never change collection, dedupe, template identity or table advertiser fields.",
+  "version": "afizzy-report-products-v2",
+  "purpose": "Display only: merge verified product aliases across stores and label the competitor region in the daily broadcast.",
   "unknown_name": "show_observed_name_without_fuzzy_merge",
   "products": [
     {
       "name": "zeta",
+      "region": "日韩",
       "aliases": [
-        "zeta: AI Chat, Story, Play"
+        "zeta: AI Chat, Story, Play",
+        "com.scatterlab.messenger",
+        "1619030760"
       ]
     },
     {
       "name": "Emochi",
+      "region": "欧美及巴西",
       "aliases": [
         "Emochi: Chat With Character",
-        "EMOCHI World: AI Story Chat"
+        "EMOCHI World: AI Story Chat",
+        "6758488675",
+        "com.flow.mobile"
       ]
     },
     {
       "name": "Tipsy",
+      "region": "日韩／欧美及巴西",
       "aliases": [
         "Tipsy: Live Your Story",
         "Tipsy Chat: Live Your Story",
-        "Tipsy Chat"
+        "Tipsy Chat",
+        "6572296119",
+        "com.tipsyturbo.app"
       ]
     },
     {
       "name": "Tizz",
+      "region": "欧美及巴西",
       "aliases": [
         "Tizz: Craft Your World",
         "TizzChat: Craft Your World",
-        "aiapp.tizzchat.chatbot"
+        "aiapp.tizzchat.chatbot",
+        "6768571224"
       ]
     },
     {
       "name": "Heyyyy",
+      "region": "欧美及巴西",
       "aliases": [
-        "Heyyyy: Stories that text back"
+        "Heyyyy: Stories that text back",
+        "6761748236",
+        "ai.heyyyy.app"
       ]
     },
     {
       "name": "PolyBuzz",
+      "region": "日韩／欧美及巴西",
       "aliases": [
         "PolyBuzz: Chat with AI Friends",
-        "PolyBuzz: Chat with Characters"
+        "PolyBuzz: Chat with Characters",
+        "ai.socialapps.speakmaster",
+        "6449190344"
       ]
     },
     {
       "name": "LoveyDovey",
+      "region": "日韩",
       "aliases": [
         "LoveyDovey - Dream Chats",
-        "LoveyDovey - Dream AI Chats"
+        "LoveyDovey - Dream AI Chats",
+        "6468766519",
+        "ai.tain.reelso"
       ]
     },
     {
       "name": "Whispy",
       "aliases": [
         "Whispy AI: Cozy Chat",
-        "Whispy AI: Create Your Story"
+        "Whispy AI: Create Your Story",
+        "6770413766",
+        "com.nexbase.whispy"
       ]
     },
     {
       "name": "SeaHaze",
+      "region": "欧美及巴西",
       "aliases": [
-        "SeaHaze - AI Chat & Friends"
+        "SeaHaze - AI Chat & Friends",
+        "ai.seaart.app.hot",
+        "SeaHaze: Create Your Story",
+        "6478189868"
       ]
     },
     {
@@ -75,21 +101,244 @@
       "name": "Talkie",
       "aliases": [
         "Talkie Lab - AI Playground",
-        "Talkie: Creative AI Community"
+        "Talkie: Creative AI Community",
+        "com.weaver.app.prod"
       ]
     },
     {
       "name": "dotdotdot",
       "aliases": [
         "dotdotdot Fantasy AI Boyfriend",
-        "dotdotdot: AI Romance, Stories"
+        "dotdotdot: AI Romance, Stories",
+        "com.rheality.dot"
       ]
     },
     {
       "name": "Dulci",
       "aliases": [
-        "Dulci: AI Interactive Story"
+        "Dulci: AI Interactive Story",
+        "com.ai.dulci.chat"
+      ]
+    },
+    {
+      "name": "Crack",
+      "region": "日韩",
+      "aliases": [
+        "크랙 - 내가 주인공인 웹소설, AI 채팅",
+        "6740223370",
+        "com.wrtn.character"
+      ]
+    },
+    {
+      "name": "Charapu",
+      "region": "日韩",
+      "aliases": [
+        "キャラぷ - 物語はキミ次第・AIチャット",
+        "6744629457",
+        "jp.wrtn.character"
+      ]
+    },
+    {
+      "name": "WHIF",
+      "region": "日韩",
+      "aliases": [
+        "위프",
+        "WHIF: Romance AI Chat",
+        "WHIF: Romance & BL AI Chat",
+        "6753713932",
+        "io.whif"
+      ]
+    },
+    {
+      "name": "Melting",
+      "region": "日韩",
+      "aliases": [
+        "멜팅 - AI 캐릭터 채팅, 호감도 시스템",
+        "멜팅 - 캐릭터 채팅, AI 연애 시뮬레이션",
+        "Melting - AI Character chat",
+        "6745810835",
+        "chat.melting.apppp"
+      ]
+    },
+    {
+      "name": "BagelChat",
+      "region": "日韩",
+      "aliases": [
+        "베이글챗 : AI 캐릭터 채팅 & 스토리",
+        "BagelChat: AI Character Story",
+        "BagelChat: AI Character Chat",
+        "6749137461",
+        "com.konrev.bagelchat"
+      ]
+    },
+    {
+      "name": "Caveduck",
+      "region": "日韩",
+      "aliases": [
+        "케이브덕 - 취향대로 즐기는 AI 캐릭터 채팅",
+        "Caveduck - AI Character Chat",
+        "6651829734",
+        "com.warpspace.caveduckaos"
+      ]
+    },
+    {
+      "name": "Tikita",
+      "region": "日韩",
+      "aliases": [
+        "티키타 - 상상 속 누구와도 티키타카하는 AI 채팅",
+        "Tikita: Talk to Any Character",
+        "6754792953",
+        "ai.tikita.tikita_mobile"
+      ]
+    },
+    {
+      "name": "Rizzfriend",
+      "region": "日韩",
+      "aliases": [
+        "리즈프렌드 - 내가 선택하는 AI 스토리, AI 채팅",
+        "Rizzfriend - AI Character Chat",
+        "6759247722",
+        "com.rizzfriend.app"
+      ]
+    },
+    {
+      "name": "LITY / Repin",
+      "region": "日韩",
+      "aliases": [
+        "LITY — AI Character Chat",
+        "리핀",
+        "6777156399",
+        "com.zelopus.lity"
+      ]
+    },
+    {
+      "name": "BabeChat",
+      "region": "日韩",
+      "aliases": [
+        "베이비챗 BabeChat",
+        "베이비챗(Babechat) - 한계 없는 AI 채팅",
+        "6740225767",
+        "ai.babechat.app"
+      ]
+    },
+    {
+      "name": "SynClub",
+      "region": "日韩",
+      "aliases": [
+        "SynClub: AIキャラ・夢小説・ノベル・チャット・物語",
+        "SynClub（シンクラブ）：AIキャラ・夢小説・ノベル",
+        "SynClub:AI Chat & Make Friends",
+        "1671537674",
+        "com.creativeapp.aichat"
+      ]
+    },
+    {
+      "name": "Luvlinx",
+      "region": "日韩",
+      "aliases": [
+        "Luvlinx - AIチャットで彼氏や恋人と会話",
+        "6748287969",
+        "com.moshbit.luvlinx"
+      ]
+    },
+    {
+      "name": "チャチャ",
+      "region": "日韩",
+      "aliases": [
+        "チャチャ - AIキャラ・推しと話せるロールプレイチャット",
+        "チャチャ - AIキャラ・推しとロールプレイチャット",
+        "6748977935",
+        "ai.anirole.mobile"
+      ]
+    },
+    {
+      "name": "BIMOBIMO",
+      "region": "日韩",
+      "aliases": [
+        "BIMOBIMO-ビモビモ",
+        "6475955546",
+        "com.beemo.ai.flutter_beemo"
+      ]
+    },
+    {
+      "name": "MiraiMind",
+      "region": "日韩",
+      "aliases": [
+        "MiraiMind - Create Your Own AI",
+        "6502377840",
+        "com.immomo.miraimind"
+      ]
+    },
+    {
+      "name": "Saylo",
+      "region": "日韩",
+      "aliases": [
+        "Saylo: Your AI Creative World",
+        "6479835900",
+        "com.xverse.aistory"
+      ]
+    },
+    {
+      "name": "きゃらでん＋",
+      "region": "日韩",
+      "aliases": [
+        "jp.ne.mkb.voice"
+      ]
+    },
+    {
+      "name": "Chai",
+      "region": "欧美及巴西",
+      "aliases": [
+        "Chai: Chat AI Platform",
+        "1544750895",
+        "com.Beauchamp.Messenger.external"
+      ]
+    },
+    {
+      "name": "Popia",
+      "region": "欧美及巴西",
+      "aliases": [
+        "Popia - AI Stories & Creators",
+        "6757948021"
+      ]
+    },
+    {
+      "name": "OOC",
+      "region": "欧美及巴西",
+      "aliases": [
+        "OOC: The Playable Anime",
+        "6761247061",
+        "com.newai.ooc"
+      ]
+    },
+    {
+      "name": "Character.AI",
+      "region": "欧美及巴西",
+      "aliases": [
+        "Character AI: Chat, Talk, Text",
+        "1671705818",
+        "ai.character.app"
+      ]
+    },
+    {
+      "name": "Mira",
+      "region": "欧美及巴西",
+      "aliases": [
+        "Mira - AI Chat & Companion",
+        "6784508010",
+        "com.mirachat.ai"
+      ]
+    },
+    {
+      "name": "Cycle AI",
+      "region": "欧美及巴西",
+      "aliases": [
+        "Cycle AI: Talk With AI Friends",
+        "Cycle AI: Chat, Talk & Stories",
+        "6747881677",
+        "com.cycleai.android"
       ]
     }
-  ]
+  ],
+  "region_basis": "October 2026 Japan/Korea and Europe/US/Canada/Brazil revenue rankings. zeta is explicitly classified as Japan/Korea."
 }

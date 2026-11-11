@@ -50,6 +50,7 @@ def product_aliases(groups):
 
 def aggregate(rows, groups):
     aliases = product_aliases(groups)
+    regions = {product['name']: product.get('region') for product in groups['products']}
     products = defaultdict(list)
     identities = set()
     for row in rows:
@@ -71,7 +72,8 @@ def aggregate(rows, groups):
         require(sum(result[k] for k in BUCKETS) == result['new'], 'Funnel does not reconcile')
         return result
 
-    details = [{'product': name, 'observed_names': sorted({r['app'] for r in items}),
+    details = [{'product': name, 'region': regions.get(name) or '地区待确认',
+                'observed_names': sorted({r['app'] for r in items}),
                 'oses': sorted({r['os'] for r in items}), **counts(items)}
                for name, items in products.items()]
     details.sort(key=lambda row: (-row['new'], row['product']))
@@ -209,6 +211,22 @@ def safe_name(name):
     return html.escape(re.sub(r'[\r\n]+', ' ', name)).replace('*', '\\*').replace('`', '\\`')
 
 
+def product_sections(products):
+    if not any('region' in product for product in products):
+        return [(None, products)]
+    sections = []
+    for region, title in [('日韩', '日韩竞品'), ('欧美及巴西', '欧美及巴西竞品')]:
+        members = [product for product in products
+                   if region in (product.get('region') or '').split('／')]
+        if members:
+            sections.append((title, members))
+    unclassified = [product for product in products
+                    if not set((product.get('region') or '').split('／')) & {'日韩', '欧美及巴西'}]
+    if unclassified:
+        sections.append(('地区待确认', unclassified))
+    return sections
+
+
 def build_card(stats, url):
     t = stats['total']
     require(sum(t[k] for k in BUCKETS) == t['new'], 'Funnel does not reconcile')
@@ -220,7 +238,12 @@ def build_card(stats, url):
         {'tag':'column','width':'weighted','weight':1,'elements':[md(f"**{value} 条**\n{label}")]}
         for label,value in metrics]}]
     elements += [{'tag':'hr'},md('**竞品明细**')]
-    elements.append(md('\n'.join(f"**{safe_name(p['product'])}**　上新 **{p['new']}** → 入表 **{p['selected']}**" for p in stats['products'])))
+    details = []
+    for title, products in product_sections(stats['products']):
+        if title:
+            details.append(f'**{title}**')
+        details.extend(f"**{safe_name(p['product'])}**　上新 **{p['new']}** → 入表 **{p['selected']}**" for p in products)
+    elements.append(md('\n'.join(details)))
     elements += [{'tag':'hr'},{'tag':'action','actions':[{'tag':'button','type':'primary','text':{'tag':'plain_text','content':'查看精选素材'},'url':url}]}]
     day = date.fromisoformat(stats['target_date'])
     card = {'config':{'wide_screen_mode':True,'update_multi':True},

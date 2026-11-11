@@ -6,7 +6,7 @@ import fcntl
 import hashlib
 import requests
 
-from ua_workflows.afizzy_daily_report import load,save,sha,digest,require,safe_name,TZ,table_url
+from ua_workflows.afizzy_daily_report import load,save,sha,digest,require,product_sections,safe_name,TZ,table_url
 from ua_workflows.shared.config import project_env_values
 
 
@@ -15,8 +15,11 @@ def build_payload(stats,url):
     day=datetime.fromisoformat(stats['target_date'])
     lines=[f'**竞品素材日报 · {day.month}月{day.day}日**','',
            f'竞品上新：**{t["new"]}条**',f'去重后入表：**{t["selected"]}条**','', '**竞品明细**']
-    for p in stats['products']:
-        lines.append(f'{safe_name(p["product"])}：上新 **{p["new"]}** → 入表 **{p["selected"]}**')
+    for title, products in product_sections(stats['products']):
+        if title:
+            lines.extend(['', f'**{title}**'])
+        for p in products:
+            lines.append(f'{safe_name(p["product"])}：上新 **{p["new"]}** → 入表 **{p["selected"]}**')
     lines+=['',f'[查看精选素材]({url})']
     content='\n'.join(lines)
     require(len(content.encode('utf-8'))<=4096,'WeCom summary exceeds one message; do not split or truncate silently')

@@ -2,6 +2,7 @@ import copy
 import json
 import pytest
 from ua_workflows import afizzy_daily_report as report
+from ua_workflows.afizzy_wecom_report import build_payload
 
 GROUPS={'products':[{'name':'Emochi','aliases':['Emochi Android','EMOCHI World iOS']}]}
 
@@ -120,6 +121,33 @@ def test_card_has_overall_and_product_funnel_and_no_mentions():
     assert all(word not in detail for word in ['封面','模板','主体','未取得'])
     assert all(label not in text for label in ['预设','口径','前7自然日','AFIZZY-DAY','复刻','模型指纹','各轮剔除','封面','模板','未取得','Playable','待核'])
     assert '<at' not in text
+
+
+def test_both_channels_group_competitor_regions_and_preserve_legacy_payload():
+    groups = report.load(report.ROOT / 'config/afizzy_report_products.json')
+    data = rows()
+    data[0]['app'] = 'com.scatterlab.messenger'
+    data[1]['app'] = 'zeta: AI Chat, Story, Play'
+    stats = report.aggregate(data, groups)
+    stats.update(target_date='2026-11-11', verified_records=1)
+    url = 'https://example.feishu.cn/base/test'
+    card = report.build_card(stats, url)
+    wecom = build_payload(stats, url)
+    assert '**日韩竞品**\n**zeta**　上新 **2** → 入表 **1**' in card['elements'][-3]['text']['content']
+    assert '**日韩竞品**\nzeta：上新 **2** → 入表 **1**' in wecom['markdown']['content']
+    assert '**地区待确认**\nUnmapped product' in wecom['markdown']['content']
+
+    dual = dict(stats['products'][0], product='PolyBuzz', region='日韩／欧美及巴西')
+    dual_sections = report.product_sections([dual])
+    assert [title for title, _ in dual_sections] == ['日韩竞品', '欧美及巴西竞品']
+    assert all(members == [dual] for _, members in dual_sections)
+
+    legacy_stats = copy.deepcopy(stats)
+    for product in legacy_stats['products']:
+        del product['region']
+    legacy_text = build_payload(legacy_stats, url)['markdown']['content']
+    assert '\nzeta：上新 **2** → 入表 **1**' in legacy_text
+    assert '地区待确认' not in legacy_text
 
 
 def test_known_send_is_only_read_back_on_repeat(base):
