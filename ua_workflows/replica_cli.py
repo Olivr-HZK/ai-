@@ -186,7 +186,7 @@ def upload_many(factory, paths, checkpoint, *, on_result=None):
             'accepted': sum(item['ok'] for item in results), 'stopped': stopped}
 
 
-def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
+def logo_many(api, ids, checkpoint, *, on_result=None, options=None, require_trim_match=False):
     ids, results, stopped = selected_ids(ids), [], False
     options = api.smart_options() if options is None else options
     for job_id in ids:
@@ -196,6 +196,11 @@ def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
                 continue
             record = checkpoint.get('logos', job_id)
             if record:
+                if require_trim_match and any(bool(record.get('options', {}).get(key)) != bool(options.get(key))
+                       for key in ('remove_cta', 'remove_gameplay')):
+                    results.append({'id': job_id, 'ok': False, 'code': 'needs_review',
+                                    'message': 'Existing Logo request used different trim options'})
+                    continue
                 results.append({'id': job_id, 'ok': record['stage'] == 'logo_accepted', 'code': record['stage'], 'reused': True})
                 continue
             dispatched = False
@@ -204,7 +209,14 @@ def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
                 if job.get('source_kind') == 'playable':
                     results.append({'id': job_id, 'ok': False, 'code': 'playable_not_supported'})
                     continue
-                if (job.get('logo_replace_view') or {}).get('state') in {'replaced', 'no_logo'}:
+                view = job.get('logo_replace_view') or {}
+                if view.get('state') in {'replaced', 'no_logo'}:
+                    saved_options = view.get('settings') or {}
+                    if require_trim_match and any(options.get(key) is True and saved_options.get(key) is not True
+                           for key in ('remove_cta', 'remove_gameplay')):
+                        results.append({'id': job_id, 'ok': False, 'code': 'needs_review',
+                                        'message': 'Existing Logo result does not confirm the requested trim options'})
+                        continue
                     results.append({'id': job_id, 'ok': True, 'code': 'already_done', **logo_review_fields(job)})
                     continue
                 if step_state(job, 'analysis') != 'ready':
@@ -217,7 +229,7 @@ def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
                     stopped = True
                     raise
                 dispatched = True
-                result = api.smart_logo(job, options)
+                result = api.logo_replace(job, options) if options.get('logo_mode') == 'auto' else api.smart_logo(job, options)
                 record.update(stage='logo_accepted', receipt=result)
                 checkpoint.put('logos', job_id, record)
                 results.append({'id': job_id, 'ok': True, 'code': 'accepted', 'receipt': result})
@@ -238,7 +250,8 @@ def logo_many(api, ids, checkpoint, *, on_result=None, options=None):
         finally:
             if on_result is not None and results and results[-1]['id'] == job_id:
                 on_result(results[-1])
-    return {'operation': 'smart_logo', 'results': results, 'selected': len(ids), 'stopped': stopped}
+    return {'operation': 'auto_logo' if options.get('logo_mode') == 'auto' else 'smart_logo',
+            'results': results, 'selected': len(ids), 'stopped': stopped}
 
 
 PUBLIC_JOB_FIELDS = ('id', 'project_id', 'status', 'revision', 'message', 'error', 'last_action',
@@ -361,11 +374,16 @@ def parser():
     status.add_argument('--input', dest='translation_input', choices=['original', 'swap'], default='original',
                         help='等待翻译时核对实际视频输入；默认完整原视频')
     status.add_argument('--source-language', help='原语言代码；原语言字幕查询时可指定')
+    status.add_argument('--remove-brand-cta', action='store_true', help='查询时按去掉品牌片头和 CTA 的选项核对')
+    status.add_argument('--remove-gameplay', action='store_true', help='查询时按去掉玩法的选项核对')
     status.add_argument('--timeout', type=float, default=3600)
     status.add_argument('--interval', type=float, default=3.5)
     status.add_argument('--analysis', action='store_true', help='包含文档公开的分析视图')
     logo = sub.add_parser('logo', help='多选智能 AI 换 Logo；逐任务入队，不重复已提交付费动作')
     logo.add_argument('ids', nargs='+')
+    logo.add_argument('--mode', choices=['smart', 'auto'], default='smart', help='smart 为全自动；auto 为自动匹配 Logo')
+    logo.add_argument('--remove-brand-cta', action='store_true', help='去掉品牌片头和 CTA')
+    logo.add_argument('--remove-gameplay', action='store_true', help='去掉独立玩法')
     logo.add_argument('--yes', action='store_true', help='设备授权模式下确认提交付费智能Logo动作')
     characters = sub.add_parser('characters', help='只读列出任务角色ID及当前人物参考图')
     characters.add_argument('id')
@@ -375,16 +393,33 @@ def parser():
     portrait.add_argument('--source-id', help='多角色任务必须指定；单角色自动选择唯一角色')
     portrait.add_argument('--replace', action='store_true', help='允许更换此前已确认的参考图；未知上传仍只读核对')
     portrait.add_argument('--check-only', action='store_true', help='只检查图片与角色映射，不上传或写断点')
-    translate = sub.add_parser('translate', help='仅翻译完整当前视频的口播，保留全片内容')
+    translate = sub.add_parser('translate', help='翻译当前视频的画面文字和口播')
     translate.add_argument('ids', nargs='+')
     translate.add_argument('--languages', nargs='+', required=True)
-    translate.add_argument('--parts', nargs='+', choices=['voice'], default=['voice'], help='兼容参数，固定为voice')
+    translate.add_argument('--parts', nargs='+', choices=['text', 'voice'], default=['text', 'voice'])
     translate.add_argument('--source-language')
     translate.add_argument('--input', dest='translation_input', choices=['original', 'swap'], default='original',
                            help='original整条当前原视频（含换Logo版本）；swap已生成的换人片段')
     translate.add_argument('--source-video', action='store_true', help='兼容别名：等同--input original，不再切换剧情路线')
     translate.add_argument('--check-only', action='store_true', help='只读预检，不切换路线或提交翻译')
     translate.add_argument('--yes', action='store_true', help='设备授权模式下确认提交付费翻译动作')
+    assembly = sub.add_parser('assemble', help='为同一任务的原语言及翻译视频拼接各自语言的 CTA')
+    assembly.add_argument('id')
+    assembly.add_argument('--languages', nargs='+', required=True)
+    assembly.add_argument('--check-only', action='store_true', help='只读检查任务和各语言 CTA')
+    assembly.add_argument('--yes', action='store_true', help='设备授权模式下确认拼接')
+    assembly_status = sub.add_parser('assembly-status', help='只读检查本断点的拼接结果')
+    assembly_status.add_argument('id')
+    assembly_download = sub.add_parser('download-assembly', help='下载已核对语言归属的拼接成片')
+    assembly_download.add_argument('id')
+    assembly_download.add_argument('--output-dir', type=Path, default=DATA_DIR / 'replica-cli/results')
+    workflow = sub.add_parser('workflow', help='同一任务自动匹配 Logo、文字和语音翻译，并按语言拼接 CTA')
+    workflow.add_argument('id')
+    workflow.add_argument('--languages', nargs='+', required=True)
+    workflow.add_argument('--output-dir', type=Path, required=True)
+    workflow.add_argument('--timeout', type=float, default=7200)
+    workflow.add_argument('--interval', type=float, default=15)
+    workflow.add_argument('--yes', action='store_true', help='设备授权模式下确认执行生成及拼接')
     download = sub.add_parser('download', help='多选下载Logo或翻译视频／字幕，不另行拼接或生成')
     download.add_argument('ids', nargs='+')
     download.add_argument('--step', choices=['logo', 'translation'], default='logo')
@@ -427,7 +462,7 @@ def execute(args, factory=None):
     auth = api.authenticate()
     if args.command in {'session', 'whoami'}:
         return {'operation': 'session', 'authenticated': True, **auth}
-    if (auth.get('auth_mode') == 'device' and args.command in {'logo', 'translate'}
+    if (auth.get('auth_mode') == 'device' and args.command in {'logo', 'translate', 'assemble', 'workflow'}
             and not getattr(args, 'check_only', False) and not args.yes):
         raise ReplicaError('confirmation_required', 'Device-authorized paid actions require --yes')
     if args.command == 'upload-status':
@@ -438,6 +473,9 @@ def execute(args, factory=None):
     if args.command == 'portrait' and args.check_only:
         from ua_workflows.replica_portraits import replace_portrait
         return replace_portrait(api, args.id, args.image, None, source_id=args.source_id, check_only=True)
+    if args.command == 'assemble' and args.check_only:
+        from ua_workflows.replica_assembly import assemble_one
+        return assemble_one(api, args.id, None, args.languages, check_only=True)
     if args.command == 'status':
         if args.timeout <= 0 or args.interval <= 0:
             raise ReplicaError('invalid_input', 'Timeout and polling interval must be positive')
@@ -445,29 +483,59 @@ def execute(args, factory=None):
             from ua_workflows.replica_translation import translation_status_many
             return translation_status_many(api, args.ids, args.languages, args.parts, args.source_language,
                                            timeout=args.timeout, interval=args.interval,input_mode=args.translation_input,
-                                           trim={'remove_cta':False,'remove_gameplay':False} if args.translation_input=='original' else None)
+                                           trim={'remove_cta':args.remove_brand_cta,'remove_gameplay':args.remove_gameplay}
+                                           if args.translation_input=='original' else None)
         return status_many(api, args.ids, stage=args.wait_for, timeout=args.timeout, interval=args.interval, include_analysis=args.analysis)
     if args.command == 'translate' and args.check_only:
-        from ua_workflows.replica_translation import translate_voice_many
+        from ua_workflows.replica_translation import translate_many
         if args.source_video and args.translation_input != 'original':
             raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
-        return translate_voice_many(api, args.ids, None, args.languages, args.source_language,
-                                    input_mode=args.translation_input, check_only=True)
+        return translate_many(api, args.ids, None, args.languages, args.parts, args.source_language,
+                              input_mode=args.translation_input,
+                              trim={'remove_cta': True, 'remove_gameplay': True} if args.translation_input == 'original' else None,
+                              check_only=True)
     with operation_lock(args.checkpoint):
         checkpoint = Checkpoint(args.checkpoint, auth['account_id'])
         if args.command == 'upload':
             return upload_many(factory, args.files, checkpoint)
         if args.command == 'logo':
-            return logo_many(api, args.ids, checkpoint)
+            options = api.smart_options()
+            options['logo_mode'] = args.mode
+            if args.remove_brand_cta:
+                options['remove_cta'] = True
+            if args.remove_gameplay:
+                options['remove_gameplay'] = True
+            return logo_many(api, args.ids, checkpoint, options=options,
+                             require_trim_match=args.remove_brand_cta or args.remove_gameplay)
         if args.command == 'portrait':
             from ua_workflows.replica_portraits import replace_portrait
             return replace_portrait(api, args.id, args.image, checkpoint, source_id=args.source_id, replace=args.replace)
+        if args.command == 'assemble':
+            from ua_workflows.replica_assembly import assemble_one
+            return assemble_one(api, args.id, checkpoint, args.languages)
+        if args.command == 'assembly-status':
+            from ua_workflows.replica_assembly import assembly_status
+            return assembly_status(api, args.id, checkpoint)
+        if args.command == 'download-assembly':
+            from ua_workflows.replica_assembly import download_assemblies
+            return download_assemblies(api, args.id, checkpoint, args.output_dir)
+        if args.command == 'workflow':
+            from ua_workflows.replica_ad_workflow import advance_one
+            if args.timeout <= 0 or args.interval < 5:
+                raise ReplicaError('invalid_input', 'Timeout must be positive and polling interval at least 5 seconds')
+            started = time.monotonic()
+            while True:
+                result = advance_one(api, args.id, checkpoint, args.languages, args.output_dir)
+                if result['state'] in {'downloaded', 'unknown'} or time.monotonic() - started >= args.timeout:
+                    return result
+                time.sleep(min(args.interval, max(0, args.timeout - (time.monotonic() - started))))
         if args.command == 'translate':
-            from ua_workflows.replica_translation import translate_voice_many
+            from ua_workflows.replica_translation import translate_many
             if args.source_video and args.translation_input != 'original':
                 raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
-            return translate_voice_many(api, args.ids, checkpoint, args.languages, args.source_language,
-                                        input_mode=args.translation_input)
+            return translate_many(api, args.ids, checkpoint, args.languages, args.parts, args.source_language,
+                                  input_mode=args.translation_input,
+                                  trim={'remove_cta': True, 'remove_gameplay': True} if args.translation_input == 'original' else None)
         if args.command == 'download':
             if args.step == 'translation':
                 from ua_workflows.replica_translation import download_translations
@@ -486,9 +554,12 @@ def main(argv=None):
         if (result.get('status') == 'browser_login_required' or result.get('state') == 'authentication_required' or
                 result.get('operation') == 'login' and not result.get('cli_authenticated')):
             return 3
-        if result.get('pending'):
+        if result.get('pending') or (args.command in {'workflow', 'assembly-status'}
+                                     and result.get('state') in {'waiting', 'unknown'}):
             return 4
-        if result.get('ok') is False or any(not item.get('ok') for item in result.get('results', [])) or result.get('missing') or result.get('skipped'):
+        if (result.get('ok') is False or result.get('state') == 'failed'
+                or any(not item.get('ok') for item in result.get('results', []))
+                or result.get('missing') or result.get('skipped')):
             return 2
         return 0
     except (ReplicaError, OSError, ValueError) as error:

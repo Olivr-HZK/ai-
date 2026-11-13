@@ -68,6 +68,14 @@ def validate_workflow_body(method, path, body):
             raise ReplicaError('unsupported_action', 'Translation cannot force regeneration or change workspace preferences')
         translation_options(body.get('languages'), body.get('parts', ['voice']), body.get('source_language'),
                             input_mode=body.get('input'), trim=body.get('trim'))
+    if method == 'POST' and path.endswith('/actions/export'):
+        if (not isinstance(body, dict) or set(body) != {'languages', 'use_defaults', 'assembly'}
+                or body['use_defaults'] is not True
+                or body['assembly'] != {'source': 'original', 'other': 'none', 'cta': 'random',
+                                         'logos': 'keep', 'subtitles': 'keep'}
+                or not isinstance(body['languages'], list) or not body['languages']
+                or any(lang not in TRANSLATION_LANGUAGES | {'source'} for lang in body['languages'])):
+            raise ReplicaError('unsupported_action', 'Export must use the selected languages and language-specific CTA')
 
 
 class ReplicaError(RuntimeError):
@@ -105,14 +113,14 @@ def allowed(method, path):
     if method == 'GET':
         if path.startswith('/api/tasks?filter='):
             return path[len('/api/tasks?filter='):] in {'all', 'active', 'running', 'queued', 'review', 'completed', 'failed'}
-        return path in {'/api/auth/session', '/api/cli/whoami', '/api/settings', '/api/jobs', '/api/tasks',
+        return path in {'/api/auth/session', '/api/cli/whoami', '/api/settings', '/api/jobs', '/api/tasks', '/api/assembly-assets',
                         '/api/deleted-projects', '/api/deleted-characters'} or bool(
             re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}', path) or
             re.fullmatch(r'/api/source-uploads/[a-f0-9]{32}', path))
     if method == 'PUT':
         return bool(re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}', path))
     return method == 'POST' and (path in {'/api/jobs', '/api/jobs/download/files'} or bool(
-        re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate)', path) or portrait_path(path)))
+        re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate|export)', path) or portrait_path(path)))
 
 
 def portrait_path(path):
@@ -279,7 +287,7 @@ class ReplicaAPI:
             if not self.account or (not self.device_auth and not self.csrf):
                 raise ReplicaError('authentication_required', 'Authenticate the HTTP session before submitting work')
             if self.device_auth:
-                if re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate)', path):
+                if re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate|export)', path):
                     if not self.confirm_paid:
                         raise ReplicaError('confirmation_required', 'Device-authorized paid actions require --yes')
                     request_headers['X-Replica-Confirm'] = 'paid'
@@ -321,7 +329,7 @@ class ReplicaAPI:
                 data = response.json()
             except (ValueError, TypeError):
                 raise ReplicaError('result_unknown' if write and not safe_retry else 'read_failed', 'Replica response is not valid JSON') from None
-            if method == 'GET' and path in {'/api/jobs', '/api/deleted-projects', '/api/deleted-characters'}:
+            if method == 'GET' and path in {'/api/jobs', '/api/deleted-projects', '/api/deleted-characters', '/api/assembly-assets'}:
                 if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
                     raise ReplicaError('read_failed', 'Replica task list is not a JSON object array')
                 return data
@@ -389,7 +397,8 @@ class ReplicaAPI:
             raise ReplicaError('unavailable', 'Smart Logo processing is unavailable for this account' + detail)
         defaults = logo.get('defaults') or {}
         return {'use_defaults': True, 'logo_mode': 'smart', 'brand': '', **{
-            k: defaults[k] for k in ('logo_id', 'replace_name', 'remove_cta', 'remove_gameplay', 'remove_watermarks', 'rename_voice') if k in defaults}}
+            k: defaults[k] for k in ('logo_id', 'remove_cta', 'remove_gameplay', 'remove_watermarks', 'rename_voice') if k in defaults},
+            'replace_name': 'Afizzy'}
 
     def upload(self, path, upload_id):
         path = Path(path)
@@ -463,6 +472,11 @@ class ReplicaAPI:
     def smart_logo(self, job, options):
         if options.get('logo_mode') != 'smart' or options.get('force_new'):
             raise ReplicaError('unsupported_action', 'Only smart Logo processing without forced regeneration is allowed')
+        return self.logo_replace(job, options)
+
+    def logo_replace(self, job, options):
+        if options.get('logo_mode') not in {'smart', 'auto'} or options.get('force_new'):
+            raise ReplicaError('unsupported_action', 'Only smart or automatic Logo matching without forced regeneration is allowed')
         result = self.request('POST', '/api/jobs/' + identifier(job['id']) + '/actions/logo_replace',
                               body={**options, 'revision': job['revision']})
         if result.get('id') != job['id'] or not isinstance(result.get('status'), str):
@@ -527,7 +541,7 @@ class ReplicaAPI:
         if not ids:
             raise ReplicaError('invalid_selection', 'No completed task was selected')
         languages = ['source'] if languages is None else languages
-        if (step not in {'logo', 'translation'} or not isinstance(languages, (list, tuple)) or not languages or
+        if (step not in {'logo', 'translation', 'assembly'} or not isinstance(languages, (list, tuple)) or not languages or
                 any(x not in TRANSLATION_LANGUAGES | {'source'} for x in languages) or
                 step == 'logo' and list(languages) != ['source']):
             raise ReplicaError('invalid_selection', 'Invalid download step or languages')

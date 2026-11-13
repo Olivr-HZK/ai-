@@ -66,6 +66,17 @@ class FakeAPI:
 
 
 class ReplicaHTTPTests(unittest.TestCase):
+    def test_logo_defaults_always_use_afizzy_brand_name(self):
+        transport = Mock()
+        transport.request.return_value = response({'logo_replace': {
+            'available': True,
+            'defaults': {'replace_name': 'Old Brand', 'logo_id': 'logo-default', 'remove_cta': True},
+        }})
+        options = ReplicaAPI(transport).smart_options()
+        self.assertEqual(options['replace_name'], 'Afizzy')
+        self.assertEqual(options['logo_id'], 'logo-default')
+        self.assertTrue(options['remove_cta'])
+
     def test_unavailable_logo_reports_server_reason_and_sends_no_action(self):
         transport = Mock()
         transport.request.return_value = response({'logo_replace': {
@@ -165,7 +176,7 @@ class ReplicaHTTPTests(unittest.TestCase):
         transport = Mock()
         client = ReplicaAPI(transport)
         for path in ['/api/jobs/job-a/actions/portraits', '/api/jobs/job-a/actions/videos',
-                     '/api/batch/all', '/api/jobs/job-a/actions/export', '/api/jobs/job-a/actions/analyze']:
+                     '/api/batch/all', '/api/jobs/job-a/actions/analyze']:
             with self.assertRaises(ReplicaError) as found:
                 client.request('POST', path, body={})
             self.assertEqual(found.exception.code, 'unsupported_endpoint')
@@ -372,6 +383,13 @@ class ReplicaBatchTests(unittest.TestCase):
         result = logo_many(self.api, ['busy', 'done'], self.checkpoint)
         self.assertEqual(self.api.logos, [])
         self.assertEqual(result['results'][1]['code'], 'already_done')
+
+    def test_existing_logo_with_unverified_requested_trim_needs_review(self):
+        self.api.jobs['done'] = {**ready('done'), 'logo_replace_view': {'state': 'replaced'}}
+        options = {'logo_mode': 'auto', 'remove_cta': True, 'remove_gameplay': True}
+        result = logo_many(self.api, ['done'], self.checkpoint, options=options, require_trim_match=True)
+        self.assertEqual(result['results'][0]['code'], 'needs_review')
+        self.assertEqual(self.api.logos, [])
 
     def test_checkpoint_account_binding(self):
         self.checkpoint.put('logos', 'job-a', {'stage': 'logo_accepted'})

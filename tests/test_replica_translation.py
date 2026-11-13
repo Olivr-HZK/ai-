@@ -203,11 +203,10 @@ class TranslationWorkflowTests(unittest.TestCase):
         self.assertEqual(self.api.puts, [])
         self.assertFalse(self.checkpoint.path.exists())
 
-    def test_cli_rejects_text_and_subtitle_generation(self):
-        for parts in (['text', 'voice'], ['subtitles']):
-            with self.subTest(parts=parts), contextlib.redirect_stderr(io.StringIO()):
-                with self.assertRaises(SystemExit):
-                    parser().parse_args(['translate', 'job-a', '--languages', 'ja', '--parts', *parts])
+    def test_cli_rejects_subtitle_generation(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parser().parse_args(['translate', 'job-a', '--languages', 'ja', '--parts', 'subtitles'])
         self.assertEqual(self.api.posts, [])
 
     def test_cli_status_defaults_to_voice_only(self):
@@ -263,15 +262,15 @@ class TranslationWorkflowTests(unittest.TestCase):
         self.assertEqual(self.api.puts, [])
         self.assertFalse((self.root / 'unused.json').exists())
 
-    def test_cli_defaults_full_original_voice_only_no_trim_and_no_put(self):
+    def test_cli_defaults_original_text_voice_and_both_trim_options(self):
         args=parser().parse_args(['--checkpoint',str(self.root/'state.json'),'translate','job-a','--languages','ko'])
         self.api.settings['enabled'].append('ko')
         result=execute(args,factory=lambda:self.api)
         self.assertTrue(result['results'][0]['ok'])
         self.assertEqual(self.api.puts,[])
         options=self.api.posts[0][1]
-        self.assertEqual(options['input'],'original');self.assertEqual(options['parts'],['voice'])
-        self.assertEqual(options['trim'],{'remove_cta':False,'remove_gameplay':False})
+        self.assertEqual(options['input'],'original');self.assertEqual(options['parts'],['text','voice'])
+        self.assertEqual(options['trim'],{'remove_cta':True,'remove_gameplay':True})
 
     def test_full_original_ignores_short_story_range_without_route_mutation(self):
         value=self.api.jobs['job-a'];value.update(source_file='source.mp4',analysis={'story':True},segments=[{'index':1,'start_s':0,'end_s':5}])

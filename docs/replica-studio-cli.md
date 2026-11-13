@@ -134,25 +134,29 @@
 
 2026-11-04按用户截图与当前公开前端请求参数修正：完整当前原视频通过翻译POST的`input=original`指定，不能用任务`video_route=source_video`替代。旧参数实测产出5秒日语片段，完整Logo输入为28.4秒，整片验收失败；随后以新参数完成一次28.4秒日语文字＋配音实测，输入输出时长一致、完整解码及本机日语识别通过；平台仍有66条文字复查提示，技术完成不等于人工效果验收。browser桥需支持`translation_original_v1`，旧桥在意图前报`bridge_upgrade_required`，不会派发错误输入。
 
-2026-11-10收回本地字幕试验，当前翻译入口统一为仅口播。以下命令使用独立断点，JOB_A/JOB_B替换为真实任务ID。
+当前测试分支的翻译入口默认同时翻译画面文字和口播，并请求去掉品牌片头、CTA 和玩法。换 Logo 后平台可能沿用已处理的视频，因此应在换 Logo 阶段先设置去除选项，完成后核对实际处理报告。
 
 ```sh
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json translate JOB_A JOB_B --languages ja ko --check-only
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json translate JOB_A JOB_B --languages ja ko --yes
-./scripts/replica-studio status JOB_A JOB_B --wait-for translation --languages ja ko --timeout 7200
+./scripts/replica-studio status JOB_A JOB_B --wait-for translation --languages ja ko --parts text voice --remove-brand-cta --remove-gameplay --timeout 7200
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json download JOB_A JOB_B --step translation --languages ja ko --output-dir /absolute/translated-results
 ```
 
 - `--languages`必填，使用文档语言代码，如ja/de/en；`hun`保持原兼容代码，不能写hu。目标语言需在工作区已启用；不自动开通语言或服务。
-- `translate`固定为`voice`，兼容显式`--parts voice`。`status`默认按`voice`等待，查询历史任务时可显式指定其原parts。
+- `translate`默认`text voice`，也可显式选择其中一项。`status`默认按历史的`voice`等待，查询新任务时指定其实际parts及去除选项。
 - `--source-language en`可显式指定原语言，否则沿任务翻译视图/服务端分析结果识别。口播翻译会排除目标中的原语言。`source`用于下载原语言产物。
 - `--check-only`只读会话、设置和任务，返回输入路线/就绪性、已有语言状态和是否需要显式切换路线；不保存付费意图、不PUT、不POST翻译。
-- 默认`--input original`直接翻译整条当前版本（含换Logo结果），显式提交`trim={remove_cta:false,remove_gameplay:false}`，翻译前不额外删除内容，不切换任务剧情路线。`--source-video`保留为完整原视频的兼容别名，同样不PUT；`--input swap`仅用于已生成的换人片段，不会自动生成片段。修改分析范围不是整片翻译的前置。
+- 默认`--input original`选择当前原视频版本（含换Logo结果），显式提交`trim={remove_cta:true,remove_gameplay:true}`。对于已换 Logo 的任务，以平台实际处理报告为准；`--source-video`是同一输入的兼容别名，不切换剧情路线。
 - 翻译POST与原账号/任务/语言/parts/原语言及input/trim绑定，先原子保存意图；多选逐任务入队，未知回执停止后续。重跑只读取原任务；看到匹配内容的真实产物或更高revision的明确运行态才恢复已提交状态，否则保持未知，不重发。已完成内容直接复用；失败/丢失结果不自动重做。新旧输入或内容参数不同、存在完成结果时不自动覆盖或新增付费请求。新增语言与尚未确认的旧请求重叠时先要求核对。
 - 等待按每个目标语言、parts和实际video_file/srt_file判断；通用completed、其他语言完成或仅字幕完成不被当作所需翻译视频完成。仅字幕模式不会等待不存在的视频。
 - 下载仍走逐文件计划，不调用拼接/export或一次性ZIP接口。视频按精确字节、SHA256及FFmpeg完整解码核验；字幕保留原UTF-8正文及换行并核对SHA256。按真实project_id建目录，字幕标记项目及所选任务集合，不猜测归属某条飞书记录。拒绝外站/未选任务/未选项目和路径穿越，不覆盖原文件；相同结果可复用。
 
-Python入口位于`ua_workflows.replica_translation`。`translate_voice_many(api, ids, checkpoint, languages, source_language=None, *, check_only=False, input_mode='original')`统一固定口播参数，默认完整输入及两项trim=false，并复用原付费意图日记、账号核验和恢复机制。`translation_status_many`默认parts为voice，`download_translations`负责原接口结果下载及媒体校验。主表的新翻译复用同一提交入口。低层`translate_many`保留历史参数恢复能力，CLI新提交仅开放voice。
+Python入口位于`ua_workflows.replica_translation`。历史`translate_voice_many`仍保留仅口播能力及旧断点恢复；本测试分支的主表监听尚未切换到新的拼接流程。
+
+显式自动匹配 Logo 可用 `logo JOB_A --mode auto --remove-brand-cta --remove-gameplay`。对应语言的成品拼接可用 `assemble JOB_A --languages source ja ko --check-only` 预检，再使用相同参数去掉 `--check-only` 提交。使用同一断点的 `assembly-status JOB_A` 检查，完成后以 `download-assembly JOB_A --output-dir /absolute/results` 下载。预检要求每个语言有可用 CTA，Logo 结果已含 CTA 时停止，避免重复拼接。未知回执不自动重发。
+
+测试分支也可对已上传的单个视频任务运行 `workflow JOB_A --languages ja ko --output-dir /absolute/results`。它先检查语言和 CTA，再按顺序处理自动匹配 Logo、核验输入、翻译和拼接；超时后使用同一断点续接。Logo 中间结果用于确认翻译输入，最终结果为各语言拼接成片。若平台返回的 CTA 或结果归属无法核验，流程保留断点等待复查。
 
 翻译接入时SDK、HTTP桥和翻译测试共69项通过；其中27项覆盖真实请求参数/鉴权、旧桥识别、窄PUT、额外生成禁止、多语言与原语言字幕、Logo结果的pending分析回退、只读预检、未知回执不重放/只读找回、旧断点兼容、语言/内容正确等待、不继承服务端remember_parts写偏好的默认值，以及真实本地视频完整解码与UTF-8字幕保存/重复下载、媒体归属及路径校验。与原批处理35项合计104项离线测试通过。
 
