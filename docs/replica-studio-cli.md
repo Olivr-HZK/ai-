@@ -19,7 +19,7 @@
 | `portrait ID IMAGE` | `POST /api/jobs/{identifier}/portrait/{source_id}` | 上传你提供的图片并设为指定角色当前参考图；不调用生图或视频生成 |
 | `logo ID...` | `POST /api/jobs/{identifier}/actions/logo_replace` | 多选任务逐条提交 `logo_mode=smart`，不重复付费请求 |
 | `translate ID...` | `POST /api/jobs/{identifier}/actions/translate` | 多任务/多语言翻译，支持文字、语音或仅字幕；先只读预检，意图落盘后提交 |
-| `translate --input original`（默认） | 同上，无PUT | 翻译完整当前原视频；`--source-video`为兼容别名，两个翻译前裁剪开关均false |
+| `translate --input original`（默认） | 同上，无PUT | 翻译当前原视频；`--source-video`为兼容别名，请求去掉品牌片头和CTA、保留玩法 |
 | `download ID...` | `POST /api/jobs/download/files`，再 GET 结果媒体 | 默认仍是原语言Logo结果；`--step translation --languages ...`下载翻译视频和字幕 |
 
 智能换 Logo 前只读 `GET /api/settings` 取得工作区默认值；翻译前读取翻译服务/文字能力/已启用语言，不写回设置、不调整并发或模型。翻译写请求不带force_new，不改变remember_parts偏好。人物参考图上传独立开放；没有添加人物图生成、视频换人生成、独立重复分析、完整一键生成或额外拼接命令，HTTP 白名单继续拒绝这些生成动作。PUT只允许revision与source_video路线两个字段。
@@ -134,12 +134,12 @@
 
 2026-11-04按用户截图与当前公开前端请求参数修正：完整当前原视频通过翻译POST的`input=original`指定，不能用任务`video_route=source_video`替代。旧参数实测产出5秒日语片段，完整Logo输入为28.4秒，整片验收失败；随后以新参数完成一次28.4秒日语文字＋配音实测，输入输出时长一致、完整解码及本机日语识别通过；平台仍有66条文字复查提示，技术完成不等于人工效果验收。browser桥需支持`translation_original_v1`，旧桥在意图前报`bridge_upgrade_required`，不会派发错误输入。
 
-当前测试分支的翻译入口默认同时翻译画面文字和口播，并请求去掉品牌片头、CTA 和玩法。换 Logo 后平台可能沿用已处理的视频，因此应在换 Logo 阶段先设置去除选项，完成后核对实际处理报告。
+当前翻译 CLI 默认同时翻译画面文字和口播，请求去掉品牌片头和 CTA，保留玩法。换 Logo 后平台可能沿用已处理的视频，应核对实际处理报告。
 
 ```sh
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json translate JOB_A JOB_B --languages ja ko --check-only
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json translate JOB_A JOB_B --languages ja ko --yes
-./scripts/replica-studio status JOB_A JOB_B --wait-for translation --languages ja ko --parts text voice --remove-brand-cta --remove-gameplay --timeout 7200
+./scripts/replica-studio status JOB_A JOB_B --wait-for translation --languages ja ko --parts text voice --remove-brand-cta --timeout 7200
 ./scripts/replica-studio --checkpoint data/replica-cli/translation-state.json download JOB_A JOB_B --step translation --languages ja ko --output-dir /absolute/translated-results
 ```
 
@@ -147,7 +147,7 @@
 - `translate`默认`text voice`，也可显式选择其中一项。`status`默认按历史的`voice`等待，查询新任务时指定其实际parts及去除选项。
 - `--source-language en`可显式指定原语言，否则沿任务翻译视图/服务端分析结果识别。口播翻译会排除目标中的原语言。`source`用于下载原语言产物。
 - `--check-only`只读会话、设置和任务，返回输入路线/就绪性、已有语言状态和是否需要显式切换路线；不保存付费意图、不PUT、不POST翻译。
-- 默认`--input original`选择当前原视频版本（含换Logo结果），显式提交`trim={remove_cta:true,remove_gameplay:true}`。对于已换 Logo 的任务，以平台实际处理报告为准；`--source-video`是同一输入的兼容别名，不切换剧情路线。
+- 默认`--input original`选择当前原视频版本（含换Logo结果），显式提交`trim={remove_cta:true,remove_gameplay:false}`。已换 Logo 的任务以平台实际处理报告为准；2026-11-16实测未去掉智能换 Logo 后接入的 CTA，继续拼接会出现两个 CTA。`--source-video`是同一输入的兼容别名，不切换剧情路线。
 - 翻译POST与原账号/任务/语言/parts/原语言及input/trim绑定，先原子保存意图；多选逐任务入队，未知回执停止后续。重跑只读取原任务；看到匹配内容的真实产物或更高revision的明确运行态才恢复已提交状态，否则保持未知，不重发。已完成内容直接复用；失败/丢失结果不自动重做。新旧输入或内容参数不同、存在完成结果时不自动覆盖或新增付费请求。新增语言与尚未确认的旧请求重叠时先要求核对。
 - 等待按每个目标语言、parts和实际video_file/srt_file判断；通用completed、其他语言完成或仅字幕完成不被当作所需翻译视频完成。仅字幕模式不会等待不存在的视频。
 - 下载仍走逐文件计划，不调用拼接/export或一次性ZIP接口。视频按精确字节、SHA256及FFmpeg完整解码核验；字幕保留原UTF-8正文及换行并核对SHA256。按真实project_id建目录，字幕标记项目及所选任务集合，不猜测归属某条飞书记录。拒绝外站/未选任务/未选项目和路径穿越，不覆盖原文件；相同结果可复用。

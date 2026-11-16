@@ -19,6 +19,7 @@ from ua_workflows.social_chat_media_orientation import require_non_landscape
 from ua_workflows.social_chat_replica import APP, check_record, upload_attachment
 
 TRANSLATION_TRIM = FULL_VIDEO_TRIM
+TESTED_TRIM = {'remove_cta': True, 'remove_gameplay': False}
 
 
 def _same_attachments(row, field, files):
@@ -60,6 +61,16 @@ class MainTranslationMixin:
         # In-flight historical tasks must be polled against their submitted parts.
         attempts = (self.checkpoint.get('translations', job_id) or {}).get('attempts') or []
         return list(attempts[-1]['options']['parts']) if attempts else list(VOICE_PARTS)
+
+    def translation_options_for(self, value):
+        item = self.state.items[value['record_id']]
+        attempts = (self.checkpoint.get('translations', value['job_id']) or {}).get('attempts') or []
+        if attempts:
+            options = attempts[-1]['options']
+            return list(options['parts']), options.get('trim', FULL_VIDEO_TRIM)
+        if item.get('translation_policy') == 'text-voice-remove-cta-v1':
+            return ['text', 'voice'], TESTED_TRIM
+        return list(VOICE_PARTS), FULL_VIDEO_TRIM
 
     def uses_translation(self,value):
         return (self.state.items[value['record_id']]['action']=='替换语言'
@@ -114,9 +125,10 @@ class MainTranslationMixin:
                 'url':'/api/jobs/'+job['id']+'/files/'+source},self.state.root/'translation-input-proof'/job['id']/'source.mp4')
             if receipt['sha256']!=logo['sha256']:
                 raise ReplicaError('invalid_media','当前翻译源不是换Logo成品，未提交翻译')
+            _, trim = self.translation_options_for(value)
             proof={'revision':job['revision'],'selected_video_file':source,'logo_result_file':view['result_file'],
                    'sha256':logo['sha256'],'size':logo['size'],'matches_logo':True,
-                   'input':'original','trim':dict(TRANSLATION_TRIM),'duration_seconds':video_duration(receipt['path'])}
+                   'input':'original','trim':dict(trim),'duration_seconds':video_duration(receipt['path'])}
             value.update(translation_input_proof=proof,logo_intermediate=logo)
             value.pop('error',None);value.pop('translation_input_check_after',None);self.state.put(rid,value)
             return self._eligible(rid)
@@ -133,11 +145,12 @@ class MainTranslationMixin:
     def submit_translation(self, job_id, item):
         value=next(v for v in self.state.all() if v.get('job_id')==job_id)
         prior=self.checkpoint.get('translations',job_id) or {}
+        parts, trim = self.translation_options_for(value)
         if prior.get('attempts'):
             covered = {language for attempt in prior['attempts'] for language in attempt['options']['languages']}
             if set(item['languages']) <= covered:
-                return translate_many(self.api,[job_id],self.checkpoint,item['languages'],parts=self.translation_parts(job_id),
-                                      input_mode='original',trim=TRANSLATION_TRIM)
+                return translate_many(self.api,[job_id],self.checkpoint,item['languages'],parts=parts,
+                                      input_mode='original',trim=trim)
         if not self.uses_translation(value) or not (value.get('translation_input_proof') or {}).get('matches_logo'):
             return {'results':[{'id':job_id,'ok':False,'code':'invalid_translation','message':'必须先核验换Logo成品，再提交翻译'}]}
         job=self.api.job(job_id)
@@ -148,6 +161,9 @@ class MainTranslationMixin:
         if source in item['languages']:
             return {'results':[{'id':job_id,'ok':False,'code':'invalid_translation',
                                 'message':'目标语言包含原视频语言，请选择不同语言；未提交翻译'}]}
+        if item.get('translation_policy') == 'text-voice-remove-cta-v1':
+            return translate_many(self.api, [job_id], self.checkpoint, item['languages'], parts=parts,
+                                  input_mode='original', trim=trim)
         return translate_voice_many(self.api, [job_id], self.checkpoint, item['languages'])
 
     def poll(self, record_ids=None):
@@ -158,7 +174,8 @@ class MainTranslationMixin:
             if value['stage'] not in {'logo_accepted','logo_submitting'}:
                 continue
             job=self.api.job(value['job_id'])
-            states={lang:language_state(job,lang,self.translation_parts(value['job_id']),input_mode='original',trim=TRANSLATION_TRIM)
+            parts, trim = self.translation_options_for(value)
+            states={lang:language_state(job,lang,parts,input_mode='original',trim=trim)
                     for lang in item['languages']}
             value.update(last_status=job.get('status'),last_message=job.get('message'),translation_states=states)
             if all(s=='ready' for s in states.values()):

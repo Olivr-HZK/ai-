@@ -222,6 +222,8 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
                     raise DemandBlocked('本行已有执行标识，但本机缺少原断点，先核对，不重复提交')
                 else:
                     item.update(execution_id=str(uuid.uuid4()), requested_at=self.now(), trigger_mode='request_type')
+                    if item['action'] == '替换语言' and item.get('engine') != 'videolab':
+                        item['translation_policy'] = 'text-voice-remove-cta-v1'
                     save_private(path, item)
                 current = self._write_fields(rid, {EXECUTION: item['execution_id'],
                     PROGRESS: '上传中', MESSAGE: ('已检测到图片替换logo需求，等待Video Lab GPT Image 2'
@@ -266,9 +268,13 @@ class MainRunner(MainImagesMixin, MainTranslationMixin, RequestRunner):
                     raise DemandBlocked('原任务或已有附件已变化')
                 item = saved
             else:
+                existing_translations = (job.get('translation') or {}).get('languages') or {}
+                legacy = any(entry.get('status') == 'completed' and set(entry.get('parts') or ['voice']) == {'voice'}
+                             for entry in existing_translations.values())
                 item.update(execution_id=str(uuid.uuid4()), requested_at=self.now(), trigger_mode='request_type',
                             existing_attachments=attachments,
-                            existing_logo={'job_id': job_id, 'result_file': view['result_file']})
+                            existing_logo={'job_id': job_id, 'result_file': view['result_file']},
+                            translation_policy='legacy-voice' if legacy else 'text-voice-remove-cta-v1')
                 save_private(path, item)
             current = self._write_fields(rid, {EXECUTION: item['execution_id'], PROGRESS: '复刻中',
                                                 MESSAGE: '已检测到Logo成品，等待核验并翻译口播'})

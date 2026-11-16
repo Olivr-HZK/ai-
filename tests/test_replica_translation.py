@@ -262,7 +262,7 @@ class TranslationWorkflowTests(unittest.TestCase):
         self.assertEqual(self.api.puts, [])
         self.assertFalse((self.root / 'unused.json').exists())
 
-    def test_cli_defaults_original_text_voice_and_both_trim_options(self):
+    def test_cli_defaults_original_text_voice_remove_cta_keep_gameplay(self):
         args=parser().parse_args(['--checkpoint',str(self.root/'state.json'),'translate','job-a','--languages','ko'])
         self.api.settings['enabled'].append('ko')
         result=execute(args,factory=lambda:self.api)
@@ -270,7 +270,7 @@ class TranslationWorkflowTests(unittest.TestCase):
         self.assertEqual(self.api.puts,[])
         options=self.api.posts[0][1]
         self.assertEqual(options['input'],'original');self.assertEqual(options['parts'],['text','voice'])
-        self.assertEqual(options['trim'],{'remove_cta':True,'remove_gameplay':True})
+        self.assertEqual(options['trim'],{'remove_cta':True,'remove_gameplay':False})
 
     def test_full_original_ignores_short_story_range_without_route_mutation(self):
         value=self.api.jobs['job-a'];value.update(source_file='source.mp4',analysis={'story':True},segments=[{'index':1,'start_s':0,'end_s':5}])

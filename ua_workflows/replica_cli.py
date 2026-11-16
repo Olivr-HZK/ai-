@@ -492,7 +492,7 @@ def execute(args, factory=None):
             raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
         return translate_many(api, args.ids, None, args.languages, args.parts, args.source_language,
                               input_mode=args.translation_input,
-                              trim={'remove_cta': True, 'remove_gameplay': True} if args.translation_input == 'original' else None,
+                              trim={'remove_cta': True, 'remove_gameplay': False} if args.translation_input == 'original' else None,
                               check_only=True)
     with operation_lock(args.checkpoint):
         checkpoint = Checkpoint(args.checkpoint, auth['account_id'])
@@ -535,7 +535,7 @@ def execute(args, factory=None):
                 raise ReplicaError('invalid_translation', '--source-video cannot select swap input')
             return translate_many(api, args.ids, checkpoint, args.languages, args.parts, args.source_language,
                                   input_mode=args.translation_input,
-                                  trim={'remove_cta': True, 'remove_gameplay': True} if args.translation_input == 'original' else None)
+                                  trim={'remove_cta': True, 'remove_gameplay': False} if args.translation_input == 'original' else None)
         if args.command == 'download':
             if args.step == 'translation':
                 from ua_workflows.replica_translation import download_translations

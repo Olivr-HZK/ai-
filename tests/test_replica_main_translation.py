@@ -12,6 +12,20 @@ from ua_workflows.replica_studio_api import save_private
 
 
 class TranslationTests(MainFixture):
+    async def test_policy_preserves_original_attempt_options(self):
+        self.translation(('日语',))
+        self.runner._admit()
+        value = self.state.get('recMain')
+        value['job_id'] = 'job-source'
+        self.state.put('recMain', value)
+        self.assertEqual(self.runner.translation_options_for(value),
+                         (['text', 'voice'], {'remove_cta': True, 'remove_gameplay': False}))
+        self.runner.checkpoint.put('translations', 'job-source', {'attempts': [{
+            'stage': 'accepted', 'options': {'parts': ['voice'],
+                'trim': {'remove_cta': False, 'remove_gameplay': False}, 'languages': ['ja']}}]})
+        self.assertEqual(self.runner.translation_options_for(value),
+                         (['voice'], {'remove_cta': False, 'remove_gameplay': False}))
+
     def translation(self,languages=('日语','德语')):
         self.client.rows['recMain']=row(None,'替换语言')
         self.client.rows['recMain']['fields'][main.LANGUAGE]=list(languages)
@@ -118,8 +132,8 @@ class TranslationTests(MainFixture):
         self.assertEqual(self.backend.translations,[('job-source',['ja','de'])])
         self.assertEqual(self.backend.routes,set())
         self.assertEqual(self.backend.translation_options['job-source']['input'],'original')
-        self.assertEqual(self.backend.translation_options['job-source']['parts'],['voice'])
-        self.assertEqual(self.backend.translation_options['job-source']['trim'],{'remove_cta':False,'remove_gameplay':False})
+        self.assertEqual(self.backend.translation_options['job-source']['parts'],['text','voice'])
+        self.assertEqual(self.backend.translation_options['job-source']['trim'],{'remove_cta':True,'remove_gameplay':False})
         events=[e[0] for e in self.backend.events]
         self.assertLess(events.index('logo'),events.index('verify-logo-input'))
         self.assertLess(events.index('verify-logo-input'),events.index('translate'))

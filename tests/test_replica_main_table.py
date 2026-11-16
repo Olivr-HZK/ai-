@@ -153,7 +153,7 @@ class MainTests(MainFixture):
         await self.until(lambda: self.state.get('recMain')['stage'] == 'verified' if self.state.items else False)
         self.assertEqual(self.backend.logos, ['job-source'])
         self.assertEqual(self.backend.translations, [('job-source', ['ja'])])
-        self.assertEqual(self.backend.translation_options['job-source']['parts'], ['voice'])
+        self.assertEqual(self.backend.translation_options['job-source']['parts'], ['text', 'voice'])
 
     async def test_multiselect_logo_only_is_admitted(self):
         self.client.rows['recMain'] = row(None, '替换logo')
