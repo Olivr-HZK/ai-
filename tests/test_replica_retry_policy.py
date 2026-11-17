@@ -35,18 +35,18 @@ class RetryHTTPTests(unittest.TestCase):
         self.server.overrides['POST', '/api/jobs'] = (
             503, {'detail': '工作区正在准备，请稍后'}, {'Retry-After': '30'})
         with patch('ua_workflows.replica_cli.time.time', side_effect=lambda: now[0]):
-            first = self.command('upload', str(self.source))
+            first = self.command('upload', str(self.source), '--yes')
             self.assertEqual(first['accepted'], 0)
             self.assertEqual(first['results'][0]['code'], 'temporarily_rejected')
             record = self.upload_record()
             self.assertEqual(record['stage'], 'upload_retry')
             self.assertTrue(record['request_not_applied'])
             self.assertEqual(record['retry_at'], 1030)
-            self.command('upload', str(self.source))
+            self.command('upload', str(self.source), '--yes')
             self.assertEqual(len(self.calls('POST', '/api/jobs')), 1)
             self.server.overrides.pop(('POST', '/api/jobs'))
             now[0] = 1031
-            self.assertEqual(self.command('upload', str(self.source))['accepted'], 1)
+            self.assertEqual(self.command('upload', str(self.source), '--yes')['accepted'], 1)
         requests_sent = self.calls('POST', '/api/jobs')
         self.assertEqual(len(requests_sent), 2)
         self.assertEqual({r.headers['X-Replica-Upload-Id'] for r in requests_sent}, {record['request_id']})
@@ -58,28 +58,28 @@ class RetryHTTPTests(unittest.TestCase):
         upload_id = 'a' * 32
         self.server.overrides['GET', '/api/source-uploads/' + upload_id] = (404, {})
         with patch('ua_workflows.replica_cli.secrets.token_hex', return_value=upload_id):
-            self.command('upload', str(self.source))
-            self.command('upload', str(self.source))
+            self.command('upload', str(self.source), '--yes')
+            self.command('upload', str(self.source), '--yes')
         self.assertEqual(self.upload_record()['stage'], 'upload_unknown')
         self.assertEqual(len(self.calls('POST', '/api/jobs')), 1)
         self.assertFalse(self.upload_record().get('request_not_applied'))
 
     def test_rate_limited_upload_retries_original_id_after_restart(self):
         self.server.overrides['POST', '/api/jobs'] = (429, {}, {'Retry-After': '90'})
-        first = self.command('upload', str(self.source))
+        first = self.command('upload', str(self.source), '--yes')
         self.assertEqual(first['results'][0]['retry_after'], 90)
         original = self.upload_record()
         self.assertEqual(original['stage'], 'upload_retry')
         # Reloading CLI/checkpoint alone must not turn the rejection into a new ID.
         self.server.overrides.pop(('POST', '/api/jobs'))
         with patch('ua_workflows.replica_cli.time.time', return_value=original['retry_at'] + 1):
-            self.assertEqual(self.command('upload', str(self.source))['accepted'], 1)
+            self.assertEqual(self.command('upload', str(self.source), '--yes')['accepted'], 1)
         self.assertEqual({r.headers['X-Replica-Upload-Id'] for r in self.calls('POST', '/api/jobs')},
                          {original['request_id']})
 
     def test_old_rejection_proof_cannot_replay_a_later_unknown_attempt(self):
         self.server.overrides['POST', '/api/jobs'] = (429, {}, {'Retry-After': '2'})
-        self.command('upload', str(self.source))
+        self.command('upload', str(self.source), '--yes')
         first = self.upload_record()
         self.server.overrides['GET', '/api/source-uploads/' + first['request_id']] = (404, {})
         self.server.overrides['POST', '/api/jobs'] = requests.Timeout('Later response lost')
@@ -92,18 +92,18 @@ class RetryHTTPTests(unittest.TestCase):
             return original_send(request, **kwargs)
         self.server.send = check_boundary
         with patch('ua_workflows.replica_cli.time.time', return_value=first['retry_at'] + 1):
-            self.command('upload', str(self.source))
-            self.command('upload', str(self.source))
+            self.command('upload', str(self.source), '--yes')
+            self.command('upload', str(self.source), '--yes')
         self.assertEqual(self.upload_record()['stage'], 'upload_unknown')
         self.assertEqual(len(self.calls('POST', '/api/jobs')), 2)
 
     def test_permanent_400_upload_rejection_is_not_automatically_retried(self):
         self.server.overrides['POST', '/api/jobs'] = (400, {'detail': 'Invalid video'})
-        self.command('upload', str(self.source))
+        self.command('upload', str(self.source), '--yes')
         self.assertEqual(self.upload_record()['stage'], 'upload_rejected')
         upload_id = self.upload_record()['request_id']
         self.server.overrides['GET', '/api/source-uploads/' + upload_id] = (404, {})
-        self.command('upload', str(self.source))
+        self.command('upload', str(self.source), '--yes')
         self.assertEqual(len(self.calls('POST', '/api/jobs')), 1)
 
     def test_get_503_returns_server_wait_without_blocking_inside_http(self):

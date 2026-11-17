@@ -24,6 +24,7 @@ BASE_URL = 'https://replica-studio.upupup.today'
 BUSY = {'queued', 'analyzing', 'planning', 'making_images', 'making_portraits',
         'generating', 'exporting', 'translating', 'replacing_logo'}
 TRANSLATION_LANGUAGES = frozenset('zh en ja de fr ko ru uk pt it es id nl tr fil ms el fi hr sk pl sv hi bg ro ar cs da ta hun vi th yue'.split())
+SWAP_OPTIONS = {'video_route': 'model_swap', 'force_new': False, 'subtitle_erase': False}
 
 
 def translation_options(languages, parts=('voice',), source_language=None, *, input_mode=None, trim=None):
@@ -76,6 +77,14 @@ def validate_workflow_body(method, path, body):
                 or not isinstance(body['languages'], list) or not body['languages']
                 or any(lang not in TRANSLATION_LANGUAGES | {'source'} for lang in body['languages'])):
             raise ReplicaError('unsupported_action', 'Export must use the selected languages and language-specific CTA')
+    if method == 'POST' and path.endswith('/actions/analyze'):
+        if not isinstance(body, dict) or set(body) - {'force_new'} or body.get('force_new') not in (False, None):
+            raise ReplicaError('unsupported_action', 'Re-analysis cannot force a new run')
+    if method == 'POST' and path.endswith('/actions/videos'):
+        if (not isinstance(body, dict) or set(body) != {*SWAP_OPTIONS, 'revision'}
+                or body['video_route'] != 'model_swap' or body['force_new'] is not False
+                or body['subtitle_erase'] is not False or type(body['revision']) is not int or body['revision'] < 0):
+            raise ReplicaError('unsupported_action', 'Only model_swap without regeneration or subtitle erasure is allowed')
 
 
 class ReplicaError(RuntimeError):
@@ -120,7 +129,7 @@ def allowed(method, path):
     if method == 'PUT':
         return bool(re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}', path))
     return method == 'POST' and (path in {'/api/jobs', '/api/jobs/download/files'} or bool(
-        re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate|export)', path) or portrait_path(path)))
+        re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate|export|videos|analyze)', path) or portrait_path(path)))
 
 
 def portrait_path(path):
@@ -273,6 +282,9 @@ class ReplicaAPI:
     def request(self, method, path, *, body=None, files=None, headers=None, safe_retry=False):
         if not allowed(method, path):
             raise ReplicaError('unsupported_endpoint', 'Endpoint outside analysis / smart-Logo / translation workflow')
+        swap = method == 'POST' and path.endswith('/actions/videos')
+        if swap and (not self.device_auth or files is not None):
+            raise ReplicaError('unsupported_endpoint', 'Video swap requires device authorization and JSON')
         validate_workflow_body(method, path, body)
         if method == 'POST' and portrait_path(path):
             if not files or set(files) != {'file'} or body:
@@ -287,7 +299,7 @@ class ReplicaAPI:
             if not self.account or (not self.device_auth and not self.csrf):
                 raise ReplicaError('authentication_required', 'Authenticate the HTTP session before submitting work')
             if self.device_auth:
-                if re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate|export)', path):
+                if re.fullmatch(r'/api/jobs/[A-Za-z0-9_-]{1,64}/actions/(logo_replace|translate|export|videos|analyze)', path):
                     if not self.confirm_paid:
                         raise ReplicaError('confirmation_required', 'Device-authorized paid actions require --yes')
                     request_headers['X-Replica-Confirm'] = 'paid'
@@ -406,10 +418,13 @@ class ReplicaAPI:
             raise ReplicaError('invalid_upload_id', 'Invalid upload identity')
         if path.suffix.lower() not in {'.mp4', '.mov', '.webm', '.mkv'} or not 0 < path.stat().st_size <= 100 * 1024 * 1024:
             raise ReplicaError('invalid_source', 'Source video does not meet the upload contract')
+        headers = {'X-Replica-Upload-Id': upload_id}
+        if self.device_auth and self.confirm_paid:
+            headers['X-Replica-Confirm'] = 'paid'
         with path.open('rb') as stream:
             result = self.request('POST', '/api/jobs', body={'variants': '1', 'character': '', 'auto_analyze': 'true'},
                                   files={'files': (path.name, stream, 'application/octet-stream')},
-                                  headers={'X-Replica-Upload-Id': upload_id})
+                                  headers=headers)
         return self.validate_upload(result, upload_id)
 
     @staticmethod
@@ -482,6 +497,23 @@ class ReplicaAPI:
         if result.get('id') != job['id'] or not isinstance(result.get('status'), str):
             raise ReplicaError('result_unknown', 'Smart Logo receipt could not be confirmed')
         return {k: result[k] for k in ('id', 'status', 'revision', 'last_action', 'generation_skipped') if k in result}
+
+    def reanalyze(self, job):
+        """Re-run analysis on the job's current video (after Logo replacement)."""
+        result = self.request('POST', '/api/jobs/' + identifier(job['id']) + '/actions/analyze',
+                              body={'force_new': False})
+        if result.get('id') != job['id'] or result.get('error'):
+            raise ReplicaError('result_unknown', 'Re-analysis receipt could not be confirmed')
+        return {k: result[k] for k in ('id', 'status', 'revision', 'last_action', 'batch') if k in result}
+
+    def swap_video(self, job):
+        result = self.request('POST', '/api/jobs/' + identifier(job['id']) + '/actions/videos',
+                              body={**SWAP_OPTIONS, 'revision': job['revision']})
+        if (result.get('id') != job['id'] or not isinstance(result.get('status'), str)
+                or type(result.get('revision')) is not int or result['revision'] < job['revision']):
+            raise ReplicaError('result_unknown', 'Video swap receipt could not be confirmed')
+        return {key: result[key] for key in
+                ('id', 'status', 'revision', 'last_action', 'queue_ticket', 'generation_skipped') if key in result}
 
     def require_translation_transport(self):
         capabilities = vars(self.session).get('replica_capabilities')

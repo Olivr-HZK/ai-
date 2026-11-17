@@ -205,7 +205,8 @@ class Broker:
         method, path = value.get('method'), value.get('path', '')
         parsed = urlsplit(path)
         media = re.fullmatch(r'/api/jobs/([A-Za-z0-9_-]{1,64})/files/.+', parsed.path)
-        if parsed.scheme or parsed.netloc or not (allowed(method, parsed.path) or (method == 'GET' and media)):
+        if (parsed.scheme or parsed.netloc or (method == 'POST' and parsed.path.endswith('/actions/videos'))
+                or not (allowed(method, parsed.path) or (method == 'GET' and media))):
             raise ValueError('Unsupported API operation')
         if media:
             media_url(BASE_URL + path, media[1])

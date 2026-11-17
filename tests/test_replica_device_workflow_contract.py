@@ -141,7 +141,7 @@ class DeviceWorkflowContractTests(unittest.TestCase):
                 self.assertNotIn(key, request.headers)
 
     def test_full_cli_workflow_uses_device_auth_and_preserves_original_defaults(self):
-        self.assertEqual(self.command('upload', str(self.source))['accepted'], 1)
+        self.assertEqual(self.command('upload', str(self.source), '--yes')['accepted'], 1)
         status = self.command('status', JOB, '--wait-for', 'analysis')
         self.assertTrue(status['results'][0]['ok'])
         self.assertTrue(self.command('logo', JOB, '--yes')['results'][0]['ok'])
@@ -168,15 +168,15 @@ class DeviceWorkflowContractTests(unittest.TestCase):
         self.assertEqual(body['revision'], 8)
         self.assertFalse(body['remove_watermarks'])  # Preserve the platform default.
         self.assertEqual(logo.headers['X-Replica-Confirm'], 'paid')
-        self.assertNotIn('X-Replica-Confirm', upload.headers)
+        self.assertEqual(upload.headers['X-Replica-Confirm'], 'paid')
         plan = self.calls('POST', '/api/jobs/download/files')[0]
         self.assertEqual(json.loads(plan.body), {'ids': [JOB], 'languages': ['source'], 'step': 'logo'})
         self.assertNotIn('X-Replica-Confirm', plan.headers)
         self.assert_device_headers()
 
     def test_repeating_confirmed_cli_work_does_not_upload_or_generate_twice(self):
-        self.command('upload', str(self.source))
-        self.command('upload', str(self.source))
+        self.command('upload', str(self.source), '--yes')
+        self.command('upload', str(self.source), '--yes')
         self.command('logo', JOB, '--yes')
         self.command('logo', JOB, '--yes')
         self.assertEqual(len(self.calls('POST', '/api/jobs')), 1)
@@ -213,7 +213,7 @@ class DeviceWorkflowContractTests(unittest.TestCase):
 
     def test_upload_denial_is_not_reported_as_uploaded(self):
         self.server.overrides['POST', '/api/jobs'] = (403, {'detail': 'Mock upload scope denied'})
-        result = self.command('upload', str(self.source))
+        result = self.command('upload', str(self.source), '--yes')
         self.assertEqual(result['accepted'], 0)
         self.assertTrue(result['stopped'])
         self.assertEqual(result['results'][0]['code'], 'permission_denied')

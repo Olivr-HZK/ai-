@@ -266,7 +266,11 @@ def status_many(api, ids, *, stage=None, timeout=3600, interval=3.5, include_ana
                 job = api.job(job_id)
                 fields = PUBLIC_JOB_FIELDS + (('analysis',) if include_analysis else ())
                 item = {'id': job_id, 'ok': True, 'job': {k: job[k] for k in fields if k in job}}
-                state = step_state(job, stage) if stage else None
+                if stage == 'swap':
+                    from ua_workflows.replica_swap import swap_status
+                    state, item['job']['segments'] = swap_status(job)
+                else:
+                    state = step_state(job, stage) if stage else None
                 if stage:
                     item['step_state'] = state
                     if state in {'error', 'review'}:
@@ -278,7 +282,7 @@ def status_many(api, ids, *, stage=None, timeout=3600, interval=3.5, include_ana
                 results[job_id] = {'id': job_id, **error_result(error)}
                 if error.code in {'authentication_required', 'account_changed', 'permission_denied'}:
                     return {'operation': 'status', 'results': list(results.values()), 'pending': sorted(pending), 'state': 'authentication_required'}
-                if not stage:
+                if not stage or (stage == 'swap' and error.code in {'invalid_response', 'unsupported_action'}):
                     pending.remove(job_id)
         if not pending or not stage:
             break
@@ -364,11 +368,12 @@ def parser():
     sub.add_parser('logout', help='仅删除本机设备令牌；服务端撤销请到工作台 /cli 页面')
     upload = sub.add_parser('upload', help='单线程连续提交全部文件，每文件1组、自动分析，由服务端排队处理')
     upload.add_argument('files', nargs='+', type=Path)
+    upload.add_argument('--yes', action='store_true', help='设备授权模式下确认提交付费自动分析')
     uploaded = sub.add_parser('upload-status', help='只读核对原上传标识；404不代表未发生')
     uploaded.add_argument('request_id')
-    status = sub.add_parser('status', help='读取多任务状态；可等待分析或智能换 Logo 完成')
+    status = sub.add_parser('status', help='读取多任务状态；可等待分析、换 Logo、换人或翻译完成')
     status.add_argument('ids', nargs='+')
-    status.add_argument('--wait-for', choices=['analysis', 'logo', 'translation'])
+    status.add_argument('--wait-for', choices=['analysis', 'logo', 'swap', 'translation'])
     status.add_argument('--languages', nargs='+', help='等待翻译时指定语言，如 de ja')
     status.add_argument('--parts', nargs='+', choices=['text', 'voice', 'subtitles'], default=['voice'])
     status.add_argument('--input', dest='translation_input', choices=['original', 'swap'], default='original',
@@ -393,6 +398,11 @@ def parser():
     portrait.add_argument('--source-id', help='多角色任务必须指定；单角色自动选择唯一角色')
     portrait.add_argument('--replace', action='store_true', help='允许更换此前已确认的参考图；未知上传仍只读核对')
     portrait.add_argument('--check-only', action='store_true', help='只检查图片与角色映射，不上传或写断点')
+    swap = sub.add_parser('swap', help='用当前参考图提交视频换人片段生成')
+    swap.add_argument('id')
+    mode = swap.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--check-only', action='store_true', help='只读检查人物图、片段和替换规则')
+    mode.add_argument('--yes', action='store_true', help='确认提交付费视频换人')
     translate = sub.add_parser('translate', help='翻译当前视频的画面文字和口播')
     translate.add_argument('ids', nargs='+')
     translate.add_argument('--languages', nargs='+', required=True)
@@ -462,7 +472,7 @@ def execute(args, factory=None):
     auth = api.authenticate()
     if args.command in {'session', 'whoami'}:
         return {'operation': 'session', 'authenticated': True, **auth}
-    if (auth.get('auth_mode') == 'device' and args.command in {'logo', 'translate', 'assemble', 'workflow'}
+    if (auth.get('auth_mode') == 'device' and args.command in {'upload', 'logo', 'translate', 'assemble', 'workflow', 'swap'}
             and not getattr(args, 'check_only', False) and not args.yes):
         raise ReplicaError('confirmation_required', 'Device-authorized paid actions require --yes')
     if args.command == 'upload-status':
@@ -476,6 +486,9 @@ def execute(args, factory=None):
     if args.command == 'assemble' and args.check_only:
         from ua_workflows.replica_assembly import assemble_one
         return assemble_one(api, args.id, None, args.languages, check_only=True)
+    if args.command == 'swap' and args.check_only:
+        from ua_workflows.replica_swap import swap_video
+        return swap_video(api, args.id, auth, check_only=True)
     if args.command == 'status':
         if args.timeout <= 0 or args.interval <= 0:
             raise ReplicaError('invalid_input', 'Timeout and polling interval must be positive')
@@ -529,6 +542,9 @@ def execute(args, factory=None):
                 if result['state'] in {'downloaded', 'unknown'} or time.monotonic() - started >= args.timeout:
                     return result
                 time.sleep(min(args.interval, max(0, args.timeout - (time.monotonic() - started))))
+        if args.command == 'swap':
+            from ua_workflows.replica_swap import swap_video
+            return swap_video(api, args.id, auth, checkpoint)
         if args.command == 'translate':
             from ua_workflows.replica_translation import translate_many
             if args.source_video and args.translation_input != 'original':

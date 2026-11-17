@@ -308,7 +308,7 @@ class DeviceTransportTests(unittest.TestCase):
         with patch.object(requests.Session,'request',side_effect=requests.Timeout()) as http:
             with self.assertRaises(ReplicaError) as error:api.smart_logo({'id':'job-a','revision':8},{'logo_mode':'smart'})
             self.assertEqual(error.exception.code,'result_unknown');self.assertEqual(http.call_count,1)
-        for path in ('/api/jobs/job-a/actions/videos','/api/jobs/job-a/actions/portraits','/api/batch/all'):
+        for path in ('/api/jobs/job-a/actions/portraits','/api/batch/all'):
             with self.assertRaises(ReplicaError):api.request('POST',path,body={})
 
 
@@ -371,6 +371,7 @@ class DeviceCommandTests(unittest.TestCase):
 
     def test_paid_flag_is_forwarded_to_configured_sdk_and_identity_alias_is_safe(self):
         api=Mock();api.authenticate.return_value={'account_id':'account-a','auth_mode':'device'}
+        api.smart_options.return_value={'logo_mode':'smart'}
         with patch.object(ReplicaAPI,'configured',return_value=api) as configured:
             result=execute(parser().parse_args(['whoami']))
         self.assertEqual(result['auth_mode'],'device');self.assertFalse(configured.call_args.kwargs['confirm_paid'])
