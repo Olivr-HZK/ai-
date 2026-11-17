@@ -96,8 +96,17 @@ def main():
     try:
         while True:
             started = time.time()
-            rows = feishu.call('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
-                               params={'page_size': 500, 'user_id_type': 'open_id'}, json={}).get('items', [])
+            try:
+                rows = feishu.call('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
+                                   params={'page_size': 500, 'user_id_type': 'open_id'}, json={}).get('items', [])
+            except Exception as error:  # 飞书读超时不结束进程，下一轮再试
+                with log_path.open('a') as log:
+                    log.write(f'{time.strftime("%Y-%m-%dT%H:%M:%S")} 读取失败 {type(error).__name__}: {error}\n')
+                print('读取失败，稍后重试：', error, flush=True)
+                if args.once:
+                    return 1
+                time.sleep(max(1.0, args.interval))
+                continue
             items, counts = [], {}
             for row in rows:
                 f = row['fields']
