@@ -73,8 +73,21 @@ def main():
 
     lock = run_dir / 'watch.lock'
     if lock.exists():
-        print('另一个监听在跑：' + str(lock), file=sys.stderr)
-        return 1
+        try:
+            alive = int(lock.read_text().strip() or 0)
+        except ValueError:
+            alive = 0
+        running = False
+        if alive > 0:
+            try:
+                os.kill(alive, 0)
+                running = True
+            except OSError:
+                running = False
+        if running:
+            print('另一个监听在跑：' + str(lock), file=sys.stderr)
+            return 1
+        lock.unlink(missing_ok=True)  # 上次进程已死，清掉陈旧锁
     lock.write_text(str(os.getpid()))
 
     feishu = Feishu()
@@ -105,7 +118,9 @@ def main():
                 steps = []
                 note = ''
                 progress = text(f.get('复刻状态')) or text(f.get('执行进度'))
-                if status != ACCEPTED:
+                if kind and kind != '替换人物':
+                    note = f'主表负责（{kind}），换人表只接替换人物'
+                elif status != ACCEPTED:
                     note = f'跳过：需求状态={status or "空"}'
                 elif progress == '已完成':
                     note = '跳过：已完成'
