@@ -75,7 +75,8 @@ def fingerprint(fields):
 
 
 class Runner:
-    def __init__(self, run_dir: Path, feishu: Feishu, api: ReplicaAPI, auth, dry: bool):
+    def __init__(self, run_dir: Path, feishu: Feishu, api: ReplicaAPI, auth, dry: bool, auth_mode=None):
+        self.auth_mode = auth_mode
         self.dir = run_dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self.feishu = feishu
@@ -86,7 +87,8 @@ class Runner:
 
     # ---------- 基础 ----------
     def cli(self, *args, timeout=1800):
-        cmd = ['./scripts/replica-studio', '--auth-mode', 'device', '--checkpoint', str(self.ck.path), *args]
+        mode = ['--auth-mode', self.auth_mode] if self.auth_mode else []
+        cmd = ['./scripts/replica-studio', *mode, '--checkpoint', str(self.ck.path), *args]
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if out.returncode != 0:
             raise RuntimeError(f'CLI 失败 {args[:2]}: {out.stdout[-400:]} {out.stderr[-400:]}')
@@ -357,10 +359,11 @@ def main():
     p.add_argument('--plan', action='store_true')
     p.add_argument('--only', help='只跑某条需求 record_id')
     p.add_argument('--run-dir', default=str(ROOT))
+    p.add_argument('--auth-mode', choices=['device', 'browser'], help='默认取项目 REPLICA_AUTH_MODE')
     a = p.parse_args()
     feishu = Feishu()
-    api = ReplicaAPI.configured(auth_mode='device', confirm_paid=True); auth = api.authenticate()
-    runner = Runner(Path(a.run_dir), feishu, api, auth, dry=a.plan)
+    api = ReplicaAPI.configured(auth_mode=a.auth_mode, confirm_paid=True); auth = api.authenticate()
+    runner = Runner(Path(a.run_dir), feishu, api, auth, dry=a.plan, auth_mode=a.auth_mode)
     rows = feishu.call('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
                        params={'page_size': 500, 'user_id_type': 'open_id'}, json={}).get('items', [])
     for row in rows:
