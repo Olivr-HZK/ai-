@@ -93,6 +93,7 @@ def main():
     feishu = Feishu()
     print('监听启动：只读 ' + POOL, flush=True)
 
+    source_cache = {}
     try:
         while True:
             started = time.time()
@@ -117,17 +118,30 @@ def main():
                 lip = bool(f.get('口型优先'))
                 links = link_ids(f.get('关联原素材'))
                 source_id = links[0] if links else ''
-                source = {}
+                source, source_error = {}, ''
                 if source_id:
-                    source = feishu.call('GET', f'bitable/v1/apps/{APP}/tables/{MAIN}/records/{source_id}',
-                                         params={'user_id_type': 'open_id'})['record']['fields']
+                    cached = source_cache.get(source_id)
+                    if cached and time.time() - cached[0] < 300:
+                        source = cached[1]
+                    else:
+                        try:
+                            source = feishu.call('GET', f'bitable/v1/apps/{APP}/tables/{MAIN}/records/{source_id}',
+                                                 params={'user_id_type': 'open_id'})['record']['fields']
+                            source_cache[source_id] = (time.time(), source)
+                        except Exception as error:  # 单条读超时只影响这一行，不结束整轮
+                            source_error = type(error).__name__
+                            if cached:
+                                source = cached[1]
+                                source_error = ''
                 master = bool(source.get('复刻母版'))
                 master_state = text(source.get('母版状态'))
                 src_lang = first(source.get('文案语言'))
                 steps = []
                 note = ''
                 progress = text(f.get('复刻状态')) or text(f.get('执行进度'))
-                if kind and kind != '替换人物':
+                if source_error:
+                    note = f'素材读取失败（{source_error}），本轮跳过'
+                elif kind and kind != '替换人物':
                     note = f'主表负责（{kind}），换人表只接替换人物'
                 elif status != ACCEPTED:
                     note = f'跳过：需求状态={status or "空"}'
