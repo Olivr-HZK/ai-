@@ -2,7 +2,7 @@
 
 业务接口按用户提供的 `replica-studio-workbench.openapi.yaml` 封装；设备授权另参考 [Replica 独立CLI v0.10.6 的公开契约](https://github.com/yongchangwang-gt/replica-studio-cli/blob/1b681360c803a8c055798e3b9d2164857d111e81/replica_cli.py)。默认使用设备授权令牌，经requests直接发送HTTP，不依赖浏览器常驻或本地登录桥。服务固定为 `https://replica-studio.upupup.today`；旧Cookie/专用Chrome通道保留为显式兼容方式。
 
-基础 CLI 负责 Replica 自动分析、指定人物参考图上传、智能Logo、可选翻译及已有结果下载。另有记录绑定的飞书批处理入口，用于此前173条视频及复刻附件回填；本次翻译封装不自动接入该批次或触发器。
+基础 CLI 负责 Replica 自动分析、指定人物参考图上传、视频换人片段生成、智能 Logo、可选翻译及已有 Logo/翻译结果下载。另有记录绑定的飞书批处理入口，用于此前173条视频及复刻附件回填。
 
 ## 命令与接口
 
@@ -12,17 +12,18 @@
 | `session` / `whoami` | `GET /api/cli/whoami` | 返回账号和公开权限信息，不输出原始令牌 |
 | `logout` | 无业务HTTP | 仅删除本机令牌；不冒称服务端已撤销 |
 | `login --legacy-browser` | 原OIDC/会话接口 | 显式使用旧专用Chrome登录方式 |
-| `upload FILE...` | `POST /api/jobs` | 单线程连续提交全部文件；每文件独立请求ID、1个人物组，`character` 为空，`auto_analyze=true` |
+| `upload FILE...` | `POST /api/jobs` | 单线程连续提交全部文件；每文件独立请求 ID、1 个人物组并自动分析。设备授权模式需用 `--yes` 确认付费分析 |
 | `upload-status REQUEST_ID` | `GET /api/source-uploads/{request_id}` | 只读核对原上传结果 |
-| `status ID...` | `GET /api/jobs/{identifier}` | 多任务查询；支持等待分析、Logo或指定语言/内容的翻译完成 |
+| `status ID...` | `GET /api/jobs/{identifier}` | 多任务查询；支持等待分析、Logo、换人片段或指定语言/内容的翻译完成 |
 | `characters ID` | `GET /api/jobs/{identifier}` | 只读列出任务角色ID和当前人物参考图 |
 | `portrait ID IMAGE` | `POST /api/jobs/{identifier}/portrait/{source_id}` | 上传你提供的图片并设为指定角色当前参考图；不调用生图或视频生成 |
+| `swap ID --yes` | `POST /api/jobs/{identifier}/actions/videos` | 按当前参考图生成模型换人片段，使用设备令牌的 `run` 权限 |
 | `logo ID...` | `POST /api/jobs/{identifier}/actions/logo_replace` | 多选任务逐条提交 `logo_mode=smart`，不重复付费请求 |
 | `translate ID...` | `POST /api/jobs/{identifier}/actions/translate` | 多任务/多语言翻译，支持文字、语音或仅字幕；先只读预检，意图落盘后提交 |
 | `translate --input original`（默认） | 同上，无PUT | 翻译完整当前原视频；`--source-video`为兼容别名，两个翻译前裁剪开关均false |
 | `download ID...` | `POST /api/jobs/download/files`，再 GET 结果媒体 | 默认仍是原语言Logo结果；`--step translation --languages ...`下载翻译视频和字幕 |
 
-智能换 Logo 前只读 `GET /api/settings` 取得工作区默认值；翻译前读取翻译服务/文字能力/已启用语言，不写回设置、不调整并发或模型。翻译写请求不带force_new，不改变remember_parts偏好。人物参考图上传独立开放；没有添加人物图生成、视频换人生成、独立重复分析、完整一键生成或额外拼接命令，HTTP 白名单继续拒绝这些生成动作。PUT只允许revision与source_video路线两个字段。
+智能换 Logo 前只读 `GET /api/settings` 取得工作区默认值；翻译前读取翻译服务/文字能力/已启用语言，不写回设置、不调整并发或模型。翻译写请求不带force_new，不改变remember_parts偏好。视频换人命令只开放 `model_swap` 片段生成。PUT 只允许 revision 与 source_video 路线两个字段。
 
 上传回执未知时，还应检查实际任务。SDK提供只读`list_jobs()`、`task_history(filter)`、`deleted_jobs()`和`deleted_projects()`，分别使用`GET /api/jobs`、`GET /api/tasks`（仅固定filter）、`GET /api/deleted-characters`、`GET /api/deleted-projects`。先按原文件名、日期/序号和上传时间窗反查候选；有候选时进一步核实原片身份后才可关联，不仅凭同名或序号猜测，不直接重传。历史接口返回条数可能低于全局counts.total，必须报告范围限制；没有查询结果不能证明从未上传或未计费。回收站仅查询，不开放恢复写接口。
 
@@ -184,7 +185,21 @@ Python入口位于`ua_workflows.replica_translation`。`translate_voice_many(api
 
 设备授权直连原生支持人物参考图上传。仅旧browser模式需要登录桥具备`portrait_upload_v1`；旧桥缺能力时，关闭旧专用窗口后用`login --legacy-browser`重新启动。不会因此读取用户Chrome资料或导出Cookie。
 
-这一步不会替换视频中的人物，也不修改文字、口播、Logo、字幕擦除规则或现有批处理范围。后续视频换人命令尚未开放；上传参考图成功不代表换人视频已生成。返回`video_generation_submitted=false`，回执未知退出码为2。
+上传参考图成功返回 `video_generation_submitted=false`。回执未知退出码为 2。
+
+## 生成视频换人片段
+
+后端 OpenAPI 的 `generateVideos` 使用 `POST /api/jobs/{identifier}/actions/videos`，通过 `video_route=model_swap` 选择模型换人。v0.12.0 独立 CLI 把它暴露为付费的 `run ID videos`，设备令牌需有 `run` 权限，请求头为 `X-Replica-Confirm: paid`。 [v0.12.0 CLI 源码](https://github.com/yongchangwang-gt/replica-studio-cli/blob/v0.12.0/replica_cli.py)
+
+```sh
+./scripts/replica-studio swap TASK_ID --check-only
+./scripts/replica-studio swap TASK_ID --yes
+./scripts/replica-studio status TASK_ID --wait-for swap
+```
+
+先在任务中完成分析、准备模型换人片段并为所有角色选好当前参考图。预检会拦截在途或异常任务和自定义视频提示词。任务有文字或口播替换规则时，分析必须对每条规则明确返回零命中，继承的规则还需与工作区当前配置一致。生成请求附带当前 `revision`，固定 `force_new=false` 和 `subtitle_erase=false`。这是模型生成的视频，背景、字幕和其他画面细节仍需验收。
+
+提交前按账号和任务 ID 写入 `video_swaps` 断点。相同断点复用已确认回执，遇到超时或回执身份不符只查询原任务。队列回执只确认提交。状态查询在任务空闲且所有换人片段有文件时返回 `ready`，并列出各片段的 `video_file`。当前交付范围是片段生成与查询，整条广告拼接和文件下载可在工作台操作。
 
 ## 飞书记录批处理
 

@@ -31,11 +31,11 @@ def check(root):
         require(f'ua_workflows.{module}' in (root / 'scripts' / f'{module}.py').read_text(), f'{cli} shim drift')
     cfg = json.loads((root / 'config/social_chat_browser_daily.json').read_text())
     daily = cfg['daily_workflow']
-    require(daily['presets'] == ['game', 'tool', 'tool2'], 'Daily preset scope drift')
+    require(daily['presets'] == ['game', 'tool', 'tool2', 'tool3', 'tool4'], 'Daily preset scope drift')
     require(not daily['automatic_replication'] and not daily['video_replication']['enabled'], 'Automatic replication enabled')
     require(daily['replication_trigger'] == 'explicit_user_request_only', 'Manual replication gate drift')
     runbook = (root / daily['runbook']).read_text()
-    require('--presets game tool tool2' in runbook and '05:00' in runbook, 'Runbook/config drift')
+    require('--presets ' + ' '.join(daily['presets']) in runbook and '05:00' in runbook, 'Runbook/config drift')
     skill = (root / 'skills/social-chat-browser-daily/SKILL.md').read_text()
     require('scripts/material-replica' in skill and 'Video Lab GPT Image 2' in skill, 'Skill/CLI drift')
     image = root / 'ua_workflows/replica_images.py'

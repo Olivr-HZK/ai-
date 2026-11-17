@@ -308,7 +308,7 @@ class DeviceTransportTests(unittest.TestCase):
         with patch.object(requests.Session,'request',side_effect=requests.Timeout()) as http:
             with self.assertRaises(ReplicaError) as error:api.smart_logo({'id':'job-a','revision':8},{'logo_mode':'smart'})
             self.assertEqual(error.exception.code,'result_unknown');self.assertEqual(http.call_count,1)
-        for path in ('/api/jobs/job-a/actions/videos','/api/jobs/job-a/actions/portraits','/api/batch/all'):
+        for path in ('/api/jobs/job-a/actions/portraits','/api/batch/all'):
             with self.assertRaises(ReplicaError):api.request('POST',path,body={})
 
 

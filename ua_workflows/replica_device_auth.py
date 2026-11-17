@@ -96,7 +96,7 @@ class DeviceTokenSession(requests.Session):
         self._bearer = token
         self.trust_env = False  # Do not load .netrc or environment proxies.
         self.replica_device_auth = True
-        self.replica_capabilities = ['translation_v1', 'portrait_upload_v1', 'device_auth_v1']
+        self.replica_capabilities = ['translation_v1', 'translation_original_v1', 'portrait_upload_v1', 'device_auth_v1']
 
     def request(self, method, url, **kwargs):
         parsed = urlsplit(url)

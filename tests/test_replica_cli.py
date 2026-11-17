@@ -25,6 +25,140 @@ def ready(job_id):
             'revision': 8, 'step_states': {'analysis': 'done'}, 'dashboard': {'running': False}, 'source_kind': 'video'}
 
 
+class SwapTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.state = Path(directory.name) / 'state.json'
+        self.transport = Mock(replica_device_auth=True)
+        self.job = {
+            **ready('job-a'), 'video_route': 'model_swap',
+            'cast_members': [{'source_id': 'C1', 'portrait_ready': True, 'portrait_file': 'portraits/C1.png'}],
+            'segments': [{'index': 1, 'start_s': 0, 'end_s': 2, 'video_file': None}],
+            'text_replacements_mode': 'custom', 'text_replacements': [],
+        }
+        self.receipt = {'id': 'job-a', 'status': 'queued', 'revision': 9, 'queue_ticket': 'ticket-1'}
+        self.scopes = ['read', 'run']
+        self.transport.request.side_effect = self.http
+
+    def http(self, method, url, **kwargs):
+        if (method, url) == ('GET', BASE_URL + '/api/cli/whoami'):
+            return response({'user': {'id': 'account-a'}, 'token': {'scopes': self.scopes}})
+        if (method, url) == ('GET', BASE_URL + '/api/jobs/job-a'):
+            return response(self.job)
+        if (method, url) == ('GET', BASE_URL + '/api/settings'):
+            return response({'text_replacements': [{'from': 'SeaHot', 'to': 'Afizzy'}]})
+        if (method, url) == ('POST', BASE_URL + '/api/jobs/job-a/actions/videos'):
+            self.assertEqual(kwargs['json'], {
+                'revision': 8, 'video_route': 'model_swap', 'force_new': False, 'subtitle_erase': False,
+            })
+            self.assertEqual(kwargs['headers']['X-Replica-Confirm'], 'paid')
+            intent = json.loads(self.state.read_text())['video_swaps']['job-a']
+            self.assertEqual(intent['stage'], 'intent')
+            self.assertEqual(intent['portraits'], {'C1': 'portraits/C1.png'})
+            if isinstance(self.receipt, Exception):
+                raise self.receipt
+            return response(self.receipt)
+        self.fail(f'Unexpected request {method} {url}')
+
+    def run_cli(self, *args):
+        parsed = parser().parse_args(['--checkpoint', str(self.state), *args])
+        return execute(parsed, factory=lambda: ReplicaAPI(self.transport, confirm_paid=getattr(parsed, 'yes', False)))
+
+    def posts(self):
+        return [call for call in self.transport.request.call_args_list if call.args[0] == 'POST']
+
+    def test_check_only_and_submit_then_reuse_receipt(self):
+        self.assertTrue(self.run_cli('swap', 'job-a', '--check-only')['check_only'])
+        self.assertFalse(self.state.exists())
+        self.assertTrue(self.run_cli('swap', 'job-a', '--yes')['submitted'])
+        self.assertTrue(self.run_cli('swap', 'job-a', '--yes')['reused'])
+        self.assertEqual(len(self.posts()), 1)
+
+    def test_unknown_submission_is_never_replayed(self):
+        for receipt in (requests.Timeout(), {**self.receipt, 'id': 'job-b'}):
+            with self.subTest(receipt=receipt):
+                self.state.unlink(missing_ok=True)
+                self.transport.request.reset_mock()
+                self.receipt = receipt
+                with self.assertRaisesRegex(ReplicaError, 'could not be confirmed'):
+                    self.run_cli('swap', 'job-a', '--yes')
+                result = self.run_cli('swap', 'job-a', '--yes')
+                self.assertEqual(result['code'], 'result_unknown')
+                self.assertEqual(len(self.posts()), 1)
+
+    def test_preflight_rejects_unready_cast_replacement_rules_and_missing_run_scope(self):
+        for changes in ({'cast_members': []}, {'segments': []}, {'text_replacements': [{'from': 'old'}]}):
+            with self.subTest(changes=changes), patch.dict(self.job, changes):
+                with self.assertRaises(ReplicaError) as found:
+                    self.run_cli('swap', 'job-a', '--yes')
+                self.assertEqual(found.exception.code, 'swap_not_ready')
+        self.scopes = ['read']
+        with self.assertRaises(ReplicaError) as found:
+            self.run_cli('swap', 'job-a', '--yes')
+        self.assertEqual(found.exception.code, 'permission_denied')
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.posts())
+
+    def test_read_only_status_requires_segments_and_idle_job(self):
+        self.job['segments'][0]['video_file'] = 'videos/swap1.mp4'
+        self.job['status'] = 'generating'
+        running = status_many(ReplicaAPI(self.transport), ['job-a'], stage='swap', timeout=0)
+        self.assertEqual(running['results'][0]['step_state'], 'running')
+        self.job['status'] = 'analysis_review'
+        ready = self.run_cli('status', 'job-a', '--wait-for', 'swap')
+        self.assertEqual(ready['results'][0]['step_state'], 'ready')
+        self.assertEqual(ready['results'][0]['job']['segments'][0]['video_file'], 'videos/swap1.mp4')
+        self.assertFalse(self.posts())
+
+    def test_rules_require_complete_zero_match_evidence(self):
+        self.job.update(text_replacements_mode='defaults', text_replacements=[{'from': 'SeaHot', 'to': 'Afizzy'}])
+        for detections in ([], [{'keyword': 'Other', 'occurrences': []}],
+                           [{'keyword': 'SeaHot', 'occurrences': [{'start_s': 0}]}]):
+            with self.subTest(detections=detections):
+                self.job['replacement_detections'] = detections
+                with self.assertRaisesRegex(ReplicaError, 'verify that analysis found no matches'):
+                    self.run_cli('swap', 'job-a', '--check-only')
+        self.job['replacement_detections'] = [{'keyword': 'SeaHot', 'occurrences': []}]
+        self.assertTrue(self.run_cli('swap', 'job-a', '--check-only')['ok'])
+        self.assertFalse(self.posts())
+
+    def test_transport_rejects_unconfirmed_or_broader_paid_actions(self):
+        api = ReplicaAPI(self.transport)
+        api.account = 'account-a'
+        with self.assertRaises(ReplicaError) as found:
+            api.swap_video(self.job)
+        self.assertEqual(found.exception.code, 'confirmation_required')
+        for change in ({'video_route': 'story_rebuild'}, {'force_new': True}, {'subtitle_erase': True},
+                       {'edit': {}}, {'segment_index': 1}):
+            with self.subTest(change=change), self.assertRaises(ReplicaError):
+                api.request('POST', '/api/jobs/job-a/actions/videos', body={
+                    'video_route': 'model_swap', 'force_new': False, 'subtitle_erase': False, 'revision': 8,
+                    **change,
+                })
+        self.transport.request.assert_not_called()
+
+    def test_device_upload_sends_paid_confirmation_only_with_yes(self):
+        path = self.state.with_name('clip.mp4')
+        path.write_bytes(b'video fixture')
+        with self.assertRaises(ReplicaError) as found:
+            self.run_cli('upload', str(path))
+        self.assertEqual(found.exception.code, 'confirmation_required')
+        self.assertFalse(self.posts())
+        self.assertFalse(self.state.exists())
+
+        def upload_http(method, url, **kwargs):
+            if (method, url) == ('POST', BASE_URL + '/api/jobs'):
+                headers = kwargs['headers']
+                self.assertEqual(headers['X-Replica-Confirm'], 'paid')
+                return response({'ids': ['job-a'], 'request_id': headers['X-Replica-Upload-Id']})
+            return self.http(method, url, **kwargs)
+
+        self.transport.request.side_effect = upload_http
+        self.assertEqual(self.run_cli('upload', str(path), '--yes')['accepted'], 1)
+        self.assertEqual(len(self.posts()), 1)
+
+
 class FakeAPI:
     def __init__(self):
         self.uploads = []
@@ -165,11 +299,18 @@ class ReplicaHTTPTests(unittest.TestCase):
         transport = Mock()
         client = ReplicaAPI(transport)
         for path in ['/api/jobs/job-a/actions/portraits', '/api/jobs/job-a/actions/videos',
-                     '/api/batch/all', '/api/jobs/job-a/actions/export', '/api/jobs/job-a/actions/analyze']:
+                     '/api/batch/all', '/api/jobs/job-a/actions/export']:
             with self.assertRaises(ReplicaError) as found:
                 client.request('POST', path, body={})
             self.assertEqual(found.exception.code, 'unsupported_endpoint')
         transport.request.assert_not_called()
+
+    def test_reanalysis_is_allowed_without_force(self):
+        from ua_workflows.replica_studio_api import validate_workflow_body
+        validate_workflow_body('POST', '/api/jobs/job-a/actions/analyze', {'force_new': False})
+        with self.assertRaises(ReplicaError) as found:
+            validate_workflow_body('POST', '/api/jobs/job-a/actions/analyze', {'force_new': True})
+        self.assertEqual(found.exception.code, 'unsupported_action')
 
     def test_oidc_command_does_not_export_redirect_transaction_or_claim_login(self):
         transport = Mock()
