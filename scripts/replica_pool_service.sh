@@ -11,14 +11,14 @@ pkill -f "scripts/replica_pool_run.py" 2>/dev/null
 sleep 1
 
 ( while true; do
-    .venv/bin/python scripts/replica_pool_watch.py --run-dir data/replica-pool-watch --interval 15
+    .venv/bin/python scripts/replica_pool_watch.py --run-dir data/replica-pool-watch --interval 60
     sleep 10
   done ) &
 WATCH=$!
 
 ( while true; do
     .venv/bin/python scripts/replica_pool_run.py --auth-mode browser --run-dir data/replica-pool-run
-    sleep 30
+    sleep 120
   done ) &
 RUN=$!
 

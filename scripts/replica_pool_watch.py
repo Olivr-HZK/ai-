@@ -111,7 +111,9 @@ def main():
                     feishu, token_at = Feishu(), time.time()
                 if args.once:
                     return 1
-                time.sleep(max(1.0, args.interval))
+                # 限流（1254290）或数据未就绪（1254607）时退避，别把调用打满
+                pause = 120 if 'TooManyRequest' in str(error) or '1254290' in str(error) else max(1.0, args.interval)
+                time.sleep(pause)
                 continue
             items, counts = [], {}
             for row in rows:
