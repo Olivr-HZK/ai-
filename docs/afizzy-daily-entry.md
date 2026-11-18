@@ -1,6 +1,6 @@
 # Afizzy 05:00完整日流程：入口与依赖
 
-当前入口是Mac mini现有Codex heartbeat `automation-3`（Afizzy竞品每日采集筛选入表），每天北京时间05:00。它由Agent按项目skill完成各阶段，不是Replica监听进程，也不是只有采集的cron脚本。入口迁移保留任务ID、关联聊天、ACTIVE状态、日期冻结和完整原业务指令，不创建第二份任务、不立即补跑。
+采集段是纯命令行：`scripts/afizzy_daily_0500.sh`（或等价launchd/cron）每天北京时间05:00执行`afizzy_daily daily`，只做采集、写心跳和阶段标记，不需要Codex在线。Codex只读`afizzy_daily check`/`watchdog`的结果，据此决定是否继续筛选、是否需要告警或补跑；筛选证据和入表仍按原规则由Agent完成。历史入口`automation-3`保留任务ID、关联聊天、ACTIVE状态和日期冻结，不创建第二份任务、不立即补跑。
 
 | 阶段 | 代码与持久依赖 | 完成依据 |
 |---|---|---|
@@ -24,3 +24,29 @@
 迁移日任务不重启独立复刻监听，不将其他开发分支的未发布改动带入生产。
 
 所有日任务Python命令通过代码目录下的`scripts/afizzy-python`执行：它固定cwd，使用该checkout的独立.venv，推导并导出UA_STATE_ROOT，拒绝与现有UA_STATE_ROOT不一致的调用。迁移不依赖关联聊天仍保留的旧工作目录。
+
+## 运行卡点：心跳、阶段标记与向量补算（2026-11-18）
+
+| 命令 | 作用 | 产物 |
+|---|---|---|
+| `afizzy_daily daily --date D --run-dir R` | 05:00采集入口：写心跳、跑crawl、记录成功/失败 | `R/heartbeat.json`、`R/execution-control.json` |
+| `afizzy_daily heartbeat --date D --run-dir R --status started\|done\|failed [--stage S] [--note T]` | 手工补记心跳 | 同上 |
+| `afizzy_daily stage --date D --run-dir R --stage S --status running\|done\|failed` | 记录单个阶段；prepare/embed/pre-review会自己写 | `execution-control.json` |
+| `afizzy_daily check --date D --run-dir R [--max-age 120] [--notify]` | 判断missing/running/stalled/failed/done；停滞或失败退出码2 | stdout JSON |
+| `afizzy_daily watchdog --date D --run-dir R [--max-age] [--notify] [--backfill]` | 同上并给出告警文案；`--backfill`仅在完全没启动时补跑采集 | stdout JSON |
+| `afizzy_daily embed --media-index I --embedding-cache C --history-vector-pack P [--limit N] [--dry-run]` | 生成缺失的CLIP向量；已有缓存不重写，可分批续跑 | `C/<image-sha256>.json` |
+
+告警只在项目`.env`配置了`AFIZZY_ALERT_WECOM_WEBHOOK`（企业微信机器人完整地址）时发送；未配置时`notify`返回`not_configured`，不发送、不报错。
+
+`pre-review`遇到缺失/损坏/未绑定模型指纹的向量缓存时不再整批中止：该素材标记为`not_deduped`并照常进入人工审核队列，`plan.json`的`dedupe_unavailable`逐条记录原因。只有代理图字节被改动、或同一批出现多个模型指纹时才继续阻断。
+
+历史向量包在当天没有任何可用向量时被显式跳过（`history_vector_pack.skipped=no_current_vectors`），不会让整批失败。
+
+调度建议（本仓库只提供脚本，不改线上launchd）：
+
+- 05:00：`scripts/afizzy_daily_0500.sh` —— 采集 + 心跳；失败退出码非0，便于launchd记录。
+- 每30~60分钟：`scripts/afizzy_daily_watchdog.sh` —— 检查心跳与阶段标记，超过`AFIZZY_STALL_MINUTES`（默认120）无更新即退出码2；配置`AFIZZY_WATCHDOG_ARGS=--notify`后同时发企业微信告警。
+- 漏跑的补跑由watchdog `--backfill`显式触发，只在完全没有启动痕迹时执行，不覆盖已开始的批次。
+
+筛选阶段（joint-review/select/sync/report）由Agent执行时调用
+`afizzy_daily stage --date D --run-dir R --stage joint-review --status running|done|failed` 记录进度，停止后watchdog才能发现。

@@ -85,14 +85,21 @@ def _components(rows, vectors, threshold):
     return list(clusters.values()), similarity
 
 
-def plan(target, records, vectors, policy=None):
-    """Inputs are ledger-checked local media; existing content decisions are ignored."""
+def plan(target, records, vectors, policy=None, undeduped=None):
+    """Inputs are ledger-checked local media; existing content decisions are ignored.
+
+    ``undeduped`` maps record IDs to the reason their vector is unavailable. Those
+    records still reach the human review queue with an explicit flag; they are never
+    silently treated as unique or as duplicates.
+    """
     policy = validate_policy(policy or POLICY)
+    undeduped = dict(undeduped or {})
     today_date = date.fromisoformat(target)
     ids = [r['id'] for r in records]
     if len(ids) != len(set(ids)):
         raise ValueError('Duplicate normalized media IDs')
     today, history, skipped_history, coverage, relaunch_ids = [], [], [], set(), []
+    undeduped_today, undeduped_notes = [], []
     target_media_input = 0
     for row in records:
         age = (today_date - date.fromisoformat(row['day'])).days
@@ -114,6 +121,15 @@ def plan(target, records, vectors, policy=None):
         value = row.get('value')
         if not isinstance(value, (float, int)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
             raise ValueError('Missing/invalid estimate: ' + row['id'])
+        if row['id'] in undeduped:
+            reason = undeduped[row['id']]
+            if age == 0:
+                undeduped_today.append(dict(row, group=identity, dedupe_status='not_deduped',
+                                            dedupe_unavailable_reason=reason))
+                undeduped_notes.append({'id': row['id'], 'reason': reason})
+            else:
+                skipped_history.append(row['id'])
+            continue
         vec = vectors.get(row['id'])
         if not isinstance(vec, list) or len(vec) != 512 or not all(isinstance(x, (float, int)) and math.isfinite(x) for x in vec):
             raise ValueError('Missing/invalid embedding: ' + row['id'])
@@ -148,14 +164,18 @@ def plan(target, records, vectors, policy=None):
                         'direct': bool(similarity[i, match] >= policy['threshold'])}
                 else:
                     survivors.append(nodes[i])
+    survivors.extend(undeduped_today)
     counts = dict(Counter(o['status'] for o in outcomes.values()))
+    if undeduped_today:
+        counts['dedupe_unavailable'] = len(undeduped_today)
     missing = [(today_date - timedelta(days=i)).isoformat() for i in range(1, 8)
                if (today_date - timedelta(days=i)).isoformat() not in coverage]
     return {'version': policy['version'], 'target_date': target, 'policy': dict(policy),
-            'status': 'JOINT_REVIEW_PENDING', 'input_before_content_review': len(today), 'counts': counts,
+            'status': 'JOINT_REVIEW_PENDING', 'input_before_content_review': len(today) + len(undeduped_today), 'counts': counts,
             'target_media_before_relaunch': target_media_input, 'plugin_relaunch_excluded_ids': relaunch_ids,
             'history_rows': len(history), 'history_dates': sorted(coverage), 'missing_history_dates': sorted(missing),
             'unidentified_history_ids': skipped_history, 'decisions': outcomes,
+            'dedupe_unavailable': undeduped_notes,
             'review_queue': sorted(survivors, key=lambda r: (r['group'], -r['value'], r['id'])),
             'review_certified': False}
 
@@ -171,6 +191,7 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
             raise ValueError('Unsupported media orientation policy')
         records, orientation_decisions = filter_current(target, records)
     vectors, fingerprints, blobs = {}, set(), {}
+    undeduped = {}
     for row in records:
         age = (date.fromisoformat(target) - date.fromisoformat(row['day'])).days
         if not 0 <= age <= 7 or is_relaunch(row) or row.get('kind') not in ('视频', '图片'):
@@ -183,17 +204,26 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
         if sha(proxy['path']) != digest:
             raise ValueError('Proxy image changed: ' + row['id'])
         if digest not in blobs:
-            blobs[digest] = json.loads((cache / (digest + '.json')).read_text())
+            path = cache / (digest + '.json')
+            if not path.is_file():
+                # A single missing vector must not abort the whole batch: the record
+                # is carried to human review flagged as not deduped.
+                undeduped[row['id']] = 'missing_vector_cache:' + digest
+                continue
+            try:
+                blobs[digest] = json.loads(path.read_text())
+            except (OSError, ValueError):
+                undeduped[row['id']] = 'unreadable_vector_cache:' + digest
+                continue
         blob = blobs[digest]
         if blob.get('image_sha256') != digest or not blob.get('model_fingerprint'):
-            raise ValueError('Embedding lacks bound image/model identity: ' + row['id'])
+            undeduped[row['id']] = 'unbound_vector_cache:' + digest
+            continue
         fingerprints.add(blob['model_fingerprint']);vectors[row['id']] = blob['vector']
-    if len(fingerprints) != 1 and not (orientation_decisions is not None and not vectors):
+    if len(fingerprints) > 1:
         raise ValueError('Dedupe requires one verified CLIP model fingerprint')
     history_receipt = None
-    if history_vector_pack:
-        if not fingerprints:
-            raise ValueError('History vector pack requires a verified current model fingerprint')
+    if history_vector_pack and fingerprints:
         from ua_workflows.social_chat_clip_vectors import read_bundle
         bundle = read_bundle(history_vector_pack, next(iter(fingerprints)))
         existing = {r['id']:r for r in records}
@@ -209,7 +239,13 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
             records.append(row);vectors[row['id']]=bundle['vectors'][row['id']]
         history_receipt = {'sha256':sha(history_vector_pack),'source_records':bundle['manifest']['records'],
                            'source_vectors':bundle['manifest']['vectors'],'images_required':False}
-    result = plan(target, records, vectors, policy)
+    elif history_vector_pack:
+        # No usable current vectors: skip the history pack explicitly instead of
+        # failing the batch, so the queue still reaches review.
+        pack = Path(history_vector_pack)
+        history_receipt = {'skipped': 'no_current_vectors', 'path': str(pack),
+                           'sha256': sha(pack) if pack.is_file() else None}
+    result = plan(target, records, vectors, policy, undeduped)
     if orientation_decisions is not None:
         result['media_orientation_filter'] = {'policy': orientation_policy,
             'counts': dict(Counter(d['status'] for d in orientation_decisions.values())),
