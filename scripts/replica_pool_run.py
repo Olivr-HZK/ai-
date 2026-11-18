@@ -68,7 +68,7 @@ def fingerprint(fields):
     videos = fields.get('原视频') or []
     refs = fields.get('人物参考图') or []
     lang = text(fields.get('目标语言（单选）')) or text(fields.get('目标语言'))
-    ref = (refs[0].get('name'), refs[0].get('size')) if refs else ('', 0)
+    ref = tuple((a.get('name'), a.get('size')) for a in refs)
     source = links[0] if len(links) == 1 else (
         f"video:{videos[0].get('name')}:{videos[0].get('size')}" if len(videos) == 1 else '')
     return (
@@ -210,7 +210,7 @@ class Runner:
                        '--output-dir', str(self.dir / 'translations'))
         return Path(got['results'][0]['path'])
 
-    def swap(self, master, tag, portrait: Path):
+    def swap(self, master, tag, portraits):
         job = master.get('job_id')
         reused = False
         if job:
@@ -227,21 +227,23 @@ class Runner:
             job = up['results'][0]['ids'][0]
             self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
         cast = self.cli('characters', job)['characters']
-        if len(cast) != 1:
-            raise RuntimeError(f'素材有 {len(cast)} 个角色，换人需要每个角色都有参考图，先人工确认')
+        if len(portraits) != len(cast):
+            raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
         own = self.dir / 'ck' / f'{tag}.json'
         own.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'], checkpoint=own)
-        except RuntimeError as error:
-            if 'result_unknown' not in str(error):
-                raise
-            # 回执没确认时以任务里的实际参考图为准；没生效再换新断点重试一次
-            if not self.portrait_ready(job, cast[0]['source_id']):
-                self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'],
-                         checkpoint=own.with_suffix('.retry.json'))
-            if not self.portrait_ready(job, cast[0]['source_id']):
-                raise RuntimeError('参考图上传未生效')
+        for person, portrait in zip(cast, portraits):
+            source_id = person['source_id']
+            try:
+                self.cli('portrait', job, str(portrait), '--source-id', source_id, checkpoint=own)
+            except RuntimeError as error:
+                if 'result_unknown' not in str(error):
+                    raise
+                # 回执没确认时以任务里的实际参考图为准；没生效再换新断点重试一次
+                if not self.portrait_ready(job, source_id):
+                    self.cli('portrait', job, str(portrait), '--source-id', source_id,
+                             checkpoint=own.with_suffix(f'.retry-{source_id}.json'))
+                if not self.portrait_ready(job, source_id):
+                    raise RuntimeError(f'{source_id} 参考图上传未生效')
         self.cli('swap', job, '--yes', checkpoint=own)
         self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
         state = self.api.job(job)
@@ -346,8 +348,8 @@ class Runner:
             problems.append('目标语言有无法识别的选项')
         if kind == '替换人物':
             # 换人角色只是标签：参考图才是真正的主体，没填就用品名兜底
-            if len(refs) != 1:
-                problems.append(f'替换人物必须上传且只上传 1 张人物参考图（当前 {len(refs)} 张）')
+            if not refs:
+                problems.append('替换人物必须上传人物参考图（几张由视频里的角色数决定）')
         if problems:
             if not self.dry:
                 self.put(POOL, rid, {'复刻状态': '待补充信息', '执行说明': '；'.join(problems)})
@@ -404,8 +406,8 @@ class Runner:
                 where = '原视频' if direct else '母版'
                 note = f'{where}任务 {job[:8]}… 翻译（text+voice，去 CTA）+ {cta_lang} CTA'
         elif kind == '替换人物':
-            portrait = self.download(refs[0], self.dir / 'portraits' / refs[0]['name'])
-            swap_job, seg, story_end, job_src = self.swap(master, tag, portrait)
+            portraits = [self.download(att, self.dir / 'portraits' / att['name']) for att in refs]
+            swap_job, seg, story_end, job_src = self.swap(master, tag, portraits)
             src_lang = src_lang or job_src
             self.put(POOL, rid, {'复刻状态': '拼接中'})
             targets = langs or [src_lang]
