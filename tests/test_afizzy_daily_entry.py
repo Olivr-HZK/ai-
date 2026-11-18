@@ -42,7 +42,7 @@ def test_watchdog_backfill_only_when_nothing_started(tmp_path, monkeypatch):
 
     monkeypatch.setattr(afizzy_daily, 'run_crawl', fake_crawl)
     code = afizzy_daily.main(['watchdog', '--date', DATE, '--run-dir', str(tmp_path / 'run'), '--backfill'])
-    assert code == 2 and calls == [DATE]
+    assert code == 0 and calls == [DATE]
     beat = json.loads((tmp_path / 'run' / 'heartbeat.json').read_text())
     assert beat['status'] == 'started' and beat['stage'] == 'crawl'
 
@@ -106,3 +106,43 @@ def test_heartbeat_refreshes_during_long_collection(tmp_path, monkeypatch):
     assert afizzy_daily.main(['daily', '--date', DATE, '--run-dir', str(run)]) == 0
     assert seen['status'] == 'started' and seen['note'] == 'collection_running', '采集中应持续刷新心跳'
     assert json.loads((run / 'heartbeat.json').read_text())['status'] == 'done'
+
+
+def test_crawl_failure_is_not_overwritten_by_heartbeat_tick(tmp_path, monkeypatch):
+    import time
+    import pytest
+    monkeypatch.setenv('AFIZZY_HEARTBEAT_SECONDS', '1')
+
+    def failing_crawl(a, mode='run'):
+        time.sleep(1.6)
+        raise RuntimeError('browser crashed')
+
+    monkeypatch.setattr(afizzy_daily, 'run_crawl', failing_crawl)
+    run = tmp_path / 'run'
+    with pytest.raises(RuntimeError):
+        afizzy_daily.main(['daily', '--date', DATE, '--run-dir', str(run)])
+    beat = json.loads((run / 'heartbeat.json').read_text())
+    control = json.loads((run / 'execution-control.json').read_text())
+    assert beat['status'] == 'failed' and beat['note'] == 'RuntimeError'
+    assert control['stages']['crawl']['status'] == 'failed'
+
+
+def test_corrupt_summary_keeps_crawl_failed_instead_of_crashing(tmp_path, monkeypatch):
+    summary = tmp_path / 'summary.json'
+    summary.write_text('{not json')
+    monkeypatch.setattr(afizzy_daily, 'crawl_summary_path', lambda a: summary)
+    assert afizzy_daily.crawl_outcome(None, 2) == ('failed', 'crawl exit 2')
+
+
+def test_watchdog_backfill_then_reports_running_not_missing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(afizzy_daily, 'run_crawl', lambda a, mode='run': 0)
+
+    def backfill_writes_heartbeat(a, mode='run'):
+        from ua_workflows.social_chat_run_state import heartbeat
+        heartbeat(tmp_path / 'run', status='started', stage='crawl', target_date=a.date)
+        return 0
+
+    monkeypatch.setattr(afizzy_daily, 'run_crawl', backfill_writes_heartbeat)
+    code = afizzy_daily.main(['watchdog', '--date', DATE, '--run-dir', str(tmp_path / 'run'), '--backfill'])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload['decision']['status'] == 'running'

@@ -56,7 +56,11 @@ def verify_model(pinned, *, hf_cache=None):
         if not path.is_file() or sha256_file(path) != expected:
             raise ValueError('Pinned model file mismatch: ' + relative)
     for library, expected in provenance.get('libraries', {}).items():
-        if version(library) != expected:
+        try:
+            observed = version(library)
+        except Exception:
+            raise ValueError('Pinned library not installed: ' + library) from None
+        if observed != expected:
             raise ValueError('Pinned library version mismatch: ' + library)
     return snapshot
 

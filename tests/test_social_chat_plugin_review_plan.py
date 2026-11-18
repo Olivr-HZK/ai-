@@ -172,3 +172,11 @@ def test_history_pack_is_skipped_explicitly_when_no_current_vectors(tmp_path):
     result=prepare_queue('2026-10-25',index,cache,output,history_vector_pack=tmp_path/'absent.zip')
     assert result['history_vector_pack']['skipped']=='no_current_vectors'
     assert result['counts']=={'dedupe_unavailable':1}
+
+
+def test_history_without_vectors_is_reported_separately_from_unknown_identity():
+    records=[row('today'),row('history','2026-10-24')]
+    result=plan('2026-10-25',records,{'today':vector(0)},undeduped={'history':'missing_vector_cache:x'})
+    assert result['undeduped_history_ids']==['history']
+    assert result['unidentified_history_ids']==[]
+    assert result['dedupe_unavailable']==[]

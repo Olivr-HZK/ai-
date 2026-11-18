@@ -170,7 +170,14 @@ def crawl_summary_path(a):
 
 def crawl_outcome(a, code):
     """Exit 2 also means "pages complete, some media missing"; keep those batches moving."""
-    summary = load(crawl_summary_path(a)) if crawl_summary_path(a).is_file() else {}
+    path = crawl_summary_path(a)
+    summary = {}
+    if path.is_file():
+        try:
+            summary = load(path)
+        except (OSError, ValueError):
+            # A corrupt summary must not turn a completed crawl into a crash.
+            summary = {}
     gaps = summary.get('media_failed') or 0
     if code == 0:
         return 'done', ''
@@ -307,6 +314,9 @@ def main(argv=None):
                              '--crawler-python', str(a.crawler_python), '--state-dir', str(a.state_dir),
                              '--credentials-env', str(a.credentials_env)])
                 summary['backfill'] = {'crawl_returncode': code}
+                # Re-read the heartbeat: a started collection is no longer "missing".
+                decision = check_daily(daily_dir, max_age_minutes=a.max_age, target_date=a.date)
+                summary['decision'] = decision
         if a.notify and decision['status'] in ('missing', 'failed', 'stalled'):
             summary['notify'] = notify(summary.get('alert') or render_alert(decision),
                                        values=project_values())
@@ -323,13 +333,15 @@ def main(argv=None):
         try:
             code = run_crawl(a)
         except Exception as error:
+            # Stop the ticker before writing the terminal state, otherwise a late
+            # tick could overwrite "failed" with "started" and hide the failure.
+            stop.set(); ticker.join(timeout=5)
             mark(daily_dir, 'crawl', 'failed', note=type(error).__name__, target_date=a.date)
             write_heartbeat(daily_dir, status='failed', stage='crawl',
                             note=type(error).__name__, target_date=a.date)
             raise
-        finally:
-            stop.set()
-            ticker.join(timeout=5)
+        else:
+            stop.set(); ticker.join(timeout=5)
         status, note = crawl_outcome(a, code)
         if status == 'failed':
             mark(daily_dir, 'crawl', 'failed', note=note, target_date=a.date)

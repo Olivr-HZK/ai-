@@ -99,7 +99,7 @@ def plan(target, records, vectors, policy=None, undeduped=None):
     if len(ids) != len(set(ids)):
         raise ValueError('Duplicate normalized media IDs')
     today, history, skipped_history, coverage, relaunch_ids = [], [], [], set(), []
-    undeduped_today, undeduped_notes = [], []
+    undeduped_today, undeduped_notes, undeduped_history = [], [], []
     target_media_input = 0
     for row in records:
         age = (today_date - date.fromisoformat(row['day'])).days
@@ -128,7 +128,7 @@ def plan(target, records, vectors, policy=None, undeduped=None):
                                             dedupe_unavailable_reason=reason))
                 undeduped_notes.append({'id': row['id'], 'reason': reason})
             else:
-                skipped_history.append(row['id'])
+                undeduped_history.append(row['id'])
             continue
         vec = vectors.get(row['id'])
         if not isinstance(vec, list) or len(vec) != 512 or not all(isinstance(x, (float, int)) and math.isfinite(x) for x in vec):
@@ -174,7 +174,8 @@ def plan(target, records, vectors, policy=None, undeduped=None):
             'status': 'JOINT_REVIEW_PENDING', 'input_before_content_review': len(today) + len(undeduped_today), 'counts': counts,
             'target_media_before_relaunch': target_media_input, 'plugin_relaunch_excluded_ids': relaunch_ids,
             'history_rows': len(history), 'history_dates': sorted(coverage), 'missing_history_dates': sorted(missing),
-            'unidentified_history_ids': skipped_history, 'decisions': outcomes,
+            'unidentified_history_ids': skipped_history, 'undeduped_history_ids': undeduped_history,
+            'decisions': outcomes,
             'dedupe_unavailable': undeduped_notes,
             'review_queue': sorted(survivors, key=lambda r: (r['group'], -r['value'], r['id'])),
             'review_certified': False}
