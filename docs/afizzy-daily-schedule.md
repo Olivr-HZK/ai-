@@ -1,6 +1,14 @@
-# Afizzy 日常调度（Mac mini，2026-11-18 生效）
+# Afizzy 日常调度（Mac mini）
 
-采集与筛选拆成两段：**采集是纯命令行 launchd 任务，不需要 Codex 在线**；Codex 只读采集状态，决定是否继续筛选。
+> **2026-11-18 现状：调度已回归 Codex 自动任务。**
+> `automation-3` 每天北京时间 **05:00** 在原关联聊天执行，采集（`guangdada_direct`）、筛选、入表、日报都由它完成；
+> `com.afizzy.daily-0500` 与 `com.afizzy.daily-watchdog` 两个 launchd 任务已 `bootout`，plist 移到 `~/Library/LaunchAgents/disabled/`。
+> 原任务定义备份在 `~/.codex/automations/automation-3/automation.toml.bak-20261118`；拆分方案的版本留在 `automation.toml.split-20261118`。
+
+下面保留的 launchd 入口、心跳/看门狗/`embed` 命令属于**可选工具**，当前没有启用；重新启用前需要同时恢复 automation 的拆分提示词，否则会双份采集。
+
+
+（可选方案，当前未启用）采集与筛选拆成两段：采集用 launchd 纯命令行，Codex 只读状态决定是否继续筛选。
 
 | 任务 | 时间（Asia/Shanghai） | 入口 | 日志 |
 |---|---|---|---|
