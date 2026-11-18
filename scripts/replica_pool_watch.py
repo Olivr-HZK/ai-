@@ -148,7 +148,9 @@ def main():
                 steps = []
                 note = ''
                 progress = text(f.get('复刻状态')) or text(f.get('执行进度'))
-                if direct:
+                if progress == '已完成':
+                    note = '跳过：已完成'
+                elif direct:
                     steps = ['原视频（直接上传）']
                     if kind == '替换人物':
                         steps.append('换人→' + role if role else '换人')
