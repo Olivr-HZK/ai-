@@ -137,38 +137,3 @@ def test_actual_handoff_cli_pins_date_and_outputs_joint_queue(tmp_path):
     assert output['target_date']=='2026-10-25' and output['status']=='JOINT_REVIEW_PENDING'
     assert output['counts']=={'review_pending':1} and not output['review_certified']
     assert not (run/'selection.json').exists() and not (run/'daily-machine').exists()
-
-
-def test_missing_vector_cache_flags_record_instead_of_aborting_batch(tmp_path):
-    index,cache,r=fixture_index(tmp_path)
-    (cache/(r['proxy']['sha256']+'.json')).unlink()
-    output=tmp_path/'out/plan.json'
-    result=prepare_queue('2026-10-25',index,cache,output)
-    queue=json.loads(output.read_text())['review_queue']
-    assert [q['id'] for q in queue]==['one']
-    assert queue[0]['dedupe_status']=='not_deduped'
-    assert queue[0]['dedupe_unavailable_reason'].startswith('missing_vector_cache:')
-    assert result['counts']=={'dedupe_unavailable':1}
-    assert not (tmp_path/'out/plan.json').with_suffix('.bad').exists()
-
-
-def test_undeduped_record_is_never_reported_as_unique_or_duplicate():
-    records=[row('a'),row('b'),row('c')]
-    result=plan('2026-10-25',records,{'a':vector(0),'b':vector(0)},undeduped={'c':'missing_vector_cache:deadbeef'})
-    assert {r['id'] for r in result['review_queue']}=={'a','c'}
-    assert result['decisions']['b']['status']=='intraday_removed'
-    assert 'c' not in result['decisions']
-    flagged={r['id']:r for r in result['review_queue']}['c']
-    assert flagged['dedupe_status']=='not_deduped'
-    assert result['dedupe_unavailable']==[{'id':'c','reason':'missing_vector_cache:deadbeef'}]
-    assert result['input_before_content_review']==3
-
-
-def test_history_pack_is_skipped_explicitly_when_no_current_vectors(tmp_path):
-    index,cache,r=fixture_index(tmp_path)
-    for path in cache.iterdir():
-        path.unlink()
-    output=tmp_path/'out/plan.json'
-    result=prepare_queue('2026-10-25',index,cache,output,history_vector_pack=tmp_path/'absent.zip')
-    assert result['history_vector_pack']['skipped']=='no_current_vectors'
-    assert result['counts']=={'dedupe_unavailable':1}

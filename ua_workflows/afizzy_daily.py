@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
-import sys
 
 from .guangdada_headless_ui import AVAILABLE_PRESETS, preset_scope_suffix, selected_presets
 
@@ -31,27 +30,11 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 def crawler_python():
-    """Collection interpreter: this checkout's environment, never a stale release."""
     configured = os.environ.get('AFIZZY_CRAWLER_PYTHON')
     if configured:
         return Path(configured).expanduser()
-    local = ROOT / '.venv/bin/python'
-    return local if local.is_file() else Path(sys.executable)
-
-
-def default_state_dir():
-    """Persistent collector state; mirrors guangdada_direct's own default."""
-    from .shared.config import DATA_DIR, PROJECT_ROOT, STATE_ROOT
-    if STATE_ROOT != PROJECT_ROOT:
-        return DATA_DIR / 'afizzy_daily' / 'collector-state'
-    return Path.home() / '.local/share/gdd-direct'
-
-
-def default_output_dir():
-    from .shared.config import DATA_DIR, PROJECT_ROOT, STATE_ROOT
-    if STATE_ROOT != PROJECT_ROOT:
-        return DATA_DIR / 'afizzy_daily' / 'raw'
-    return Path.home() / 'Downloads/广大大独立采集'
+    deployed = Path.home() / 'oliver/guangdada-direct-0.2.1/.venv/bin/python'
+    return deployed if deployed.is_file() else ROOT / '.venv/bin/python'
 
 def daily_presets(args, config):
     configured = config['daily_workflow']['presets']
@@ -124,130 +107,22 @@ def task_text(target, run_dir, scope):
 def parser():
     p = argparse.ArgumentParser(description='Afizzy Mac mini流程入口；task/doctor/status只读，筛选需实际证据')
     p.add_argument('command', choices=['task', 'doctor', 'status', 'crawl', 'resume-crawl',
-                                      'download-collected', 'prepare', 'pre-review', 'embed',
-                                      'stage', 'heartbeat', 'check', 'watchdog', 'daily'])
+                                      'download-collected', 'prepare', 'pre-review'])
     p.add_argument('--date', type=target_date)
     p.add_argument('--presets', nargs='+', choices=[p['key'] for p in AVAILABLE_PRESETS],
                    help='默认使用每日预设；恢复旧批次时传入原范围')
     p.add_argument('--run-dir', type=Path)
-    p.add_argument('--state-dir', type=Path, help='采集断点目录；默认使用持久数据根下的 collector-state')
+    p.add_argument('--state-dir', type=Path, default=Path.home() / '.local/share/gdd-direct')
     p.add_argument('--credentials-env', type=Path, default=ROOT / '.env')
-    p.add_argument('--crawler-python', type=Path, help='采集解释器；默认本checkout的.venv')
+    p.add_argument('--crawler-python', type=Path, default=crawler_python())
     p.add_argument('--source-zip', type=Path, action='append', default=[])
     p.add_argument('--media-index', type=Path)
     p.add_argument('--embedding-cache', type=Path)
     p.add_argument('--history-vector-pack', type=Path)
-    p.add_argument('--model-provenance', type=Path, help='embed：钉住模型来源的provenance JSON')
-    p.add_argument('--limit', type=int, help='embed：本次最多补算多少条')
-    p.add_argument('--batch-size', type=int, default=16, help='embed：每批编码张数')
-    p.add_argument('--device', help='embed：sentence-transformers设备，默认mps')
-    p.add_argument('--dry-run', action='store_true', help='embed：只统计缺口，不加载模型')
-    p.add_argument('--stage', choices=['crawl', 'prepare', 'embed', 'pre-review', 'joint-review',
-                                       'select', 'sync', 'report'], help='stage：阶段名')
-    p.add_argument('--status', choices=['running', 'done', 'failed', 'started'], help='stage/heartbeat：状态')
-    p.add_argument('--note', help='stage/heartbeat：原因或备注')
-    p.add_argument('--max-age', type=int, default=120, help='check/watchdog：允许的最长无更新分钟数')
-    p.add_argument('--notify', action='store_true', help='check/watchdog：配置了告警webhook时发送')
-    p.add_argument('--backfill', action='store_true', help='watchdog：缺失时补跑采集与登记')
     return p
-
-def run_crawl(a, mode='run'):
-    """Run the collection CLI; separated so tests never spawn a browser entry."""
-    presets = daily_presets(a, load(ROOT / 'config/social_chat_browser_daily.json'))
-    scope = selected_presets(presets)
-    return subprocess.run([str(a.crawler_python.expanduser()), '-m', 'ua_workflows.guangdada_direct', mode,
-                           '--date', a.date, '--state-dir', str(a.state_dir.expanduser()),
-                           '--output', str(default_output_dir()),
-                           '--credentials-env', str(a.credentials_env.expanduser()),
-                           '--presets', *(p['key'] for p in scope)], cwd=ROOT).returncode
-
-
-def crawl_summary_path(a):
-    presets = daily_presets(a, load(ROOT / 'config/social_chat_browser_daily.json'))
-    scope = selected_presets(presets)
-    return default_output_dir() / f'{a.date}_{preset_scope_suffix(scope)}' / 'summary.json'
-
-
-def crawl_outcome(a, code):
-    """Exit 2 also means "pages complete, some media missing"; keep those batches moving."""
-    summary = load(crawl_summary_path(a)) if crawl_summary_path(a).is_file() else {}
-    gaps = summary.get('media_failed') or 0
-    if code == 0:
-        return 'done', ''
-    if summary.get('complete') is True and not summary.get('attention') and gaps:
-        return 'done_with_gaps', f'media_failed={gaps}'
-    return 'failed', f'crawl exit {code}'
-
-
-def heartbeat_ticker(run_dir, a, stop):
-    """Refresh the heartbeat while a long collection runs, so it is not read as stale."""
-    from .social_chat_run_state import heartbeat as write_heartbeat
-    interval = max(1, int(os.environ.get('AFIZZY_HEARTBEAT_SECONDS', '120')))
-    while not stop.wait(interval):
-        try:
-            write_heartbeat(run_dir, status='started', stage='crawl', target_date=a.date,
-                            note='collection_running')
-        except Exception:
-            pass
-
-
-def mark_stage(run_dir, stage, status, *, note=None, target_date=None):
-    if run_dir is None:
-        return
-    try:
-        from .social_chat_run_state import mark
-        mark(run_dir, stage, status, note=note, target_date=target_date)
-    except Exception:
-        pass
-
-
-def default_embedding_cache():
-    """Stable cache location; the historical per-run path is kept as the default."""
-    from .shared.config import DATA_DIR
-    return DATA_DIR / 'social_chat_plugin_reprocess_v2' / 'embedding-cache'
-
-
-def _embed(a, parser_, run_dir=None):
-    from .social_chat_clip_embed import (collect_inputs, embed_missing, encoder_for, missing,
-                                         provenance_from_bundle, provenance_from_file, verify_model)
-    if not a.media_index:
-        parser_.error('embed需要--media-index')
-    cache = (a.embedding_cache or default_embedding_cache()).expanduser()
-    inputs = collect_inputs(a.media_index)
-    pending = missing(inputs, cache)
-    summary = {'status': 'dry_run' if a.dry_run else None, 'unique': len(inputs),
-               'pending': len(pending), 'cache': str(cache)}
-    if a.dry_run or not pending:
-        if not a.dry_run:
-            summary['status'] = 'complete'
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        return 0
-    pinned = (provenance_from_bundle(a.history_vector_pack) if a.history_vector_pack
-              else provenance_from_file(a.model_provenance) if a.model_provenance else None)
-    if pinned is None:
-        parser_.error('embed需要--history-vector-pack或--model-provenance钉住同一CLIP模型')
-    mark_stage(run_dir, 'embed', 'running', target_date=a.date)
-    snapshot = verify_model(pinned)
-    encode = encoder_for(snapshot, a.device)
-    try:
-        result = embed_missing(a.media_index, cache, pinned['fingerprint'], encode,
-                               batch_size=a.batch_size, limit=a.limit,
-                               progress=lambda done, total: print(f'encoded {done} / {total}', flush=True))
-    except Exception as error:
-        mark_stage(run_dir, 'embed', 'failed', note=type(error).__name__, target_date=a.date)
-        raise
-    mark_stage(run_dir, 'embed', 'done', target_date=a.date)
-    summary.update(result, status='complete')
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
-
 
 def main(argv=None):
     p = parser(); a = p.parse_args(argv)
-    if getattr(a, 'state_dir', None) is None and hasattr(a, 'state_dir'):
-        a.state_dir = default_state_dir()
-    if getattr(a, 'crawler_python', None) is None and hasattr(a, 'crawler_python'):
-        a.crawler_python = crawler_python()
     if a.command == 'doctor':
         print(json.dumps({'project': str(ROOT), 'crawler_python_exists': a.crawler_python.is_file(),
                           'credentials_file_present': a.credentials_env.is_file(),
@@ -255,10 +130,6 @@ def main(argv=None):
                                       ('requests', 'dotenv', 'numpy', 'PIL', 'torch', 'sentence_transformers')},
                           'browser_started': False, 'business_requests_sent': False}, ensure_ascii=False, indent=2))
         return 0
-    if a.command == 'embed':
-        embed_dir = (a.run_dir.expanduser().resolve() if a.run_dir else
-                     (ROOT / 'data/afizzy_daily' / a.date).resolve() if a.date else None)
-        return _embed(a, p, embed_dir)
     if not a.date:
         p.error('此命令需要显式--date，不按运行日猜目标日')
     run_dir = (a.run_dir or ROOT / 'data/social_chat_plugin_handoff' / a.date).expanduser().resolve()
@@ -278,102 +149,30 @@ def main(argv=None):
                 result['artifacts'][name] = {k: v[k] for k in
                     ('status', 'target_date', 'review_status', 'review_certified', 'selected_count', 'verified_active') if k in v}
         print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
-    daily_dir = (a.run_dir or (ROOT / 'data/afizzy_daily' / a.date)).expanduser().resolve()
-    if a.command == 'stage':
-        from .social_chat_run_state import mark
-        if not a.stage or not a.status:
-            p.error('stage需要--stage与--status')
-        control = mark(daily_dir, a.stage, a.status, note=a.note, target_date=a.date)
-        print(json.dumps({'run_dir': str(daily_dir), 'stage': a.stage,
-                          'entry': control['stages'][a.stage]}, ensure_ascii=False, indent=2))
-        return 0
-    if a.command == 'heartbeat':
-        from .social_chat_run_state import heartbeat
-        if a.status not in ('started', 'done', 'failed'):
-            p.error('heartbeat的--status须为started/done/failed')
-        print(json.dumps(heartbeat(daily_dir, status=a.status, stage=a.stage, note=a.note, target_date=a.date),
-                         ensure_ascii=False, indent=2))
-        return 0
-    if a.command in ('check', 'watchdog'):
-        from .social_chat_run_state import check_daily, notify, project_values, render_alert
-        decision = check_daily(daily_dir, max_age_minutes=a.max_age, target_date=a.date)
-        summary = {'run_dir': str(daily_dir), 'decision': decision}
-        if a.command == 'watchdog' and decision['status'] in ('missing', 'failed', 'stalled'):
-            summary['alert'] = render_alert(decision)
-            if a.backfill and decision['status'] == 'missing':
-                from .social_chat_run_state import heartbeat as write_heartbeat
-                write_heartbeat(daily_dir, status='started', stage='crawl', note='watchdog backfill', target_date=a.date)
-                code = main(['crawl', '--date', a.date, '--run-dir', str(daily_dir),
-                             '--crawler-python', str(a.crawler_python), '--state-dir', str(a.state_dir),
-                             '--credentials-env', str(a.credentials_env)])
-                summary['backfill'] = {'crawl_returncode': code}
-        if a.notify and decision['status'] in ('missing', 'failed', 'stalled'):
-            summary['notify'] = notify(summary.get('alert') or render_alert(decision),
-                                       values=project_values())
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        return 0 if decision['status'] in ('running', 'done') else 2
-    if a.command == 'daily':
-        import threading
-        from .social_chat_run_state import heartbeat as write_heartbeat, mark
-        write_heartbeat(daily_dir, status='started', stage='crawl', target_date=a.date)
-        mark(daily_dir, 'crawl', 'running', target_date=a.date)
-        stop = threading.Event()
-        ticker = threading.Thread(target=heartbeat_ticker, args=(daily_dir, a, stop), daemon=True)
-        ticker.start()
-        try:
-            code = run_crawl(a)
-        except Exception as error:
-            mark(daily_dir, 'crawl', 'failed', note=type(error).__name__, target_date=a.date)
-            write_heartbeat(daily_dir, status='failed', stage='crawl',
-                            note=type(error).__name__, target_date=a.date)
-            raise
-        finally:
-            stop.set()
-            ticker.join(timeout=5)
-        status, note = crawl_outcome(a, code)
-        if status == 'failed':
-            mark(daily_dir, 'crawl', 'failed', note=note, target_date=a.date)
-            write_heartbeat(daily_dir, status='failed', stage='crawl', note=note, target_date=a.date)
-            return code
-        mark(daily_dir, 'crawl', 'done', note=note or None, target_date=a.date)
-        write_heartbeat(daily_dir, status='done', stage='crawl',
-                        note=(note and note + '; continue_with_gaps') or None, target_date=a.date)
-        return 0
     if a.command in ('crawl', 'resume-crawl', 'download-collected'):
-        return run_crawl(a, {'crawl': 'run', 'resume-crawl': 'resume',
-                             'download-collected': 'download-collected'}[a.command])
+        presets = daily_presets(a, load(ROOT / 'config/social_chat_browser_daily.json'))
+        scope = selected_presets(presets)
+        mode = {'crawl': 'run', 'resume-crawl': 'resume', 'download-collected': 'download-collected'}[a.command]
+        return subprocess.run([str(a.crawler_python.expanduser()), '-m', 'ua_workflows.guangdada_direct', mode,
+                               '--date', a.date, '--state-dir', str(a.state_dir.expanduser()),
+                               '--credentials-env', str(a.credentials_env.expanduser()),
+                               '--presets', *(p['key'] for p in scope)], cwd=ROOT).returncode
     if a.command == 'prepare':
         from .social_chat_plugin_handoff import prepare
         config = load(ROOT / 'config/social_chat_browser_daily.json')
         presets = daily_presets(a, config)
         packages = a.source_zip or collected_archives(a.state_dir, a.date, presets)
-        mark_stage(daily_dir, 'prepare', 'running', target_date=a.date)
-        try:
-            result = prepare(a.date, run_dir, config, packages)
-        except Exception as error:
-            mark_stage(daily_dir, 'prepare', 'failed', note=type(error).__name__, target_date=a.date)
-            raise
-        mark_stage(daily_dir, 'prepare', 'done', target_date=a.date)
-        print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
+        print(json.dumps(prepare(a.date, run_dir, config, packages), ensure_ascii=False, indent=2)); return 0
     if not a.media_index or not a.embedding_cache:
         p.error('pre-review需要--media-index和--embedding-cache，不推断审核结论')
     scope = load(run_dir / 'scope.json'); handoff = load(run_dir / 'handoff.json')
     if scope.get('target_date') != a.date or handoff.get('status') != 'PACKAGE_RECEIVED':
         raise ValueError('尚未登记匹配目标日原包')
     from .social_chat_plugin_review_plan import prepare_queue
-    mark_stage(daily_dir, 'pre-review', 'running', target_date=a.date)
-    try:
-        result = prepare_queue(a.date, a.media_index, a.embedding_cache, run_dir / 'pre-review/plan.json',
-                               scope['processing_policy'], a.history_vector_pack,
-                               orientation_policy=scope.get('media_orientation_policy'))
-    except Exception as error:
-        mark_stage(daily_dir, 'pre-review', 'failed', note=type(error).__name__, target_date=a.date)
-        raise
-    mark_stage(daily_dir, 'pre-review', 'done',
-               note=f'queue={result["counts"].get("review_pending", 0)}'
-                    f' undeduped={len(result.get("dedupe_unavailable") or [])}', target_date=a.date)
+    result = prepare_queue(a.date, a.media_index, a.embedding_cache, run_dir / 'pre-review/plan.json',
+                           scope['processing_policy'], a.history_vector_pack,
+                           orientation_policy=scope.get('media_orientation_policy'))
     print(json.dumps({'status': result['status'], 'review_queue': result['counts'].get('review_pending', 0),
-                      'dedupe_unavailable': len(result.get('dedupe_unavailable') or []),
                       'review_certified': result['review_certified']}, ensure_ascii=False)); return 0
 
 if __name__ == '__main__':

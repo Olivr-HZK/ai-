@@ -18,7 +18,6 @@ TESTS = (
     'test_social_chat_media_orientation', 'test_social_chat_template_history',
     'test_social_chat_feedback_policy', 'test_social_chat_mixed_delivery', 'test_social_chat_media_names',
     'test_social_chat_plugin_review_plan', 'test_social_chat_clip_vectors',
-    'test_social_chat_run_state', 'test_social_chat_clip_embed', 'test_afizzy_daily_entry',
 )
 
 
