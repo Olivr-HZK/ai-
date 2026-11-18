@@ -154,6 +154,16 @@ class Runner:
         return {'path': master, 'job_id': job, 'story_end': finish.get('story_s'), 'reused': False}
 
     # ---------- 需求 ----------
+    def ensure_job(self, master):
+        """直接上传的视频还没有任务：上传并等分析，返回任务 ID。"""
+        if master.get('job_id'):
+            return master['job_id']
+        up = self.cli('upload', str(master['path']), '--yes')
+        job = up['results'][0]['ids'][0]
+        self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
+        master['job_id'] = job
+        return job
+
     def translate(self, job_id, lang, mode='original'):
         trim = {'remove_cta': True, 'remove_gameplay': False} if mode == 'original' else None
         result = translate_many(self.api, [job_id], self.ck, [lang], parts=('text', 'voice'),
@@ -343,14 +353,18 @@ class Runner:
         if kind == '替换logo':
             final, note = master['path'], '母版即成品'
         elif kind == '替换语言':
+            job = self.ensure_job(master)
+            if not src_lang:
+                src_lang = ((self.api.job(job).get('translation') or {}).get('source_language') or '')
             if lang == src_lang:
-                final, note = master['path'], '目标语言=源语言，母版即成品'
+                final, note = master['path'], '目标语言=源语言，视频本身即成品'
             else:
-                story = self.translate(master['job_id'], lang)
+                story = self.translate(job, lang)
                 self.put(POOL, rid, {'复刻状态': '拼接中'})
                 cta, cta_lang = self.cta_for(lang)
                 final = self.assemble(story, cta, tag)
-                note = f'母版任务 {master["job_id"][:8]}… 翻译（text+voice，去 CTA）+ {cta_lang} CTA'
+                where = '原视频' if direct else '母版'
+                note = f'{where}任务 {job[:8]}… 翻译（text+voice，去 CTA）+ {cta_lang} CTA'
         elif kind == '替换人物':
             portrait = self.download(refs[0], self.dir / 'portraits' / refs[0]['name'])
             swap_job, seg, story_end, job_src = self.swap(master, tag, portrait)
@@ -390,6 +404,7 @@ def main():
     p.add_argument('--only', help='只跑某条需求 record_id')
     p.add_argument('--run-dir', default=str(ROOT))
     p.add_argument('--auth-mode', choices=['device', 'browser'], help='默认取项目 REPLICA_AUTH_MODE')
+    p.add_argument('--types', default='替换人物', help='只处理这些需求类型，逗号分隔（默认 替换人物）')
     a = p.parse_args()
     feishu = Feishu()
     api = ReplicaAPI.configured(auth_mode=a.auth_mode, confirm_paid=True); auth = api.authenticate()
@@ -400,8 +415,8 @@ def main():
         f = row['fields']
         if a.only and row['record_id'] != a.only:
             continue
-        if text(f.get('需求类型')) != '替换人物':
-            continue  # 主表负责 替换logo / 替换语言；需求表只接换人
+        if text(f.get('需求类型')) not in {x.strip() for x in a.types.split(',') if x.strip()}:
+            continue
         if text(f.get('需求状态')) != '已验收':
             continue
         if text(f.get('复刻状态')) in {'已完成', '待补充信息', '需人工处理', '失败'}:

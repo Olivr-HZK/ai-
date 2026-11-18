@@ -152,11 +152,13 @@ def main():
                     steps = ['原视频（直接上传）']
                     if kind == '替换人物':
                         steps.append('换人→' + role if role else '换人')
+                    elif kind == '替换语言':
+                        steps.append('翻译→' + (lang or '（未选语言）'))
                     note = '可执行（不查母版）'
                 elif source_error:
                     note = f'素材读取失败（{source_error}），本轮跳过'
-                elif kind and kind != '替换人物':
-                    note = f'主表负责（{kind}），换人表只接替换人物'
+                elif kind and kind not in {'替换人物', '替换语言'}:
+                    note = f'主表负责（{kind}），需求池不接'
                 elif status != ACCEPTED:
                     note = f'跳过：需求状态={status or "空"}'
                 elif progress == '已完成':
