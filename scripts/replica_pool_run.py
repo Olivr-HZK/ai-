@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -29,6 +30,8 @@ APP = 'Adz4bj9ECaCCJrsgkj7coheYn3c'
 MAIN = 'tblwhAqPfQoBXK3Q'
 POOL = 'tblKXqqPOYqk3XPd'
 ROOT = Path('data/replica-pool-run')
+# launchd 的 PATH 很窄，ffmpeg/ffprobe 通常在 Homebrew 目录
+ENV = {**os.environ, 'PATH': '/opt/homebrew/bin:/usr/local/bin:' + os.environ.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')}
 PORTRAIT = Path('data/replica-cast-50-20261116/portraits/01.png')
 LANG = {'日语': 'ja', '韩语': 'ko', '英语': 'en', '中文': 'zh', '德语': 'de', '法语': 'fr',
         '西班牙语': 'es', '葡萄牙语': 'pt', '意大利语': 'it', '俄语': 'ru', '印尼语': 'id', '阿拉伯语': 'ar'}
@@ -96,7 +99,7 @@ class Runner:
         attempts = 3 if readonly else 1
         last = None
         for attempt in range(attempts):
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=ENV)
             if out.returncode == 0:
                 try:
                     body = json.loads(out.stdout.strip().splitlines()[-1])
@@ -258,7 +261,7 @@ class Runner:
                 '-map', '[v]', '-map', '[a]', '-r', '30', '-fps_mode', 'cfr',
                 '-c:v', 'libx264', '-crf', '19', '-preset', 'medium', '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', str(final), '-y'], check=True)
-        sp.run(['ffmpeg', '-v', 'error', '-i', str(final), '-f', 'null', '-'], check=True)
+        sp.run(['ffmpeg', '-v', 'error', '-i', str(final), '-f', 'null', '-'], check=True, env=ENV)
         return final
 
 
