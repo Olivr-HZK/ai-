@@ -115,11 +115,28 @@ def read_heartbeat(run_dir):
     return load(Path(run_dir) / HEARTBEAT, None)
 
 
+def finished_by_result(run_dir):
+    """Old entries finish without a heartbeat; their daily result is the evidence."""
+    result = load(Path(run_dir) / 'daily-result.json', None)
+    if not isinstance(result, dict):
+        return None
+    if result.get('workflow_finished') is True:
+        return result
+    if str(result.get('status') or '').startswith(('complete', 'partial_completed')):
+        return result
+    return None
+
+
 def check_daily(run_dir, *, max_age_minutes=120, now=None, target_date=None):
     """Decide whether today's run is on track, stalled, failed or never started."""
     current = (now or datetime.now(TZ)).astimezone(TZ)
     beat = read_heartbeat(run_dir)
     problems = stale(run_dir, max_age_minutes, now=current)
+    if beat is None and (finished := finished_by_result(run_dir)):
+        return {'status': 'done', 'source': 'daily-result.json',
+                'target_date': finished.get('target_date') or target_date or Path(run_dir).name,
+                'heartbeat': None, 'problems': problems,
+                'daily_result_status': finished.get('status')}
     if beat is None:
         return {'status': 'missing', 'target_date': target_date or Path(run_dir).name,
                 'stages': sorted((state(run_dir).get('stages') or {})), 'problems': problems}

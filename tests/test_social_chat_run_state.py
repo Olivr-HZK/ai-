@@ -74,3 +74,15 @@ def test_cli_check_exit_codes_and_markers(tmp_path, capsys):
     capsys.readouterr()
     assert afizzy_daily.main(['check', '--date', DATE, '--run-dir', str(run), '--max-age', '60']) == 0
     assert json.loads(capsys.readouterr().out)['decision']['status'] == 'running'
+
+
+def test_legacy_completed_run_without_heartbeat_is_done_not_missing(tmp_path):
+    (tmp_path / 'daily-result.json').write_text(json.dumps({
+        'target_date': DATE, 'status': 'partial_completed', 'workflow_finished': True}))
+    decision = check_daily(tmp_path, target_date=DATE)
+    assert decision['status'] == 'done' and decision['source'] == 'daily-result.json'
+
+
+def test_unfinished_run_without_heartbeat_stays_missing(tmp_path):
+    (tmp_path / 'daily-result.json').write_text(json.dumps({'target_date': DATE, 'status': 'running'}))
+    assert check_daily(tmp_path, target_date=DATE)['status'] == 'missing'
