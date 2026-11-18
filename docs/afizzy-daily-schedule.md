@@ -25,10 +25,10 @@ launchctl kickstart -k gui/$(id -u)/com.afizzy.daily-watchdog   # 只读检查�
 
 ## 采集段的行为
 
-- `afizzy_daily daily` 先写 `heartbeat.json`，再跑五预设采集，最后记 `crawl done/failed`；
-- 采集失败时心跳和阶段都记 `failed`，不会留下"看起来还在跑"的假状态；
+- **环境和断点目录固定**：采集用本 checkout 的 `.venv`（不再回退到 `guangdada-direct-0.2.1` 的旧虚拟环境），断点目录默认 `afizzy-state/data/afizzy_daily/collector-state`（不再默认 `~/.local/share/gdd-direct`），输出默认 `afizzy-state/data/afizzy_daily/raw`。需要覆盖时显式传 `--crawler-python / --state-dir`；
+- `afizzy_daily daily` 先写 `heartbeat.json`，跑采集期间**每 120 秒刷新心跳**（`AFIZZY_HEARTBEAT_SECONDS` 可调），避免长批次被看门狗误判停滞；
 - 目标日 = 北京时间昨天，由脚本计算，不接受手工改；
-- 采集有缺口照常继续（按既定口径），日账披露缺口。
+- **部分媒体未取得不阻断后处理**：采集器在"网页范围完整、少量媒体失败"时退出码是 2，入口会读 `summary.json`：`complete=true` 且 `attention` 为空、`media_failed>0` → 记 `done_with_gaps`（心跳 note 带 `media_failed=N; continue_with_gaps`），06:00 的筛选照常继续并披露缺口；网页没采完、有 attention 或登录/断点异常仍记 `failed` 并停止。
 
 ## 筛选 Agent（automation-3）改动
 

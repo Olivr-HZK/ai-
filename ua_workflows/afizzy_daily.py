@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 
 from .guangdada_headless_ui import AVAILABLE_PRESETS, preset_scope_suffix, selected_presets
 
@@ -30,11 +31,27 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 def crawler_python():
+    """Collection interpreter: this checkout's environment, never a stale release."""
     configured = os.environ.get('AFIZZY_CRAWLER_PYTHON')
     if configured:
         return Path(configured).expanduser()
-    deployed = Path.home() / 'oliver/guangdada-direct-0.2.1/.venv/bin/python'
-    return deployed if deployed.is_file() else ROOT / '.venv/bin/python'
+    local = ROOT / '.venv/bin/python'
+    return local if local.is_file() else Path(sys.executable)
+
+
+def default_state_dir():
+    """Persistent collector state; mirrors guangdada_direct's own default."""
+    from .shared.config import DATA_DIR, PROJECT_ROOT, STATE_ROOT
+    if STATE_ROOT != PROJECT_ROOT:
+        return DATA_DIR / 'afizzy_daily' / 'collector-state'
+    return Path.home() / '.local/share/gdd-direct'
+
+
+def default_output_dir():
+    from .shared.config import DATA_DIR, PROJECT_ROOT, STATE_ROOT
+    if STATE_ROOT != PROJECT_ROOT:
+        return DATA_DIR / 'afizzy_daily' / 'raw'
+    return Path.home() / 'Downloads/广大大独立采集'
 
 def daily_presets(args, config):
     configured = config['daily_workflow']['presets']
@@ -113,9 +130,9 @@ def parser():
     p.add_argument('--presets', nargs='+', choices=[p['key'] for p in AVAILABLE_PRESETS],
                    help='默认使用每日预设；恢复旧批次时传入原范围')
     p.add_argument('--run-dir', type=Path)
-    p.add_argument('--state-dir', type=Path, default=Path.home() / '.local/share/gdd-direct')
+    p.add_argument('--state-dir', type=Path, help='采集断点目录；默认使用持久数据根下的 collector-state')
     p.add_argument('--credentials-env', type=Path, default=ROOT / '.env')
-    p.add_argument('--crawler-python', type=Path, default=crawler_python())
+    p.add_argument('--crawler-python', type=Path, help='采集解释器；默认本checkout的.venv')
     p.add_argument('--source-zip', type=Path, action='append', default=[])
     p.add_argument('--media-index', type=Path)
     p.add_argument('--embedding-cache', type=Path)
@@ -140,8 +157,38 @@ def run_crawl(a, mode='run'):
     scope = selected_presets(presets)
     return subprocess.run([str(a.crawler_python.expanduser()), '-m', 'ua_workflows.guangdada_direct', mode,
                            '--date', a.date, '--state-dir', str(a.state_dir.expanduser()),
+                           '--output', str(default_output_dir()),
                            '--credentials-env', str(a.credentials_env.expanduser()),
                            '--presets', *(p['key'] for p in scope)], cwd=ROOT).returncode
+
+
+def crawl_summary_path(a):
+    presets = daily_presets(a, load(ROOT / 'config/social_chat_browser_daily.json'))
+    scope = selected_presets(presets)
+    return default_output_dir() / f'{a.date}_{preset_scope_suffix(scope)}' / 'summary.json'
+
+
+def crawl_outcome(a, code):
+    """Exit 2 also means "pages complete, some media missing"; keep those batches moving."""
+    summary = load(crawl_summary_path(a)) if crawl_summary_path(a).is_file() else {}
+    gaps = summary.get('media_failed') or 0
+    if code == 0:
+        return 'done', ''
+    if summary.get('complete') is True and not summary.get('attention') and gaps:
+        return 'done_with_gaps', f'media_failed={gaps}'
+    return 'failed', f'crawl exit {code}'
+
+
+def heartbeat_ticker(run_dir, a, stop):
+    """Refresh the heartbeat while a long collection runs, so it is not read as stale."""
+    from .social_chat_run_state import heartbeat as write_heartbeat
+    interval = max(1, int(os.environ.get('AFIZZY_HEARTBEAT_SECONDS', '120')))
+    while not stop.wait(interval):
+        try:
+            write_heartbeat(run_dir, status='started', stage='crawl', target_date=a.date,
+                            note='collection_running')
+        except Exception:
+            pass
 
 
 def mark_stage(run_dir, stage, status, *, note=None, target_date=None):
@@ -197,6 +244,10 @@ def _embed(a, parser_, run_dir=None):
 
 def main(argv=None):
     p = parser(); a = p.parse_args(argv)
+    if getattr(a, 'state_dir', None) is None and hasattr(a, 'state_dir'):
+        a.state_dir = default_state_dir()
+    if getattr(a, 'crawler_python', None) is None and hasattr(a, 'crawler_python'):
+        a.crawler_python = crawler_python()
     if a.command == 'doctor':
         print(json.dumps({'project': str(ROOT), 'crawler_python_exists': a.crawler_python.is_file(),
                           'credentials_file_present': a.credentials_env.is_file(),
@@ -262,9 +313,13 @@ def main(argv=None):
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0 if decision['status'] in ('running', 'done') else 2
     if a.command == 'daily':
+        import threading
         from .social_chat_run_state import heartbeat as write_heartbeat, mark
         write_heartbeat(daily_dir, status='started', stage='crawl', target_date=a.date)
         mark(daily_dir, 'crawl', 'running', target_date=a.date)
+        stop = threading.Event()
+        ticker = threading.Thread(target=heartbeat_ticker, args=(daily_dir, a, stop), daemon=True)
+        ticker.start()
         try:
             code = run_crawl(a)
         except Exception as error:
@@ -272,13 +327,17 @@ def main(argv=None):
             write_heartbeat(daily_dir, status='failed', stage='crawl',
                             note=type(error).__name__, target_date=a.date)
             raise
-        if code:
-            mark(daily_dir, 'crawl', 'failed', note=f'crawl exit {code}', target_date=a.date)
-            write_heartbeat(daily_dir, status='failed', stage='crawl',
-                            note=f'crawl exit {code}', target_date=a.date)
+        finally:
+            stop.set()
+            ticker.join(timeout=5)
+        status, note = crawl_outcome(a, code)
+        if status == 'failed':
+            mark(daily_dir, 'crawl', 'failed', note=note, target_date=a.date)
+            write_heartbeat(daily_dir, status='failed', stage='crawl', note=note, target_date=a.date)
             return code
-        mark(daily_dir, 'crawl', 'done', target_date=a.date)
-        write_heartbeat(daily_dir, status='done', stage='crawl', target_date=a.date)
+        mark(daily_dir, 'crawl', 'done', note=note or None, target_date=a.date)
+        write_heartbeat(daily_dir, status='done', stage='crawl',
+                        note=(note and note + '; continue_with_gaps') or None, target_date=a.date)
         return 0
     if a.command in ('crawl', 'resume-crawl', 'download-collected'):
         return run_crawl(a, {'crawl': 'run', 'resume-crawl': 'resume',
