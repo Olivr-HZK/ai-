@@ -92,11 +92,24 @@ class Runner:
     def cli(self, *args, timeout=1800):
         mode = ['--auth-mode', self.auth_mode] if self.auth_mode else []
         cmd = ['./scripts/replica-studio', *mode, '--checkpoint', str(self.ck.path), *args]
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if out.returncode != 0:
-            raise RuntimeError(f'CLI 失败 {args[:2]}: {out.stdout[-400:]} {out.stderr[-400:]}')
-        body = out.stdout.strip().splitlines()[-1]
-        return json.loads(body)
+        readonly = args[0] in {'status', 'characters', 'download'}
+        attempts = 3 if readonly else 1
+        last = None
+        for attempt in range(attempts):
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            if out.returncode == 0:
+                try:
+                    body = json.loads(out.stdout.strip().splitlines()[-1])
+                except Exception:
+                    body = None
+                if body is not None and not (body.get('ok') is False and body.get('code') in {'read_failed', 'result_unknown'}):
+                    return body
+                last = RuntimeError(f'CLI 失败 {args[:2]}: {str(body)[:300]}')
+            else:
+                last = RuntimeError(f'CLI 失败 {args[:2]}: {out.stdout[-300:]} {out.stderr[-300:]}')
+            if attempt + 1 < attempts:
+                time.sleep(15)  # 只读命令遇到读失败/网络抖动时重试
+        raise last
 
     def record(self, table, rid):
         return self.feishu.call('GET', f'bitable/v1/apps/{APP}/tables/{table}/records/{rid}',
