@@ -17,7 +17,7 @@ sleep 1
 WATCH=$!
 
 ( while true; do
-    .venv/bin/python scripts/replica_pool_run.py --auth-mode browser --run-dir data/replica-pool-run
+    .venv/bin/python scripts/replica_pool_run.py --auth-mode device --run-dir data/replica-pool-run
     sleep 120
   done ) &
 RUN=$!
