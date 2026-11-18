@@ -404,8 +404,8 @@ def main():
             continue  # 主表负责 替换logo / 替换语言；需求表只接换人
         if text(f.get('需求状态')) != '已验收':
             continue
-        if text(f.get('复刻状态')) == '已完成':
-            continue
+        if text(f.get('复刻状态')) in {'已完成', '待补充信息', '需人工处理', '失败'}:
+            continue  # 已完成或需要人工处理的行不再自动跑
         print('领取', row['record_id'], text(f.get('需求名称')))
         try:
             runner.run_row(row)
