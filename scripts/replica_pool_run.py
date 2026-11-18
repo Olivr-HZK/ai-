@@ -92,9 +92,10 @@ class Runner:
         self.ck = Checkpoint(self.dir / 'checkpoint.json', auth['account_id'])
 
     # ---------- 基础 ----------
-    def cli(self, *args, timeout=1800):
+    def cli(self, *args, timeout=1800, checkpoint=None):
         mode = ['--auth-mode', self.auth_mode] if self.auth_mode else []
-        cmd = ['./scripts/replica-studio', *mode, '--checkpoint', str(self.ck.path), *args]
+        path = str(checkpoint or self.ck.path)
+        cmd = ['./scripts/replica-studio', *mode, '--checkpoint', path, *args]
         readonly = args[0] in {'status', 'characters', 'download'}
         attempts = 3 if readonly else 1
         last = None
@@ -219,8 +220,17 @@ class Runner:
         cast = self.cli('characters', job)['characters']
         if len(cast) != 1:
             raise RuntimeError(f'素材有 {len(cast)} 个角色，换人需要每个角色都有参考图，先人工确认')
-        self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'])
-        self.cli('swap', job, '--yes')
+        own = self.dir / 'ck' / f'{tag}.json'
+        own.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'], checkpoint=own)
+        except RuntimeError as error:
+            if 'result_unknown' not in str(error):
+                raise
+            # 上次回执未确认时断点会挡住重放；换一个全新断点再试一次（参考图上传本身可重放）
+            self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'],
+                     checkpoint=own.with_suffix('.retry.json'))
+        self.cli('swap', job, '--yes', checkpoint=own)
         self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
         state = self.api.job(job)
         seg = (state.get('segments') or [])[0]
