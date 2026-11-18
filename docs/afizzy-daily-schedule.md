@@ -50,6 +50,16 @@ cp ~/.codex/automations/automation-3/automation.toml.bak-20261118 ~/.codex/autom
 
 备份文件生成于 2026-11-18 改动前；回滚后 automation-3 恢复 05:00 且自行采集。
 
-## 告警
+## 告警（飞书）
 
-`watchdog --notify` 只在项目 `.env` 配置 `AFIZZY_ALERT_WECOM_WEBHOOK`（企业微信机器人完整地址）时发送；当前 mini 未配置，告警只写日志，不发送任何消息。日报使用的 `AFIZZY_WECOM_WEBHOOK` 不会被用于告警。
+`watchdog --notify` 只在**缺跑 / 停滞 / 失败**时发送，`running`/`done` 不发，避免每小时刷屏。
+
+通道在项目 `.env` 配置，按顺序取第一个可用的：
+
+| 变量 | 说明 |
+|---|---|
+| `AFIZZY_ALERT_FEISHU_CHAT_ID` | 飞书群 `chat_id`（推荐，走应用机器人 `im/v1/messages` 纯文本） |
+| `AFIZZY_ALERT_FEISHU_CHAT_NAME` | 可选，群名，仅用于回执记录 |
+| `AFIZZY_ALERT_WECOM_WEBHOOK` | 备用：企业微信群机器人完整地址 |
+
+都没配置时返回 `not_configured`，只写日志、不发送。日报使用的 `AFIZZY_WECOM_WEBHOOK` 和 `crawl_completion_report` 群不会被自动复用，需要显式配置才发。

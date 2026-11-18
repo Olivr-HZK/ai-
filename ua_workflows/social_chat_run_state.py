@@ -13,6 +13,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from uuid import NAMESPACE_URL, uuid5
 
 TZ = timezone(timedelta(hours=8))
 STAGES = ('crawl', 'prepare', 'embed', 'pre-review', 'joint-review', 'select', 'sync', 'report')
@@ -171,8 +172,35 @@ def alert_endpoint(values=None):
     return (values.get('AFIZZY_ALERT_WECOM_WEBHOOK') or '').strip()
 
 
-def notify(text, *, post=None, values=None, timeout=20):
-    """Send a short alert only when an explicit alert webhook is configured."""
+def notify_feishu(text, *, chat_id, chat_name=None, client=None):
+    """Send one plain-text alert to the configured Feishu chat; no readback claim."""
+    if not chat_id:
+        return {'status': 'not_configured', 'sent': False}
+    if client is None:
+        from ua_workflows.social_chat_browser_daily import Feishu
+        client = Feishu()
+    message = client.call('POST', 'im/v1/messages', params={'receive_id_type': 'chat_id'},
+                          json={'receive_id': chat_id, 'msg_type': 'text',
+                                'content': json.dumps({'text': text[:4000]}, ensure_ascii=False),
+                                'uuid': str(uuid5(NAMESPACE_URL, 'afizzy-alert|' + chat_id + '|'
+                                                  + hashlib.sha256(text.encode()).hexdigest()))})
+    if not isinstance(message, dict) or not message.get('message_id') or message.get('chat_id') != chat_id:
+        raise ValueError('Feishu alert send response identity mismatch')
+    result = {'status': 'accepted', 'sent': True, 'chat_id': chat_id,
+              'message_id': message['message_id']}
+    if chat_name:
+        result['chat_name'] = chat_name
+    return result
+
+
+def notify(text, *, post=None, values=None, timeout=20, config=None, client=None):
+    """Send a short alert: Feishu chat when configured, WeCom webhook otherwise."""
+    values = dict(values or {})
+    setting = (config or {}).get('alert_feishu') or {}
+    chat_id = setting.get('chat_id') or values.get('AFIZZY_ALERT_FEISHU_CHAT_ID', '')
+    chat_name = setting.get('chat_name') or values.get('AFIZZY_ALERT_FEISHU_CHAT_NAME', '')
+    if chat_id and setting.get('enabled', True):
+        return notify_feishu(text, chat_id=chat_id, chat_name=chat_name, client=client)
     endpoint = alert_endpoint(values)
     if not endpoint:
         return {'status': 'not_configured', 'sent': False}

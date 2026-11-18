@@ -256,7 +256,7 @@ def main(argv=None):
                              '--crawler-python', str(a.crawler_python), '--state-dir', str(a.state_dir),
                              '--credentials-env', str(a.credentials_env)])
                 summary['backfill'] = {'crawl_returncode': code}
-        if a.notify:
+        if a.notify and decision['status'] in ('missing', 'failed', 'stalled'):
             summary['notify'] = notify(summary.get('alert') or render_alert(decision),
                                        values=project_values())
         print(json.dumps(summary, ensure_ascii=False, indent=2))

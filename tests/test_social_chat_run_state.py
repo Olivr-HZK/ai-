@@ -86,3 +86,45 @@ def test_legacy_completed_run_without_heartbeat_is_done_not_missing(tmp_path):
 def test_unfinished_run_without_heartbeat_stays_missing(tmp_path):
     (tmp_path / 'daily-result.json').write_text(json.dumps({'target_date': DATE, 'status': 'running'}))
     assert check_daily(tmp_path, target_date=DATE)['status'] == 'missing'
+
+
+def test_alert_uses_configured_feishu_chat():
+    sent = {}
+
+    class Client:
+        def call(self, method, route, **kwargs):
+            sent.update(method=method, route=route, body=kwargs.get('json'))
+            return {'message_id': 'om_test', 'chat_id': 'oc_test'}
+
+    result = notify('Afizzy 任务失败', client=Client(),
+                    values={'AFIZZY_ALERT_FEISHU_CHAT_ID': 'oc_test',
+                            'AFIZZY_ALERT_FEISHU_CHAT_NAME': '测试群'})
+    assert result['status'] == 'accepted' and result['message_id'] == 'om_test'
+    assert sent['route'] == 'im/v1/messages' and sent['body']['receive_id'] == 'oc_test'
+    assert sent['body']['msg_type'] == 'text'
+    assert 'Afizzy' in json.loads(sent['body']['content'])['text']
+
+
+def test_alert_rejects_mismatched_feishu_response():
+    class Client:
+        def call(self, method, route, **kwargs):
+            return {'message_id': 'om_test', 'chat_id': 'oc_other'}
+    with pytest.raises(ValueError, match='identity mismatch'):
+        notify('x', client=Client(), values={'AFIZZY_ALERT_FEISHU_CHAT_ID': 'oc_test'})
+
+
+def test_watchdog_notifies_only_when_problem(tmp_path, monkeypatch, capsys):
+    from ua_workflows import afizzy_daily
+    calls = []
+    monkeypatch.setattr('ua_workflows.social_chat_run_state.project_values',
+                        lambda: {'AFIZZY_ALERT_FEISHU_CHAT_ID': 'oc_test'})
+    monkeypatch.setattr('ua_workflows.social_chat_run_state.notify_feishu',
+                        lambda text, **kwargs: calls.append(text) or {'status': 'accepted', 'sent': True})
+    run = tmp_path / 'run'
+    assert afizzy_daily.main(['watchdog', '--date', DATE, '--run-dir', str(run), '--notify']) == 2
+    assert len(calls) == 1 and '没有启动痕迹' in calls[0]
+    capsys.readouterr()
+    run.mkdir(parents=True, exist_ok=True)
+    (run / 'daily-result.json').write_text(json.dumps({'target_date': DATE, 'workflow_finished': True}))
+    assert afizzy_daily.main(['watchdog', '--date', DATE, '--run-dir', str(run), '--notify']) == 0
+    assert len(calls) == 1, '完成状态不应再发告警'
