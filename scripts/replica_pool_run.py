@@ -300,7 +300,8 @@ class Runner:
             one = text(f.get('目标语言（单选）'))
             langs = [LANG[one]] if one in LANG else []
         lang = langs[0] if langs else ''
-        role = text(f.get('换人角色'))
+        role = text(f.get('换人角色')) or (text(f.get('人物参考图')[0].get('name')).rsplit('.', 1)[0]
+                                            if f.get('人物参考图') else '')
         links = link_ids(f.get('关联原素材'))
         videos = f.get('原视频') or []
         refs = f.get('人物参考图') or []
@@ -319,8 +320,7 @@ class Runner:
         if kind == '替换人物' and len(langs) > 1 and not all(langs):
             problems.append('目标语言有无法识别的选项')
         if kind == '替换人物':
-            if not role:
-                problems.append('替换人物必须填换人角色')
+            # 换人角色只是标签：参考图才是真正的主体，没填就用品名兜底
             if len(refs) != 1:
                 problems.append(f'替换人物必须上传且只上传 1 张人物参考图（当前 {len(refs)} 张）')
         if problems:
