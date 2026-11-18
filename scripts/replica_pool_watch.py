@@ -91,19 +91,24 @@ def main():
     lock.write_text(str(os.getpid()))
 
     feishu = Feishu()
+    token_at = time.time()
     print('监听启动：只读 ' + POOL, flush=True)
 
     source_cache = {}
     try:
         while True:
             started = time.time()
+            if time.time() - token_at > 5400:  # 飞书 tenant token 约 2 小时过期，提前换
+                feishu, token_at = Feishu(), time.time()
             try:
                 rows = feishu.call('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
                                    params={'page_size': 500, 'user_id_type': 'open_id'}, json={}).get('items', [])
-            except Exception as error:  # 飞书读超时不结束进程，下一轮再试
+            except Exception as error:  # 超时或 token 失效都不结束进程，下一轮再试
                 with log_path.open('a') as log:
                     log.write(f'{time.strftime("%Y-%m-%dT%H:%M:%S")} 读取失败 {type(error).__name__}: {error}\n')
                 print('读取失败，稍后重试：', error, flush=True)
+                if '99991663' in str(error) or 'Invalid access token' in str(error):
+                    feishu, token_at = Feishu(), time.time()
                 if args.once:
                     return 1
                 time.sleep(max(1.0, args.interval))
