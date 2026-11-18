@@ -181,6 +181,15 @@ class Runner:
         master['job_id'] = job
         return job
 
+    def portrait_ready(self, job_id, source_id, timeout=60):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for person in (self.api.job(job_id).get('cast_members') or []):
+                if person.get('source_id') == source_id and person.get('portrait_file'):
+                    return True
+            time.sleep(5)
+        return False
+
     def translate(self, job_id, lang, mode='original'):
         trim = {'remove_cta': True, 'remove_gameplay': False} if mode == 'original' else None
         result = translate_many(self.api, [job_id], self.ck, [lang], parts=('text', 'voice'),
@@ -227,9 +236,12 @@ class Runner:
         except RuntimeError as error:
             if 'result_unknown' not in str(error):
                 raise
-            # 上次回执未确认时断点会挡住重放；换一个全新断点再试一次（参考图上传本身可重放）
-            self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'],
-                     checkpoint=own.with_suffix('.retry.json'))
+            # 回执没确认时以任务里的实际参考图为准；没生效再换新断点重试一次
+            if not self.portrait_ready(job, cast[0]['source_id']):
+                self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'],
+                         checkpoint=own.with_suffix('.retry.json'))
+            if not self.portrait_ready(job, cast[0]['source_id']):
+                raise RuntimeError('参考图上传未生效')
         self.cli('swap', job, '--yes', checkpoint=own)
         self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
         state = self.api.job(job)
