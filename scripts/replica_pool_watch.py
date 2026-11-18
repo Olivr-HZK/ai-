@@ -122,7 +122,9 @@ def main():
                 role = text(f.get('换人角色'))
                 lip = bool(f.get('口型优先'))
                 links = link_ids(f.get('关联原素材'))
+                videos = f.get('原视频') or []
                 source_id = links[0] if links else ''
+                direct = bool(videos) and not links
                 source, source_error = {}, ''
                 if source_id:
                     cached = source_cache.get(source_id)
@@ -144,7 +146,12 @@ def main():
                 steps = []
                 note = ''
                 progress = text(f.get('复刻状态')) or text(f.get('执行进度'))
-                if source_error:
+                if direct:
+                    steps = ['原视频（直接上传）']
+                    if kind == '替换人物':
+                        steps.append('换人→' + role if role else '换人')
+                    note = '可执行（不查母版）'
+                elif source_error:
                     note = f'素材读取失败（{source_error}），本轮跳过'
                 elif kind and kind != '替换人物':
                     note = f'主表负责（{kind}），换人表只接替换人物'

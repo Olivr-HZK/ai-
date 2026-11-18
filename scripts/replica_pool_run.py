@@ -60,13 +60,16 @@ def link_ids(value):
     return []
 
 def fingerprint(fields):
-    """同一素材 + 同类型 + 同语言 + 同角色 + 同一张参考图 = 完全相同的需求。"""
+    """同一素材/同一原视频 + 同类型 + 同语言 + 同角色 + 同一张参考图 = 完全相同的需求。"""
     links = link_ids(fields.get('关联原素材'))
+    videos = fields.get('原视频') or []
     refs = fields.get('人物参考图') or []
     lang = text(fields.get('目标语言（单选）')) or text(fields.get('目标语言'))
     ref = (refs[0].get('name'), refs[0].get('size')) if refs else ('', 0)
+    source = links[0] if len(links) == 1 else (
+        f"video:{videos[0].get('name')}:{videos[0].get('size')}" if len(videos) == 1 else '')
     return (
-        links[0] if len(links) == 1 else '',
+        source,
         text(fields.get('需求类型')),
         lang,
         text(fields.get('换人角色')),
@@ -193,14 +196,17 @@ class Runner:
         self.cli('portrait', job, str(portrait), '--source-id', cast[0]['source_id'])
         self.cli('swap', job, '--yes')
         self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
-        seg = (self.api.job(job).get('segments') or [])[0]
+        state = self.api.job(job)
+        seg = (state.get('segments') or [])[0]
+        story_end = (state.get('source_story') or {}).get('story_end_s') or seg.get('end_s')
+        src_lang = ((state.get('translation') or {}).get('source_language') or '')
         url = media_url(f'/api/jobs/{job}/files/{seg["video_file"]}?download=1', job)
         out = self.dir / 'swaps' / f'{tag}-raw.mp4'
         out.parent.mkdir(parents=True, exist_ok=True)
         with self.api.session.get(url, stream=True, timeout=(15, 300), allow_redirects=False) as r:
             r.raise_for_status()
             out.write_bytes(r.content)
-        return job, out
+        return job, out, story_end, src_lang
 
     def cta_for(self, lang):
         from ua_workflows.replica_studio_api import BASE_URL
@@ -215,7 +221,7 @@ class Runner:
             dest.write_bytes(resp.content)
         return dest, asset.get('language') or 'en'
 
-    def assemble(self, segment: Path, cta: Path, tag):
+    def assemble(self, segment: Path, second: Path, tag, second_start=None):
         import subprocess as sp
         final = self.dir / 'finals' / f'{tag}.mp4'
         final.parent.mkdir(parents=True, exist_ok=True)
@@ -223,8 +229,9 @@ class Runner:
                  "[1:v]fps=30,scale=480:854,setsar=1,setpts=PTS-STARTPTS,format=yuv420p[v1];"
                  "[0:a]aresample=48000,asetpts=PTS-STARTPTS[a0];[1:a]aresample=48000,asetpts=PTS-STARTPTS[a1];"
                  "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]")
+        tail = [] if second_start is None else ['-ss', str(second_start)]
         sp.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(segment),
-                '-i', str(cta), '-filter_complex', graph,
+                *tail, '-i', str(second), '-filter_complex', graph,
                 '-map', '[v]', '-map', '[a]', '-r', '30', '-fps_mode', 'cfr',
                 '-c:v', 'libx264', '-crf', '19', '-preset', 'medium', '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', str(final), '-y'], check=True)
@@ -243,7 +250,7 @@ class Runner:
         key = fingerprint(fields)
         if not key[0]:
             return None
-        mine = self.source_sig(key[0])
+        mine = None if key[0].startswith('video:') else self.source_sig(key[0])
         rows = self.feishu.call('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
                                 params={'page_size': 500, 'user_id_type': 'open_id'}, json={}).get('items', [])
         for row in rows:
@@ -252,7 +259,7 @@ class Runner:
                 continue
             if not (other.get('复刻结果') or []):
                 continue
-            if fingerprint(other) == key and self.source_sig(key[0]) == mine:
+            if fingerprint(other) == key and (mine is None or self.source_sig(key[0]) == mine):
                 return row['record_id'], other['复刻结果']
         return None
 
@@ -272,10 +279,15 @@ class Runner:
         lang = langs[0] if langs else ''
         role = text(f.get('换人角色'))
         links = link_ids(f.get('关联原素材'))
+        videos = f.get('原视频') or []
         refs = f.get('人物参考图') or []
         # 先把输入校验干净，任何付费动作之前就停
         problems = []
-        if len(links) != 1:
+        if not links and not videos:
+            problems.append('必须关联素材或上传原视频（二选一）')
+        if videos and len(videos) != 1:
+            problems.append(f'原视频只能上传 1 个（当前 {len(videos)} 个）')
+        if links and len(links) != 1 and not videos:
             problems.append('关联素材必须恰好一条')
         if kind not in {'替换logo', '替换语言', '替换人物'}:
             problems.append('需求类型为空或不受支持')
@@ -301,19 +313,32 @@ class Runner:
                                      '执行说明': f'与 {other} 需求完全相同，直接复用那条的成品；如需重做请新建需求并说明'})
             print('  [duplicate]', name, '->', other)
             return
-        source_id = links[0]
-        plan = {'需求': name, '类型': kind, '语言': lang, '角色': role, '素材': source_id,
+        direct = bool(videos)
+        source_id = links[0] if links else ''
+        plan = {'需求': name, '类型': kind, '语言': lang, '角色': role,
+                '素材': ('原视频：' + videos[0]['name']) if direct else source_id,
                 '参考图': refs[0]['name'] if refs else ''}
-        if not self.dry:
-            self.put(POOL, rid, {'复刻状态': '换Logo中'})
-        master = self.ensure_master(source_id)
-        plan['母版'] = '复用' if master['reused'] else '新建'
+        if direct:
+            if not self.dry:
+                self.put(POOL, rid, {'复刻状态': '换人中'})
+            source_video = (None if self.dry else
+                            self.download(videos[0], self.dir / 'sources' / videos[0]['name']))
+            master = {'path': source_video, 'job_id': None, 'story_end': None, 'reused': False}
+            plan['母版'] = '不适用（直接上传视频）'
+        else:
+            if not self.dry:
+                self.put(POOL, rid, {'复刻状态': '换Logo中'})
+            master = self.ensure_master(source_id)
+            plan['母版'] = '复用' if master['reused'] else '新建'
         if self.dry:
             print('  [plan]', json.dumps(plan, ensure_ascii=False))
             return
         self.put(POOL, rid, {'复刻状态': '翻译中' if kind == '替换语言' else ('换人中' if kind == '替换人物' else '已完成')})
-        src = self.record(MAIN, source_id)
-        src_lang = LANG.get(text((src.get('文案语言') or [''])[0]) if isinstance(src.get('文案语言'), list) else text(src.get('文案语言')), '')
+        if direct:
+            src_lang = ''
+        else:
+            src = self.record(MAIN, source_id)
+            src_lang = LANG.get(text((src.get('文案语言') or [''])[0]) if isinstance(src.get('文案语言'), list) else text(src.get('文案语言')), '')
         tag = rid[-8:]
         if kind == '替换logo':
             final, note = master['path'], '母版即成品'
@@ -328,15 +353,20 @@ class Runner:
                 note = f'母版任务 {master["job_id"][:8]}… 翻译（text+voice，去 CTA）+ {cta_lang} CTA'
         elif kind == '替换人物':
             portrait = self.download(refs[0], self.dir / 'portraits' / refs[0]['name'])
-            swap_job, seg = self.swap(master, tag, portrait)
+            swap_job, seg, story_end, job_src = self.swap(master, tag, portrait)
+            src_lang = src_lang or job_src
             self.put(POOL, rid, {'复刻状态': '拼接中'})
             targets = langs or [src_lang]
             finals, notes = [], []
             for code in dict.fromkeys(targets):
                 if code == src_lang:
-                    cta, cta_lang = self.cta_for(src_lang)
-                    out = self.assemble(seg, cta, f'{tag}-{code}')
-                    notes.append(f'{code}（源语言片段+CTA）')
+                    if direct:
+                        out = self.assemble(seg, master['path'], f'{tag}-{code}', second_start=story_end)
+                        notes.append(f'{code}（片段+原视频片尾）')
+                    else:
+                        cta, _ = self.cta_for(src_lang)
+                        out = self.assemble(seg, cta, f'{tag}-{code}')
+                        notes.append(f'{code}（源语言片段+CTA）')
                 else:
                     story = self.translate(swap_job, code, mode='swap')
                     cta, cta_lang = self.cta_for(code)
