@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -16,6 +17,8 @@ import subprocess
 import sys
 import time
 import uuid
+from urllib.parse import quote
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -210,63 +213,74 @@ class Runner:
                        '--output-dir', str(self.dir / 'translations'))
         return Path(got['results'][0]['path'])
 
-    def swap(self, master, tag, portraits):
-        # 每条换人需求独占一个任务：共用任务会互相覆盖片段
-        own = self.dir / 'ck' / f'{tag}.json'
-        own.parent.mkdir(parents=True, exist_ok=True)
-        job = None
-        for attempt_ck in (own, own.with_suffix('.retry.json')):
-            up = self.cli('upload', str(master['path']), '--yes', checkpoint=attempt_ck)
-            job = up['results'][0]['ids'][0]
-            self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
-            state = self.api.job(job)
-            if state.get('status') not in {'error', 'interrupted'}:
-                own = attempt_ck
-                break
-        else:
-            raise RuntimeError('任务连续失败，已换新任务重试一次仍失败')
-        cast = self.cli('characters', job)['characters']
-        if len(portraits) != len(cast):
-            raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
-        for person, portrait in zip(cast, portraits):
-            source_id = person['source_id']
-            try:
-                self.cli('portrait', job, str(portrait), '--source-id', source_id, checkpoint=own)
-            except RuntimeError as error:
-                if 'result_unknown' not in str(error):
-                    raise
-                # 回执没确认时以任务里的实际参考图为准；没生效再换新断点重试一次
-                if not self.portrait_ready(job, source_id):
-                    self.cli('portrait', job, str(portrait), '--source-id', source_id,
-                             checkpoint=own.with_suffix(f'.retry-{source_id}.json'))
-                if not self.portrait_ready(job, source_id):
-                    raise RuntimeError(f'{source_id} 参考图上传未生效')
-        self.cli('swap', job, '--yes', checkpoint=own)
-        self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
-        state = self.api.job(job)
-        seg = (state.get('segments') or [])[0]
-        story_end = (state.get('source_story') or {}).get('story_end_s') or seg.get('end_s')
-        src_lang = ((state.get('translation') or {}).get('source_language') or '')
-        url = media_url(f'/api/jobs/{job}/files/{seg["video_file"]}?download=1', job)
-        out = self.dir / 'swaps' / f'{tag}-raw.mp4'
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with self.api.session.get(url, stream=True, timeout=(15, 300), allow_redirects=False) as r:
-            r.raise_for_status()
-            out.write_bytes(r.content)
-        return job, out, story_end, src_lang
+    def job_state(self, key):
+        path = self.dir / 'jobs' / f'{key}.json'
+        return json.loads(path.read_text()) if path.exists() else {}
 
-    def cta_for(self, lang):
-        from ua_workflows.replica_studio_api import BASE_URL
-        rows = self.api.session.get(BASE_URL + '/api/assembly-assets', timeout=(15, 45)).json()
-        want = f'builtin_cta_{lang}_cta' if lang else 'builtin_cta_cta'
-        asset = next((a for a in rows if a['id'] == want), None) or next(a for a in rows if a['id'] == 'builtin_cta_cta')
-        dest = self.dir / 'cta' / (asset['id'] + '.mp4')
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if not dest.exists():
-            resp = self.api.session.get(BASE_URL + asset['url'], timeout=(15, 120))
-            resp.raise_for_status()
-            dest.write_bytes(resp.content)
-        return dest, asset.get('language') or 'en'
+    def save_job(self, key, value):
+        path = self.dir / 'jobs' / f'{key}.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, ensure_ascii=False, indent=1))
+
+    @contextmanager
+    def video_lock(self, key):
+        path = self.dir / 'locks' / f'{key}.lock'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+    def swap(self, master, tag, portraits):
+        """同一视频共用一个任务：第一次分析+换人，之后换参考图并 force_new 重新生成。"""
+        key = hashlib.sha256(Path(master['path']).read_bytes()).hexdigest()[:16]
+        with self.video_lock(key):
+            cache = self.job_state(key)
+            job, force = cache.get('job_id'), bool(cache.get('swaps'))
+            if job:
+                state = self.api.job(job)
+                if state.get('status') in {'error', 'interrupted'}:
+                    job, force, cache = None, False, {}
+            if not job:
+                up = self.cli('upload', str(master['path']), '--yes', checkpoint=self.dir / 'ck' / f'{key}.json')
+                job = up['results'][0]['ids'][0]
+                self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
+                cache = {'job_id': job, 'swaps': 0}
+                self.save_job(key, cache)
+            cast = self.cli('characters', job)['characters']
+            if len(portraits) != len(cast):
+                raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
+            own = self.dir / 'ck' / f'{tag}.json'
+            own.parent.mkdir(parents=True, exist_ok=True)
+            for person, portrait in zip(cast, portraits):
+                source_id = person['source_id']
+                try:
+                    self.cli('portrait', job, str(portrait), '--source-id', source_id, '--replace', checkpoint=own)
+                except RuntimeError as error:
+                    if 'result_unknown' not in str(error):
+                        raise
+                    if not self.portrait_ready(job, source_id):
+                        self.cli('portrait', job, str(portrait), '--source-id', source_id, '--replace',
+                                 checkpoint=own.with_suffix(f'.retry-{source_id}.json'))
+                    if not self.portrait_ready(job, source_id):
+                        raise RuntimeError(f'{source_id} 参考图上传未生效')
+            self.cli('swap', job, '--yes', *(['--force-new'] if force else []), checkpoint=own)
+            self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
+            state = self.api.job(job)
+            seg = (state.get('segments') or [])[0]
+            story_end = (state.get('source_story') or {}).get('story_end_s') or seg.get('end_s')
+            src_lang = ((state.get('translation') or {}).get('source_language') or '')
+            url = media_url(f'/api/jobs/{job}/files/{quote(seg["video_file"])}?download=1', job)
+            out = self.dir / 'swaps' / f'{tag}-raw.mp4'
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with self.api.session.get(url, stream=True, timeout=(15, 300), allow_redirects=False) as r:
+                r.raise_for_status()
+                out.write_bytes(r.content)
+            cache['swaps'] = int(cache.get('swaps') or 0) + 1
+            self.save_job(key, cache)
+            return job, out, story_end, src_lang
 
     def assemble(self, segment: Path, second: Path, tag, second_start=None):
         import subprocess as sp

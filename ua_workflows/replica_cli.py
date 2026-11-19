@@ -403,6 +403,7 @@ def parser():
     mode = swap.add_mutually_exclusive_group(required=True)
     mode.add_argument('--check-only', action='store_true', help='只读检查人物图、片段和替换规则')
     mode.add_argument('--yes', action='store_true', help='确认提交付费视频换人')
+    swap.add_argument('--force-new', action='store_true', help='重新生成该片段（替换当前视频，旧的保留在历史）')
     translate = sub.add_parser('translate', help='翻译当前视频的画面文字和口播')
     translate.add_argument('ids', nargs='+')
     translate.add_argument('--languages', nargs='+', required=True)
@@ -488,7 +489,7 @@ def execute(args, factory=None):
         return assemble_one(api, args.id, None, args.languages, check_only=True)
     if args.command == 'swap' and args.check_only:
         from ua_workflows.replica_swap import swap_video
-        return swap_video(api, args.id, auth, check_only=True)
+        return swap_video(api, args.id, auth, check_only=True, force_new=args.force_new)
     if args.command == 'status':
         if args.timeout <= 0 or args.interval <= 0:
             raise ReplicaError('invalid_input', 'Timeout and polling interval must be positive')
@@ -544,7 +545,7 @@ def execute(args, factory=None):
                 time.sleep(min(args.interval, max(0, args.timeout - (time.monotonic() - started))))
         if args.command == 'swap':
             from ua_workflows.replica_swap import swap_video
-            return swap_video(api, args.id, auth, checkpoint)
+            return swap_video(api, args.id, auth, checkpoint, force_new=args.force_new)
         if args.command == 'translate':
             from ua_workflows.replica_translation import translate_many
             if args.source_video and args.translation_input != 'original':

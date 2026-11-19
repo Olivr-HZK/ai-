@@ -82,9 +82,9 @@ def validate_workflow_body(method, path, body):
             raise ReplicaError('unsupported_action', 'Re-analysis cannot force a new run')
     if method == 'POST' and path.endswith('/actions/videos'):
         if (not isinstance(body, dict) or set(body) != {*SWAP_OPTIONS, 'revision'}
-                or body['video_route'] != 'model_swap' or body['force_new'] is not False
+                or body['video_route'] != 'model_swap' or body['force_new'] not in (False, True)
                 or body['subtitle_erase'] is not False or type(body['revision']) is not int or body['revision'] < 0):
-            raise ReplicaError('unsupported_action', 'Only model_swap without regeneration or subtitle erasure is allowed')
+            raise ReplicaError('unsupported_action', 'Only model_swap (optionally regenerating) without subtitle erasure is allowed')
 
 
 class ReplicaError(RuntimeError):
@@ -506,9 +506,9 @@ class ReplicaAPI:
             raise ReplicaError('result_unknown', 'Re-analysis receipt could not be confirmed')
         return {k: result[k] for k in ('id', 'status', 'revision', 'last_action', 'batch') if k in result}
 
-    def swap_video(self, job):
+    def swap_video(self, job, *, force_new=False):
         result = self.request('POST', '/api/jobs/' + identifier(job['id']) + '/actions/videos',
-                              body={**SWAP_OPTIONS, 'revision': job['revision']})
+                              body={**SWAP_OPTIONS, 'force_new': bool(force_new), 'revision': job['revision']})
         if (result.get('id') != job['id'] or not isinstance(result.get('status'), str)
                 or type(result.get('revision')) is not int or result['revision'] < job['revision']):
             raise ReplicaError('result_unknown', 'Video swap receipt could not be confirmed')

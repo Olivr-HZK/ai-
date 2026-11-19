@@ -50,11 +50,11 @@ def replacements_inactive(api, job):
     return len(keywords) == len(rules) and keywords == {row['keyword'].strip().casefold() for row in detections}
 
 
-def swap_video(api, job_id, auth, checkpoint=None, *, check_only=False):
+def swap_video(api, job_id, auth, checkpoint=None, *, check_only=False, force_new=False):
     job_id = identifier(job_id)
     result = {'operation': 'swap', 'id': job_id, 'submitted': False}
     prior = checkpoint.get('video_swaps', job_id) if checkpoint else None
-    if prior and prior['stage'] != 'rejected':
+    if prior and prior['stage'] != 'rejected' and not force_new:
         if prior['stage'] in {'intent', 'unknown'}:
             return {**result, 'ok': False, 'code': 'result_unknown',
                     'message': 'Original swap submission is unconfirmed. Read the task with status --wait-for swap.'}
@@ -76,7 +76,7 @@ def swap_video(api, job_id, auth, checkpoint=None, *, check_only=False):
     revision = job.get('revision')
     if type(revision) is not int or revision < 0:
         raise ReplicaError('invalid_response', 'Task revision is missing or invalid')
-    options = {**SWAP_OPTIONS, 'revision': revision}
+    options = {**SWAP_OPTIONS, 'force_new': bool(force_new), 'revision': revision}
     result.update(options=options, segments=segments)
     if check_only:
         return {**result, 'ok': True, 'check_only': True, 'results_present': state == 'ready'}
@@ -87,7 +87,7 @@ def swap_video(api, job_id, auth, checkpoint=None, *, check_only=False):
               'portraits': {person['source_id']: person['portrait_file'] for person in cast}}
     checkpoint.put('video_swaps', job_id, intent)
     try:
-        receipt = api.swap_video(job)
+        receipt = api.swap_video(job, force_new=force_new)
     except ReplicaError as error:
         stage = 'rejected' if error.request_not_applied or error.status in {401, 403} else 'unknown'
         checkpoint.put('video_swaps', job_id, {**intent, 'stage': stage, 'error': error.code})
