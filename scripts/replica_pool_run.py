@@ -37,6 +37,10 @@ ROOT = Path('data/replica-pool-run')
 OWNER_OPEN_ID = 'ou_e94416b8d17116481afde4e229147771'  # 霍振堃：异常兜底通知对象
 
 
+class MultiPersonUnsupported(RuntimeError):
+    """多人素材暂不支持：等参考图顺序映射做好后再开放。"""
+
+
 class PlatformRejected(RuntimeError):
     """平台明确拒绝/生成失败：直接判失败，不自动重试。"""
 
@@ -296,6 +300,8 @@ class Runner:
                     extra = post(job, out, story_end, src_lang) if post else None
                     return job, out, story_end, src_lang, extra
             cast = self.cli('characters', job)['characters']
+            if len(cast) > 1:
+                raise MultiPersonUnsupported(f'多人素材暂不支持（识别出 {len(cast)} 个角色），等人脸顺序映射后再开放')
             if len(portraits) != len(cast):
                 raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
             own = self.dir / 'ck' / f'{tag}.json'
@@ -540,6 +546,10 @@ def main():
         print('领取', row['record_id'], text(f.get('需求名称')))
         try:
             runner.run_row(row)
+        except MultiPersonUnsupported as e:
+            print('  多人暂不支持', e)
+            if not a.plan:
+                runner.put(POOL, row['record_id'], {'复刻状态': '待补充信息', '执行说明': str(e)[:900]})
         except PlatformRejected as e:
             print('  平台拒绝', e)
             if not a.plan:
