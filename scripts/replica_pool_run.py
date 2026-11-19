@@ -38,6 +38,34 @@ ROOT = Path('data/replica-pool-run')
 OWNER_OPEN_ID = 'ou_e94416b8d17116481afde4e229147771'  # 霍振堃：异常兜底通知对象
 
 
+GENDER_MODEL = None
+
+
+def detect_gender(path):
+    """本地模型识别参考图性别，返回 male/female/''（不确定）。"""
+    global GENDER_MODEL
+    try:
+        from PIL import Image
+        from transformers import pipeline
+    except Exception:
+        return ''
+    try:
+        if GENDER_MODEL is None:
+            GENDER_MODEL = pipeline('image-classification', model='dima806/man_woman_face_image_detection')
+        result = GENDER_MODEL(Image.open(path))
+        top = max(result, key=lambda item: item['score'])
+        if top['score'] < 0.7:
+            return ''
+        label = top['label'].lower()
+        if label in {'man', 'male', 'boy'}:
+            return 'male'
+        if label in {'woman', 'female', 'girl'}:
+            return 'female'
+    except Exception:
+        return ''
+    return ''
+
+
 class MultiPersonUnsupported(RuntimeError):
     """多人素材暂不支持：等参考图顺序映射做好后再开放。"""
 
@@ -225,30 +253,35 @@ class Runner:
         return '、'.join(f"{c['source_id']}={c.get('source_name') or '?'}（{c.get('source_gender') or '未知'}）" for c in cast)
 
     def map_portraits(self, cast, portraits):
-        """把上传的参考图对到角色：文件名带 C1/C2 或 男/女 就按它匹配，否则要求人工改名。"""
+        """双人/多人：文件名带 C1/C2 优先；否则按 AI 识别性别对应到同性别角色；对不上就拦下。"""
         if len(cast) <= 1:
             return portraits
         by_id = {c['source_id'].upper(): c['source_id'] for c in cast}
-        by_gender = {}
-        for c in cast:
-            by_gender.setdefault((c.get('source_gender') or '').lower(), []).append(c['source_id'])
-        chosen = {}
+        cast_gender = {c['source_id']: (c.get('source_gender') or '').lower() for c in cast}
+        chosen, detected = {}, []
         for path in portraits:
             name = path.name.upper()
             match = re.search(r'\bC(\d+)', name)
-            if match and f'C{match.group(1)}' in by_id and by_id[f'C{match.group(1)}'] not in chosen.values():
+            if match and f'C{match.group(1)}' in by_id:
                 chosen[path] = by_id[f'C{match.group(1)}']
                 continue
-            gender = ('male' if re.search(r'男|MALE|\bM\b', name) else
-                      'female' if re.search(r'女|FEMALE|\bF\b', name) else '')
-            pool = [sid for sid in by_gender.get(gender, []) if sid not in chosen.values()] if gender else []
-            if len(pool) == 1:
-                chosen[path] = pool[0]
-        if len(chosen) == len(portraits):
+            gender = detect_gender(path)
+            if not gender:
+                gender = ('male' if re.search(r'男|MALE', name) else 'female' if re.search(r'女|FEMALE', name) else '')
+            detected.append((path, gender))
+        used = set(chosen.values())
+        for path, gender in detected:
+            candidates = [sid for sid, g in cast_gender.items() if g == gender and sid not in used]
+            if gender and len(candidates) == 1:
+                chosen[path] = candidates[0]
+                used.add(candidates[0])
+        if len(chosen) == len(portraits) and len(set(chosen.values())) == len(cast):
             return [path for path, _ in sorted(chosen.items(), key=lambda kv: kv[1])]
+        names = '、'.join(f"{c['source_id']}={c.get('source_name') or '?'}（{c.get('source_gender') or '未知'}）" for c in cast)
+        seen = '、'.join(f'{path.name}→{gender or "识别不出"}' for path, gender in detected) or '（全部按文件名指定）'
         raise MultiPersonUnsupported(
-            f'多人素材需要明确参考图对应关系（{self.cast_line(cast)}）。'
-            f'请把参考图重命名为 C1_xxx / C2_xxx（或带 男/女）后重新排队')
+            f'多人素材的参考图没能对上角色：角色 {names}；图片 {seen}。'
+            f'请确认图片性别是否和角色一致，或在文件名里写 C1_/C2_')
 
     def portrait_ready(self, job_id, source_id, timeout=60):
         deadline = time.time() + timeout
