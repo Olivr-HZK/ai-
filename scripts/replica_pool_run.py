@@ -237,7 +237,7 @@ class Runner:
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
-    def swap(self, master, tag, portraits):
+    def swap(self, master, tag, portraits, post=None):
         """同一视频共用一个任务：第一次分析+换人，之后换参考图并 force_new 重新生成。"""
         key = hashlib.sha256(Path(master['path']).read_bytes()).hexdigest()[:16]
         with self.video_lock(key):
@@ -288,9 +288,10 @@ class Runner:
             with self.api.session.get(url, stream=True, timeout=(15, 300), allow_redirects=False) as r:
                 r.raise_for_status()
                 out.write_bytes(r.content)
+            extra = post(job, out, story_end, src_lang) if post else None
             cache['swaps'] = int(cache.get('swaps') or 0) + 1
             self.save_job(key, cache)
-            return job, out, story_end, src_lang
+            return job, out, story_end, src_lang, extra
 
     def assemble(self, segment: Path, second: Path, tag, second_start=None):
         import subprocess as sp
@@ -428,26 +429,33 @@ class Runner:
                 note = f'{where}任务 {job[:8]}… 翻译（text+voice，去 CTA）+ {cta_lang} CTA'
         elif kind == '替换人物':
             portraits = [self.download(att, self.dir / 'portraits' / att['name']) for att in refs]
-            swap_job, seg, story_end, job_src = self.swap(master, tag, portraits)
+
+            def build(job, seg, story_end, job_src):
+                # 翻译必须在本条换人之后、下一条 force_new 覆盖之前完成，所以在视频锁内做
+                base = src_lang or job_src
+                targets = langs or [base]
+                finals, notes = [], []
+                for code in dict.fromkeys(targets):
+                    if code == base:
+                        if direct:
+                            out = self.assemble(seg, master['path'], f'{tag}-{code}', second_start=story_end)
+                            notes.append(f'{code}（片段+原视频片尾）')
+                        else:
+                            cta, _ = self.cta_for(base)
+                            out = self.assemble(seg, cta, f'{tag}-{code}')
+                            notes.append(f'{code}（源语言片段+CTA）')
+                    else:
+                        story = self.translate(job, code, mode='swap')
+                        cta, cta_lang = self.cta_for(code)
+                        out = self.assemble(story, cta, f'{tag}-{code}')
+                        notes.append(f'{code}（翻译+{cta_lang} CTA）')
+                    finals.append((code, out))
+                return finals, notes
+
+            swap_job, seg, story_end, job_src, built = self.swap(master, tag, portraits, post=build)
             src_lang = src_lang or job_src
             self.put(POOL, rid, {'复刻状态': '拼接中'})
-            targets = langs or [src_lang]
-            finals, notes = [], []
-            for code in dict.fromkeys(targets):
-                if code == src_lang:
-                    if direct:
-                        out = self.assemble(seg, master['path'], f'{tag}-{code}', second_start=story_end)
-                        notes.append(f'{code}（片段+原视频片尾）')
-                    else:
-                        cta, _ = self.cta_for(src_lang)
-                        out = self.assemble(seg, cta, f'{tag}-{code}')
-                        notes.append(f'{code}（源语言片段+CTA）')
-                else:
-                    story = self.translate(swap_job, code, mode='swap')
-                    cta, cta_lang = self.cta_for(code)
-                    out = self.assemble(story, cta, f'{tag}-{code}')
-                    notes.append(f'{code}（翻译+{cta_lang} CTA）')
-                finals.append((code, out))
+            finals, notes = built
             note = f'换人任务 {swap_job[:8]}…（{role}）；' + '；'.join(notes)
             self.put(POOL, rid, {'复刻结果': [a for code, out in finals for a in self.attach(out, f'{name}_{code}.mp4')],
                                  '复刻状态': '已完成', '执行说明': note})
