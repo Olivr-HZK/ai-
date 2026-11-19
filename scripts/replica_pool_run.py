@@ -96,6 +96,7 @@ class Runner:
         self.dir = run_dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self.feishu = feishu
+        self.fe_at = time.time()
         self.api = api
         self.auth = auth
         self.dry = dry
@@ -125,12 +126,23 @@ class Runner:
                 time.sleep(15)  # 只读命令遇到读失败/网络抖动时重试
         raise last
 
+    def fe(self, method, path, **kw):
+        if time.time() - self.fe_at > 5400:  # 飞书 tenant token 约 2 小时过期
+            self.feishu, self.fe_at = Feishu(), time.time()
+        try:
+            return self.feishu.call(method, path, **kw)
+        except Exception as error:
+            if '99991663' in str(error) or 'Invalid access token' in str(error):
+                self.feishu, self.fe_at = Feishu(), time.time()
+                return self.feishu.call(method, path, **kw)
+            raise
+
     def record(self, table, rid):
-        return self.feishu.call('GET', f'bitable/v1/apps/{APP}/tables/{table}/records/{rid}',
+        return self.fe('GET', f'bitable/v1/apps/{APP}/tables/{table}/records/{rid}',
                                 params={'user_id_type': 'open_id'})['record']['fields']
 
     def put(self, table, rid, fields):
-        self.feishu.call('PUT', f'bitable/v1/apps/{APP}/tables/{table}/records/{rid}',
+        self.fe('PUT', f'bitable/v1/apps/{APP}/tables/{table}/records/{rid}',
                          params={'user_id_type': 'open_id'}, json={'fields': fields})
 
     def download(self, att, dest: Path):
@@ -197,7 +209,7 @@ class Runner:
             person.get('id') for person in (fields.get('执行人') or []) if isinstance(person, dict) and person.get('id')]
         for open_id in dict.fromkeys(targets):
             try:
-                self.feishu.call('POST', 'im/v1/messages', params={'receive_id_type': 'open_id'},
+                self.fe('POST', 'im/v1/messages', params={'receive_id_type': 'open_id'},
                                  json={'receive_id': open_id, 'msg_type': 'text',
                                        'content': json.dumps({'text': text}, ensure_ascii=False)})
             except Exception as error:
@@ -338,7 +350,7 @@ class Runner:
         if not key[0]:
             return None
         mine = None if key[0].startswith('video:') else self.source_sig(key[0])
-        rows = self.feishu.call('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
+        rows = self.fe('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
                                 params={'page_size': 500, 'user_id_type': 'open_id'}, json={}).get('items', [])
         for row in rows:
             other = row['fields']
@@ -496,7 +508,7 @@ def main():
     feishu = Feishu()
     api = ReplicaAPI.configured(auth_mode=a.auth_mode, confirm_paid=True); auth = api.authenticate()
     runner = Runner(Path(a.run_dir), feishu, api, auth, dry=a.plan, auth_mode=a.auth_mode)
-    rows = feishu.call('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
+    rows = runner.fe('POST', f'bitable/v1/apps/{APP}/tables/{POOL}/records/search',
                        params={'page_size': 500, 'user_id_type': 'open_id'}, json={}).get('items', [])
     for row in rows:
         f = row['fields']
