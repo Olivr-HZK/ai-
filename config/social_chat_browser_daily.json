@@ -63,6 +63,12 @@
         "before_ingestion",
         "before_replication"
       ]
+    },
+    "cross_platform_merge": {
+      "enabled": true,
+      "product_mapping": "config/afizzy_report_products.json",
+      "scope": "verified_product_across_ios_android",
+      "unknown_identity": "keep_original_os_and_name"
     }
   },
   "date_semantics": "first_discovered_on_target_date",
@@ -257,6 +263,5 @@
     "mixed_images": "exclude_landscape_images_keep_other_originals",
     "evidence": "source_sha256_size_probe_or_decoded_dimensions",
     "history": "new_screening_scopes_only"
-  },
-  "replication_trigger": "manual"
+  }
 }

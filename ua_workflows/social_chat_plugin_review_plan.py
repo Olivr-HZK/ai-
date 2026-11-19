@@ -47,11 +47,17 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def group(row):
+def group(row, product_mapping=None):
+    """Identity key: one verified product across stores, else the original OS+name."""
     name = ' '.join(html.unescape(row.get('app') or '').split())
     os_name = row.get('os')
     if not name or name.startswith('未观察到') or os_name not in ('iOS', 'Android'):
         raise ValueError('Missing/ambiguous App identity: ' + row['id'])
+    if product_mapping:
+        from ua_workflows.social_chat_product_identity import product_for
+        product = product_for(name, row.get('app_id') or '', product_mapping)
+        if product:
+            return 'product|' + product
     return os_name + '|' + name
 
 
@@ -85,8 +91,12 @@ def _components(rows, vectors, threshold):
     return list(clusters.values()), similarity
 
 
-def plan(target, records, vectors, policy=None):
-    """Inputs are ledger-checked local media; existing content decisions are ignored."""
+def plan(target, records, vectors, policy=None, product_mapping=None):
+    """Inputs are ledger-checked local media; existing content decisions are ignored.
+
+    ``product_mapping`` merges verified iOS/Android identities for intraday and
+    cross-day cover dedupe; without it the original OS+name grouping applies.
+    """
     policy = validate_policy(policy or POLICY)
     today_date = date.fromisoformat(target)
     ids = [r['id'] for r in records]
@@ -106,7 +116,7 @@ def plan(target, records, vectors, policy=None):
             if age == 0: relaunch_ids.append(row['id'])
             continue
         try:
-            identity = group(row)
+            identity = group(row, product_mapping)
         except ValueError:
             if age == 0:
                 raise
@@ -160,7 +170,8 @@ def plan(target, records, vectors, policy=None):
             'review_certified': False}
 
 
-def prepare_queue(target, index, cache, output, policy=None, history_vector_pack=None, orientation_policy=None):
+def prepare_queue(target, index, cache, output, policy=None, history_vector_pack=None, orientation_policy=None,
+                  product_mapping=None):
     index, cache, output = Path(index), Path(cache), Path(output)
     document = json.loads(index.read_text())
     records = document if isinstance(document, list) else document['records']
@@ -175,7 +186,7 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
         age = (date.fromisoformat(target) - date.fromisoformat(row['day'])).days
         if not 0 <= age <= 7 or is_relaunch(row) or row.get('kind') not in ('视频', '图片'):
             continue
-        try: group(row)
+        try: group(row, product_mapping)
         except ValueError:
             if age == 0: raise
             continue
@@ -209,7 +220,7 @@ def prepare_queue(target, index, cache, output, policy=None, history_vector_pack
             records.append(row);vectors[row['id']]=bundle['vectors'][row['id']]
         history_receipt = {'sha256':sha(history_vector_pack),'source_records':bundle['manifest']['records'],
                            'source_vectors':bundle['manifest']['vectors'],'images_required':False}
-    result = plan(target, records, vectors, policy)
+    result = plan(target, records, vectors, policy, product_mapping)
     if orientation_decisions is not None:
         result['media_orientation_filter'] = {'policy': orientation_policy,
             'counts': dict(Counter(d['status'] for d in orientation_decisions.values())),

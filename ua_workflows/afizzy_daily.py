@@ -171,7 +171,8 @@ def main(argv=None):
     from .social_chat_plugin_review_plan import prepare_queue
     result = prepare_queue(a.date, a.media_index, a.embedding_cache, run_dir / 'pre-review/plan.json',
                            scope['processing_policy'], a.history_vector_pack,
-                           orientation_policy=scope.get('media_orientation_policy'))
+                           orientation_policy=scope.get('media_orientation_policy'),
+                           product_mapping=scope.get('cross_platform_product_mapping'))
     print(json.dumps({'status': result['status'], 'review_queue': result['counts'].get('review_pending', 0),
                       'review_certified': result['review_certified']}, ensure_ascii=False)); return 0
 

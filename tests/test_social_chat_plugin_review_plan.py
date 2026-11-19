@@ -137,3 +137,42 @@ def test_actual_handoff_cli_pins_date_and_outputs_joint_queue(tmp_path):
     assert output['target_date']=='2026-10-25' and output['status']=='JOINT_REVIEW_PENDING'
     assert output['counts']=={'review_pending':1} and not output['review_certified']
     assert not (run/'selection.json').exists() and not (run/'daily-machine').exists()
+
+
+MAPPING = {'version': 'report-product-aliases-v1', 'products': [
+    {'name': 'Tizz', 'aliases': ['Tizz: Craft Your World', 'TizzChat: Craft Your World',
+                                 'aiapp.tizzchat.chatbot', '6768571224']},
+    {'name': 'Other', 'aliases': ['Other: Chat']},
+]}
+
+
+def test_verified_product_merges_ios_android_in_intraday_and_crossday():
+    records = [row('ios', app='Tizz: Craft Your World', os='iOS'),
+               row('android', app='TizzChat: Craft Your World'),
+               row('history', day='2026-10-24', app='Tizz: Craft Your World', os='iOS')]
+    vectors = {r['id']: vector(0) for r in records}
+    covered = plan('2026-10-25', records, vectors, product_mapping=MAPPING)
+    assert covered['decisions']['ios']['status'] == 'intraday_removed'
+    assert covered['decisions']['android']['status'] == 'crossday_removed'
+    assert covered['review_queue'] == []
+    old = plan('2026-10-25', records, vectors)
+    # Without the mapping the Android variant is treated as a brand-new item.
+    assert {r['id'] for r in old['review_queue']} == {'android'}
+
+
+def test_unknown_name_keeps_original_identity_and_never_guesses():
+    records = [row('unknown_ios', app='Unregistered: Chat', os='iOS'),
+               row('unknown_android', app='Unregistered: Chat', os='Android')]
+    vectors = {r['id']: vector(0) for r in records}
+    result = plan('2026-10-25', records, vectors, product_mapping=MAPPING)
+    assert {r['id'] for r in result['review_queue']} == {'unknown_ios', 'unknown_android'}
+
+
+def test_cross_platform_template_representative_keeps_single_row():
+    from ua_workflows.social_chat_template_history import representatives
+    rows = [{'id': 'ios', 'ad_id': '1', 'product': 'Tizz', 'os': 'iOS', 'template_key': 't', 'estimate_number': 10},
+            {'id': 'android', 'ad_id': '2', 'product': 'Tizz', 'os': 'Android', 'template_key': 't', 'estimate_number': 20}]
+    merged, removed = representatives(rows, cross_platform=True)
+    assert [r['id'] for r in merged] == ['android'] and removed == {'ios': 'android'}
+    split, _ = representatives(rows)
+    assert len(split) == 2

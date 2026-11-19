@@ -133,6 +133,8 @@ class ReadOnlyTable:
 def fallback_run(tmp_path):
     config = daily.load(daily.CONFIG)
     config['feishu']['attachment_field_id'] = ReadOnlyTable.field['field_id']
+    # These cases pin the legacy same-OS behaviour; cross-platform has its own test.
+    config['plugin_handoff']['cross_platform_merge'] = {'enabled': False}
     daily.prepare('2026-11-09', tmp_path, config)
     return tmp_path
 

@@ -73,12 +73,13 @@ def history_state(templates, *, source_state, identity_verified=True, unreviewed
             'reason':'verified_no_previous_templates','next':'intraday_template_dedupe'}
 
 
-def representatives(records):
+def representatives(records, *, cross_platform=False):
+    """One representative per template; cross_platform merges verified iOS/Android."""
     groups=defaultdict(list)
     for row in records:
         if not row.get('template_key') or row.get('estimate_number') is None:
             raise ValueError('Template identity or estimate is missing')
-        groups[(row['product'],row['os'],row['template_key'])].append(row)
+        groups[(row['product'],None if cross_platform else row['os'],row['template_key'])].append(row)
     selected,removed=[],{}
     for group in groups.values():
         group.sort(key=lambda r:(-r['estimate_number'],r['ad_id']))

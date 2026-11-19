@@ -78,6 +78,10 @@ def prepare(target, run_dir, config, source_zips=(), execution_origin='manual'):
         'collection_complete_21_apps': False, 'auto_browser_collection': False,
         'auto_retry_downloads': False, 'replication_trigger': 'manual', 'feishu': config['feishu']}
     if not existing:
+        merge = config['plugin_handoff'].get('cross_platform_merge') or {}
+        if merge.get('enabled'):
+            from ua_workflows.social_chat_product_identity import load_default_mapping
+            scope['cross_platform_product_mapping'] = load_default_mapping()
         from ua_workflows.social_chat_media_orientation import POLICY as ORIENTATION_POLICY
         orientation = config['plugin_handoff'].get('media_orientation_policy')
         if orientation is not None:

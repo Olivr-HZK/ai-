@@ -563,7 +563,8 @@ def main():
                 raise ValueError('Date disagrees with pinned handoff scope')
             result = prepare_queue(scope['target_date'], args.media_index, args.embedding_cache,
                                    run_dir / 'pre-review/plan.json', scope['processing_policy'], args.history_vector_pack,
-                                   orientation_policy=scope.get('media_orientation_policy'))
+                                   orientation_policy=scope.get('media_orientation_policy'),
+                                   product_mapping=scope.get('cross_platform_product_mapping'))
         elif args.command == 'provision':
             result = provision(config, Feishu()) if args.apply else {'status': 'dry_run', 'url': table_url(config), 'fields': FIELDS}
         else:

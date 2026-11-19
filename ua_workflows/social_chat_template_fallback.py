@@ -129,6 +129,12 @@ def prepare(run_dir, app, os_name, *, app_id='', ad_id='', expected=(), client=N
         raise ValueError('恢复原件须指定广告 ID 和全部原件 SHA-256')
     mapping = scope['template_identity_mapping']
     product = identity(app, os_name, mapping, app_id)
+    cross = bool(scope.get('cross_platform_product_mapping'))
+    cross_mapping = scope.get('cross_platform_product_mapping') or None
+    cross_product = None
+    if cross:
+        from ua_workflows.social_chat_product_identity import product_for
+        cross_product = product_for(app, app_id, cross_mapping)
     root = run_dir / 'template-history-fallback'
     root.mkdir(exist_ok=True)
     out = Path(tempfile.mkdtemp(prefix='references-', dir=root))
@@ -149,10 +155,18 @@ def prepare(run_dir, app, os_name, *, app_id='', ad_id='', expected=(), client=N
                     or text['平台'] != '广大大' or text['来源'] != '每日最新'
                     or text['素材类型'] not in ('图片', '视频') or not candidate
                     or (ad_id and ad_id != candidate) or (not expected and fields.get('当前入选') is not True)
-                    or record_os(fields, day, candidate) != os_name):
+                    or (cross and record_os(fields, day, candidate) not in ('iOS', 'Android'))
+                    or (not cross and record_os(fields, day, candidate) != os_name)):
+                continue
+            candidate_os = record_os(fields, day, candidate)
+            if cross:
+                from ua_workflows.social_chat_product_identity import product_for
+                if not cross_product or product_for(text['广告主'], text['App ID'], cross_mapping) != cross_product:
+                    continue
+                matches.append((candidate, row))
                 continue
             try:
-                candidate_product = identity(text['广告主'], os_name, mapping, text['App ID'])
+                candidate_product = identity(text['广告主'], candidate_os or os_name, mapping, text['App ID'])
             except ValueError:
                 continue
             if candidate_product == product and not (app_id and text['App ID'] and text['App ID'] != app_id):
