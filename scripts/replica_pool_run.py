@@ -188,6 +188,19 @@ class Runner:
         master['job_id'] = job
         return job
 
+    def notify(self, fields, text):
+        """完成后直接私聊执行人；通知失败不影响业务结果。"""
+        for person in (fields.get('执行人') or []):
+            open_id = person.get('id') if isinstance(person, dict) else None
+            if not open_id:
+                continue
+            try:
+                self.feishu.call('POST', 'im/v1/messages', params={'receive_id_type': 'open_id'},
+                                 json={'receive_id': open_id, 'msg_type': 'text',
+                                       'content': json.dumps({'text': text}, ensure_ascii=False)})
+            except Exception as error:
+                print('  通知失败', str(error)[:80])
+
     def portrait_ready(self, job_id, source_id, timeout=60):
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -459,6 +472,7 @@ class Runner:
             note = f'换人任务 {swap_job[:8]}…（{role}）；' + '；'.join(notes)
             self.put(POOL, rid, {'复刻结果': [a for code, out in finals for a in self.attach(out, f'{name}_{code}.mp4')],
                                  '复刻状态': '已完成', '执行说明': note})
+            self.notify(f, f'【换人完成】{name}\n' + '；'.join(f'{c}.mp4' for c, _ in finals))
             print('  done', name, '->', [str(o) for _, o in finals])
             return
         else:
@@ -497,10 +511,12 @@ def main():
             print('  平台拒绝', e)
             if not a.plan:
                 runner.put(POOL, row['record_id'], {'复刻状态': '失败', '执行说明': f'平台拒绝生成：{e}'[:900]})
+                runner.notify(row['fields'], f'【换人失败】{text(row["fields"].get("需求名称"))}\n平台拒绝生成：{str(e)[:200]}')
         except Exception as e:
             print('  失败', e)
             if not a.plan:
                 runner.put(POOL, row['record_id'], {'复刻状态': '需人工处理', '执行说明': str(e)[:900]})
+                runner.notify(row['fields'], f'【换人需人工处理】{text(row["fields"].get("需求名称"))}\n{str(e)[:200]}')
 
 
 if __name__ == '__main__':
