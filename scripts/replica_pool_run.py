@@ -34,6 +34,10 @@ MAIN = 'tblwhAqPfQoBXK3Q'
 POOL = 'tblKXqqPOYqk3XPd'
 ROOT = Path('data/replica-pool-run')
 # launchd 的 PATH 很窄，ffmpeg/ffprobe 通常在 Homebrew 目录
+class PlatformRejected(RuntimeError):
+    """平台明确拒绝/生成失败：直接判失败，不自动重试。"""
+
+
 ENV = {**os.environ, 'PATH': '/opt/homebrew/bin:/usr/local/bin:' + os.environ.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')}
 PORTRAIT = Path('data/replica-cast-50-20261116/portraits/01.png')
 LANG = {'日语': 'ja', '韩语': 'ko', '英语': 'en', '中文': 'zh', '德语': 'de', '法语': 'fr',
@@ -242,7 +246,7 @@ class Runner:
             if job:
                 state = self.api.job(job)
                 if state.get('status') in {'error', 'interrupted'}:
-                    job, force, cache = None, False, {}
+                    raise PlatformRejected(str(state.get('error') or state.get('message') or '任务失败')[:250])
             if not job:
                 up = self.cli('upload', str(master['path']), '--yes', checkpoint=self.dir / 'ck' / f'{key}.json')
                 job = up['results'][0]['ids'][0]
@@ -266,8 +270,14 @@ class Runner:
                                  checkpoint=own.with_suffix(f'.retry-{source_id}.json'))
                     if not self.portrait_ready(job, source_id):
                         raise RuntimeError(f'{source_id} 参考图上传未生效')
-            self.cli('swap', job, '--yes', *(['--force-new'] if force else []), checkpoint=own)
-            self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
+            try:
+                self.cli('swap', job, '--yes', *(['--force-new'] if force else []), checkpoint=own)
+                self.cli('status', job, '--wait-for', 'swap', '--timeout', '3600', '--interval', '15')
+            except RuntimeError as error:
+                state = self.api.job(job)
+                if state.get('status') in {'error', 'interrupted'}:
+                    raise PlatformRejected(str(state.get('error') or state.get('message') or error)[:250])
+                raise
             state = self.api.job(job)
             seg = (state.get('segments') or [])[0]
             story_end = (state.get('source_story') or {}).get('story_end_s') or seg.get('end_s')
@@ -475,6 +485,10 @@ def main():
         print('领取', row['record_id'], text(f.get('需求名称')))
         try:
             runner.run_row(row)
+        except PlatformRejected as e:
+            print('  平台拒绝', e)
+            if not a.plan:
+                runner.put(POOL, row['record_id'], {'复刻状态': '失败', '执行说明': f'平台拒绝生成：{e}'[:900]})
         except Exception as e:
             print('  失败', e)
             if not a.plan:
