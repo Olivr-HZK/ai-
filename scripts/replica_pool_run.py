@@ -12,6 +12,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import re
 import os
 import subprocess
 import sys
@@ -219,6 +220,36 @@ class Runner:
             except Exception as error:
                 print('  通知失败', str(error)[:80])
 
+    @staticmethod
+    def cast_line(self, cast):
+        return '、'.join(f"{c['source_id']}={c.get('source_name') or '?'}（{c.get('source_gender') or '未知'}）" for c in cast)
+
+    def map_portraits(self, cast, portraits):
+        """把上传的参考图对到角色：文件名带 C1/C2 或 男/女 就按它匹配，否则要求人工改名。"""
+        if len(cast) <= 1:
+            return portraits
+        by_id = {c['source_id'].upper(): c['source_id'] for c in cast}
+        by_gender = {}
+        for c in cast:
+            by_gender.setdefault((c.get('source_gender') or '').lower(), []).append(c['source_id'])
+        chosen = {}
+        for path in portraits:
+            name = path.name.upper()
+            match = re.search(r'\bC(\d+)', name)
+            if match and f'C{match.group(1)}' in by_id and by_id[f'C{match.group(1)}'] not in chosen.values():
+                chosen[path] = by_id[f'C{match.group(1)}']
+                continue
+            gender = ('male' if re.search(r'男|MALE|\bM\b', name) else
+                      'female' if re.search(r'女|FEMALE|\bF\b', name) else '')
+            pool = [sid for sid in by_gender.get(gender, []) if sid not in chosen.values()] if gender else []
+            if len(pool) == 1:
+                chosen[path] = pool[0]
+        if len(chosen) == len(portraits):
+            return [path for path, _ in sorted(chosen.items(), key=lambda kv: kv[1])]
+        raise MultiPersonUnsupported(
+            f'多人素材需要明确参考图对应关系（{self.cast_line(cast)}）。'
+            f'请把参考图重命名为 C1_xxx / C2_xxx（或带 男/女）后重新排队')
+
     def portrait_ready(self, job_id, source_id, timeout=60):
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -300,10 +331,9 @@ class Runner:
                     extra = post(job, out, story_end, src_lang) if post else None
                     return job, out, story_end, src_lang, extra
             cast = self.cli('characters', job)['characters']
-            if len(cast) > 1:
-                raise MultiPersonUnsupported(f'多人素材暂不支持（识别出 {len(cast)} 个角色），等人脸顺序映射后再开放')
             if len(portraits) != len(cast):
                 raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
+            portraits = self.map_portraits(cast, portraits)
             own = self.dir / 'ck' / f'{tag}.json'
             own.parent.mkdir(parents=True, exist_ok=True)
             for person, portrait in zip(cast, portraits):
