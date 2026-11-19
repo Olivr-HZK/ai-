@@ -211,26 +211,23 @@ class Runner:
         return Path(got['results'][0]['path'])
 
     def swap(self, master, tag, portraits):
-        job = master.get('job_id')
-        reused = False
-        if job:
-            try:
-                state = self.api.job(job)
-                if (state.get('logo_replace_view') or {}).get('replaced'):
-                    self.api.reanalyze(state)
-                    self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
-                    reused = True
-            except Exception:
-                reused = False
-        if not reused:
-            up = self.cli('upload', str(master['path']), '--yes')
+        # 每条换人需求独占一个任务：共用任务会互相覆盖片段
+        own = self.dir / 'ck' / f'{tag}.json'
+        own.parent.mkdir(parents=True, exist_ok=True)
+        job = None
+        for attempt_ck in (own, own.with_suffix('.retry.json')):
+            up = self.cli('upload', str(master['path']), '--yes', checkpoint=attempt_ck)
             job = up['results'][0]['ids'][0]
             self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
+            state = self.api.job(job)
+            if state.get('status') not in {'error', 'interrupted'}:
+                own = attempt_ck
+                break
+        else:
+            raise RuntimeError('任务连续失败，已换新任务重试一次仍失败')
         cast = self.cli('characters', job)['characters']
         if len(portraits) != len(cast):
             raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
-        own = self.dir / 'ck' / f'{tag}.json'
-        own.parent.mkdir(parents=True, exist_ok=True)
         for person, portrait in zip(cast, portraits):
             source_id = person['source_id']
             try:
