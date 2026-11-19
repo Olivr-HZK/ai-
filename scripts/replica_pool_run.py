@@ -344,6 +344,8 @@ class Runner:
                 continue
             if not (other.get('复刻结果') or []):
                 continue
+            if '完全相同' in text(other.get('执行说明')):
+                continue  # 那条本身也是复制来的，不能当权威结果
             if fingerprint(other) == key and (mine is None or self.source_sig(key[0]) == mine):
                 return row['record_id'], other['复刻结果']
         return None
