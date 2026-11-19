@@ -280,6 +280,21 @@ class Runner:
                 self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
                 cache = {'job_id': job, 'swaps': 0}
                 self.save_job(key, cache)
+            if cache.get('last_tag') == tag:
+                # 这条需求上次已经生成过（可能只是写回失败），直接复用现成片段，不再花钱
+                state = self.api.job(job)
+                seg = (state.get('segments') or [])[0] if state.get('segments') else {}
+                if seg.get('video_file') and state.get('status') not in {'generating', 'error'}:
+                    out = self.dir / 'swaps' / f'{tag}-raw.mp4'
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    url = media_url(f'/api/jobs/{job}/files/{quote(seg["video_file"])}?download=1', job)
+                    with self.api.session.get(url, stream=True, timeout=(15, 300), allow_redirects=False) as r:
+                        r.raise_for_status()
+                        out.write_bytes(r.content)
+                    story_end = (state.get('source_story') or {}).get('story_end_s') or seg.get('end_s')
+                    src_lang = ((state.get('translation') or {}).get('source_language') or '')
+                    extra = post(job, out, story_end, src_lang) if post else None
+                    return job, out, story_end, src_lang, extra
             cast = self.cli('characters', job)['characters']
             if len(portraits) != len(cast):
                 raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
@@ -317,6 +332,7 @@ class Runner:
                 out.write_bytes(r.content)
             extra = post(job, out, story_end, src_lang) if post else None
             cache['swaps'] = int(cache.get('swaps') or 0) + 1
+            cache['last_tag'] = tag
             self.save_job(key, cache)
             return job, out, story_end, src_lang, extra
 
