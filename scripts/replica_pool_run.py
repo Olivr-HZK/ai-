@@ -337,11 +337,14 @@ class Runner:
         key = hashlib.sha256(Path(master['path']).read_bytes()).hexdigest()[:16]
         with self.video_lock(key):
             cache = self.job_state(key)
-            job, force = cache.get('job_id'), bool(cache.get('swaps'))
+            job = cache.get('job_id')
+            force = False
             if job:
                 state = self.api.job(job)
                 if state.get('status') in {'error', 'interrupted'}:
                     raise PlatformRejected(str(state.get('error') or state.get('message') or '任务失败')[:250])
+                # 片段里已经有人物的视频，就一定要 force_new 重新生成，不能捡别人的结果
+                force = any(bool(seg.get('video_file')) for seg in (state.get('segments') or []))
             if not job:
                 up = self.cli('upload', str(master['path']), '--yes', checkpoint=self.dir / 'ck' / f'{key}.json')
                 job = up['results'][0]['ids'][0]
