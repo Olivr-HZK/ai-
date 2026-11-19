@@ -54,7 +54,7 @@ def detect_gender(path):
             GENDER_MODEL = pipeline('image-classification', model='dima806/man_woman_face_image_detection')
         result = GENDER_MODEL(Image.open(path))
         top = max(result, key=lambda item: item['score'])
-        if top['score'] < 0.7:
+        if top['score'] < 0.6:
             return ''
         label = top['label'].lower()
         if label in {'man', 'male', 'boy'}:
@@ -252,12 +252,13 @@ class Runner:
     def cast_line(self, cast):
         return '、'.join(f"{c['source_id']}={c.get('source_name') or '?'}（{c.get('source_gender') or '未知'}）" for c in cast)
 
-    def map_portraits(self, cast, portraits):
+    def map_portraits(self, cast, portraits, genders=None):
         """双人/多人：文件名带 C1/C2 优先；否则按 AI 识别性别对应到同性别角色；对不上就拦下。"""
         if len(cast) <= 1:
             return portraits
         by_id = {c['source_id'].upper(): c['source_id'] for c in cast}
-        cast_gender = {c['source_id']: (c.get('source_gender') or '').lower() for c in cast}
+        cast_gender = {c['source_id']: (genders or {}).get(c['source_id'], (c.get('source_gender') or '').lower())
+                       for c in cast}
         chosen, detected = {}, []
         for path in portraits:
             name = path.name.upper()
@@ -277,11 +278,10 @@ class Runner:
                 used.add(candidates[0])
         if len(chosen) == len(portraits) and len(set(chosen.values())) == len(cast):
             return [path for path, _ in sorted(chosen.items(), key=lambda kv: kv[1])]
-        names = '、'.join(f"{c['source_id']}={c.get('source_name') or '?'}（{c.get('source_gender') or '未知'}）" for c in cast)
+        names = '、'.join(f"{c['source_id']}={c.get('source_name') or '?'}（{cast_gender.get(c['source_id']) or '未知'}）" for c in cast)
         seen = '、'.join(f'{path.name}→{gender or "识别不出"}' for path, gender in detected) or '（全部按文件名指定）'
         raise MultiPersonUnsupported(
-            f'多人素材的参考图没能对上角色：角色 {names}；图片 {seen}。'
-            f'请确认图片性别是否和角色一致，或在文件名里写 C1_/C2_')
+            f'参考图性别对不上，请人工处理：角色 {names}；图片 {seen}')
 
     def portrait_ready(self, job_id, source_id, timeout=60):
         deadline = time.time() + timeout
@@ -366,7 +366,9 @@ class Runner:
             cast = self.cli('characters', job)['characters']
             if len(portraits) != len(cast):
                 raise RuntimeError(f'视频识别出 {len(cast)} 个角色，需要 {len(cast)} 张参考图（当前 {len(portraits)} 张）')
-            portraits = self.map_portraits(cast, portraits)
+            genders = {person.get('source_id'): (person.get('source_gender') or '').lower()
+                       for person in (self.api.job(job).get('cast_members') or [])}
+            portraits = self.map_portraits(cast, portraits, genders)
             own = self.dir / 'ck' / f'{tag}.json'
             own.parent.mkdir(parents=True, exist_ok=True)
             for person, portrait in zip(cast, portraits):
