@@ -34,6 +34,9 @@ MAIN = 'tblwhAqPfQoBXK3Q'
 POOL = 'tblKXqqPOYqk3XPd'
 ROOT = Path('data/replica-pool-run')
 # launchd 的 PATH 很窄，ffmpeg/ffprobe 通常在 Homebrew 目录
+OWNER_OPEN_ID = 'ou_e94416b8d17116481afde4e229147771'  # 霍振堃：异常兜底通知对象
+
+
 class PlatformRejected(RuntimeError):
     """平台明确拒绝/生成失败：直接判失败，不自动重试。"""
 
@@ -188,12 +191,11 @@ class Runner:
         master['job_id'] = job
         return job
 
-    def notify(self, fields, text):
-        """完成后直接私聊执行人；通知失败不影响业务结果。"""
-        for person in (fields.get('执行人') or []):
-            open_id = person.get('id') if isinstance(person, dict) else None
-            if not open_id:
-                continue
+    def notify(self, fields, text, owner=False):
+        """完成后私聊执行人；异常兜底发霍振堃。通知失败不影响业务结果。"""
+        targets = [OWNER_OPEN_ID] if owner else [
+            person.get('id') for person in (fields.get('执行人') or []) if isinstance(person, dict) and person.get('id')]
+        for open_id in dict.fromkeys(targets):
             try:
                 self.feishu.call('POST', 'im/v1/messages', params={'receive_id_type': 'open_id'},
                                  json={'receive_id': open_id, 'msg_type': 'text',
@@ -518,7 +520,7 @@ def main():
             print('  失败', e)
             if not a.plan:
                 runner.put(POOL, row['record_id'], {'复刻状态': '需人工处理', '执行说明': str(e)[:900]})
-                runner.notify(row['fields'], f'【换人需人工处理】{text(row["fields"].get("需求名称"))}\n{str(e)[:200]}')
+                runner.notify(row['fields'], f'【换人异常】@霍振堃 {text(row["fields"].get("需求名称"))}\n{str(e)[:200]}', owner=True)
 
 
 if __name__ == '__main__':
