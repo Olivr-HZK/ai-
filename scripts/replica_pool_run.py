@@ -518,8 +518,9 @@ def main():
             continue
         if text(f.get('需求状态')) != '已验收':
             continue
-        if text(f.get('复刻状态')) in {'已完成', '待补充信息', '需人工处理', '失败'}:
-            continue  # 已完成或需要人工处理的行不再自动跑
+        if text(f.get('复刻状态')) in {'已完成', '待补充信息', '需人工处理', '失败',
+                                       '换人中', '翻译中', '拼接中', '换Logo中'}:
+            continue  # 已完成/需人工处理/疑似进行中的行都不自动跑，避免重复付费
         print('领取', row['record_id'], text(f.get('需求名称')))
         try:
             runner.run_row(row)
