@@ -351,7 +351,8 @@ class Runner:
                 self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
                 cache = {'job_id': job, 'swaps': 0}
                 self.save_job(key, cache)
-            if cache.get('last_tag') == tag:
+            ports_sig = hashlib.sha256('|'.join(hashlib.sha256(Path(x).read_bytes()).hexdigest() for x in portraits).encode()).hexdigest()[:16]
+            if cache.get('last_tag') == tag and cache.get('last_ports') == ports_sig:
                 # 这条需求上次已经生成过（可能只是写回失败），直接复用现成片段，不再花钱
                 state = self.api.job(job)
                 seg = (state.get('segments') or [])[0] if state.get('segments') else {}
@@ -407,6 +408,7 @@ class Runner:
             extra = post(job, out, story_end, src_lang) if post else None
             cache['swaps'] = int(cache.get('swaps') or 0) + 1
             cache['last_tag'] = tag
+            cache['last_ports'] = ports_sig
             self.save_job(key, cache)
             return job, out, story_end, src_lang, extra
 
@@ -493,7 +495,8 @@ class Runner:
                 problems.append('替换人物必须上传人物参考图（几张由视频里的角色数决定）')
         if problems:
             if not self.dry:
-                self.put(POOL, rid, {'复刻状态': '待补充信息', '执行说明': '；'.join(problems)})
+                self.put(POOL, rid, {'复刻状态': '待补充信息',
+                                     '执行说明': '；'.join(problems) + '；补齐后把「复刻状态」改成「继续执行」'})
             print('  [blocked]', name, '|', '；'.join(problems))
             return
         same = self.duplicate(f)
@@ -617,7 +620,8 @@ def main():
         except MultiPersonUnsupported as e:
             print('  多人暂不支持', e)
             if not a.plan:
-                runner.put(POOL, row['record_id'], {'复刻状态': '待补充信息', '执行说明': str(e)[:900]})
+                runner.put(POOL, row['record_id'], {'复刻状态': '待补充信息',
+                                                    '执行说明': str(e)[:800] + '；补齐后把「复刻状态」改成「继续执行」'})
         except PlatformRejected as e:
             print('  平台拒绝', e)
             if not a.plan:
@@ -626,7 +630,8 @@ def main():
         except Exception as e:
             print('  失败', e)
             if not a.plan:
-                runner.put(POOL, row['record_id'], {'复刻状态': '需人工处理', '执行说明': str(e)[:900]})
+                runner.put(POOL, row['record_id'], {'复刻状态': '需人工处理',
+                                                    '执行说明': str(e)[:800] + '；处理后把「复刻状态」改成「继续执行」'})
                 runner.notify(row['fields'], f'【换人异常】@霍振堃 {text(row["fields"].get("需求名称"))}\n{str(e)[:200]}', owner=True)
 
 
