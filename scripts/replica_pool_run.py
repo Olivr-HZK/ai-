@@ -66,6 +66,10 @@ def detect_gender(path):
     return ''
 
 
+class SwapLanguageUnsupported(RuntimeError):
+    """换人+换语言暂不支持：需求池只做原语言换人，翻译走原视频。"""
+
+
 class MultiPersonUnsupported(RuntimeError):
     """多人素材暂不支持：等参考图顺序映射做好后再开放。"""
 
@@ -354,7 +358,7 @@ class Runner:
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
-    def swap(self, master, tag, portraits, post=None):
+    def swap(self, master, tag, portraits, post=None, languages=None):
         """同一视频共用一个任务：第一次分析+换人，之后换参考图并 force_new 重新生成。"""
         key = hashlib.sha256(Path(master['path']).read_bytes()).hexdigest()[:16]
         with self.video_lock(key):
@@ -373,6 +377,13 @@ class Runner:
                 self.cli('status', job, '--wait-for', 'analysis', '--timeout', '1500', '--interval', '6')
                 cache = {'job_id': job, 'swaps': 0}
                 self.save_job(key, cache)
+            state = self.api.job(job)
+            job_src = ((state.get('translation') or {}).get('source_language') or '')
+            wanted = [code for code in (languages or []) if code]
+            if job_src and wanted and any(code != job_src for code in wanted):
+                raise SwapLanguageUnsupported(
+                    f'换人+换语言暂不支持（源语言 {job_src}，目标 {"、".join(wanted)}）；'
+                    f'需求池只做原语言换人，翻译请走原视频')
             ports_sig = hashlib.sha256('|'.join(hashlib.sha256(Path(x).read_bytes()).hexdigest() for x in portraits).encode()).hexdigest()[:16]
             if cache.get('last_tag') == tag and cache.get('last_ports') == ports_sig:
                 # 这条需求上次已经生成过（可能只是写回失败），直接复用现成片段，不再花钱
@@ -607,7 +618,7 @@ class Runner:
                     finals.append((code, out))
                 return finals, notes
 
-            swap_job, seg, story_end, job_src, built = self.swap(master, tag, portraits, post=build)
+            swap_job, seg, story_end, job_src, built = self.swap(master, tag, portraits, post=build, languages=langs)
             self.save_result(tag, video_sha, ports_sha, swap_job, [out for _, out in built])
             src_lang = src_lang or job_src
             self.put(POOL, rid, {'复刻状态': '拼接中'})
@@ -651,6 +662,11 @@ def main():
         print('领取', row['record_id'], text(f.get('需求名称')))
         try:
             runner.run_row(row)
+        except SwapLanguageUnsupported as e:
+            print('  换人+换语言暂不支持', e)
+            if not a.plan:
+                runner.put(POOL, row['record_id'], {'复刻状态': '待补充信息',
+                                                    '执行说明': str(e)[:800] + '；如只需原语言，清空目标语言后改成「继续执行」'})
         except MultiPersonUnsupported as e:
             print('  多人暂不支持', e)
             if not a.plan:
