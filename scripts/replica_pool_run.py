@@ -283,6 +283,28 @@ class Runner:
         raise MultiPersonUnsupported(
             f'参考图性别对不上，请人工处理：角色 {names}；图片 {seen}')
 
+    def save_result(self, tag, video_sha, ports_sha, job_id, files):
+        path = self.dir / 'finals' / f'{tag}.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({'tag': tag, 'video': video_sha, 'ports': ports_sha, 'job_id': job_id,
+                                    'files': [str(f) for f in files], 'at': time.time()},
+                                   ensure_ascii=False, indent=1))
+
+    def load_result(self, tag, video_sha, ports_sha):
+        path = self.dir / 'finals' / f'{tag}.json'
+        if not path.exists():
+            return None
+        try:
+            rec = json.loads(path.read_text())
+        except Exception:
+            return None
+        if rec.get('video') != video_sha or rec.get('ports') != ports_sha:
+            return None
+        files = [Path(f) for f in rec.get('files') or []]
+        if not files or not all(f.exists() and f.stat().st_size > 0 for f in files):
+            return None
+        return rec
+
     def portrait_ready(self, job_id, source_id, timeout=60):
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -551,6 +573,17 @@ class Runner:
                 note = f'{where}任务 {job[:8]}… 翻译（text+voice，去 CTA）+ {cta_lang} CTA'
         elif kind == '替换人物':
             portraits = [self.download(att, self.dir / 'portraits' / att['name']) for att in refs]
+            video_sha = hashlib.sha256(Path(master['path']).read_bytes()).hexdigest()[:16]
+            ports_sha = hashlib.sha256('|'.join(hashlib.sha256(Path(x).read_bytes()).hexdigest()
+                                                for x in portraits).encode()).hexdigest()[:16]
+            done = self.load_result(tag, video_sha, ports_sha)
+            if done:
+                files = [Path(f) for f in done['files']]
+                self.put(POOL, rid, {'复刻结果': [a for f in files for a in self.attach(f, f'{name}_{f.stem.split("-")[-1]}.mp4')],
+                                     '复刻状态': '已完成',
+                                     '执行说明': f'复用本地已生成的成品（任务 {str(done.get("job_id"))[:8]}…）'})
+                print('  reuse-local', name, '->', [f.name for f in files])
+                return
 
             def build(job, seg, story_end, job_src):
                 # 翻译必须在本条换人之后、下一条 force_new 覆盖之前完成，所以在视频锁内做
@@ -575,6 +608,7 @@ class Runner:
                 return finals, notes
 
             swap_job, seg, story_end, job_src, built = self.swap(master, tag, portraits, post=build)
+            self.save_result(tag, video_sha, ports_sha, swap_job, [out for _, out in built])
             src_lang = src_lang or job_src
             self.put(POOL, rid, {'复刻状态': '拼接中'})
             finals, notes = built
